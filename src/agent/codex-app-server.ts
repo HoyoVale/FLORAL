@@ -20,7 +20,7 @@ export interface CodexAppServerOptions {
 export class CodexAppServerRuntime implements AgentRuntime {
   readonly name = "codex-app-server";
   readonly #client: CodexRpcClient;
-  readonly #defaultModel?: string;
+  readonly #defaultModel: string | undefined;
 
   constructor(options: CodexAppServerOptions) {
     this.#client = new CodexRpcClient({

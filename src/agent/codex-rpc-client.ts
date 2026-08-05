@@ -22,7 +22,7 @@ export interface CodexRpcClientOptions {
 }
 
 export class CodexRpcClient extends EventEmitter {
-  #process?: ChildProcessWithoutNullStreams;
+  #process: ChildProcessWithoutNullStreams | undefined;
   #nextId = 1;
   readonly #pending = new Map<number, PendingRequest>();
 
