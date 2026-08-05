@@ -49,6 +49,16 @@ lines.on("line", (line) => {
   }
 
   if (message.method === "thread/start") {
+    if (message.params?.sandbox !== "read-only") {
+      send({
+        id: message.id,
+        error: {
+          code: -32602,
+          message: `invalid thread sandbox: ${String(message.params?.sandbox)}`,
+        },
+      });
+      return;
+    }
     activeThreadId = "thr_new";
     send({ id: message.id, result: { thread: { id: activeThreadId } } });
     return;
@@ -62,6 +72,16 @@ lines.on("line", (line) => {
   }
 
   if (message.method === "turn/start") {
+    if (message.params?.sandboxPolicy?.type !== "read-only") {
+      send({
+        id: message.id,
+        error: {
+          code: -32602,
+          message: `invalid turn sandbox policy: ${String(message.params?.sandboxPolicy?.type)}`,
+        },
+      });
+      return;
+    }
     if (scenario === "resume" && !resumed) {
       send({ id: message.id, error: { code: -32602, message: "thread was not resumed" } });
       return;
