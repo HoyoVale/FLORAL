@@ -72,7 +72,7 @@ lines.on("line", (line) => {
   }
 
   if (message.method === "turn/start") {
-    if (message.params?.sandboxPolicy?.type !== "read-only") {
+    if (message.params?.sandboxPolicy?.type !== "readOnly") {
       send({
         id: message.id,
         error: {

@@ -205,7 +205,7 @@ export class CodexAppServerRuntime implements AgentRuntime {
         input: [{ type: "text", text: request.text }],
         cwd: request.cwd,
         approvalPolicy: "never",
-        sandboxPolicy: { type: "read-only" },
+        sandboxPolicy: { type: "readOnly" },
       };
       const model = request.model ?? this.#defaultModel;
       if (model) turnParams.model = model;
