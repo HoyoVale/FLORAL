@@ -2,7 +2,7 @@
 
 ## Windows development machine
 
-Install Node.js 24 LTS, Git, PowerShell 7, Tailscale, and an SSH client. Enable Corepack and use pnpm. Run `scripts/bootstrap-windows.ps1` from the repository root.
+Install Node.js 22 or newer, Git, and PowerShell 7. Use pnpm through Corepack. An SSH client is optional and only needed for remote Mac maintenance. Run `scripts/bootstrap-windows.ps1` from the repository root.
 
 The Windows machine develops and tests all transport, identity, policy, database, and Codex protocol code. It uses mock QQ, mock Agent, and mock macOS adapters by default.
 
@@ -13,17 +13,16 @@ Recommended baseline:
 - macOS 15 or later for current Peekaboo releases
 - dedicated non-admin or constrained user for the Agent
 - the user remains logged in when GUI control is required
-- Node.js 24 LTS
-- Git and pnpm
+- Node.js 22 or newer
+- Git and pnpm through Corepack
 - Codex CLI
-- Tailscale standalone macOS client
 - Peekaboo
 
 Run `scripts/bootstrap-macos.sh`. It performs checks only and prints reviewed installation commands; it does not silently install or grant permissions.
 
 ## Codex protocol preparation
 
-Run `pnpm codex:schema` on the target Mac after installing/updating Codex. Commit neither generated schemas nor secrets. Use the generated version marker when adapting to protocol changes.
+Run `corepack pnpm codex:schema` on the target Mac after installing/updating Codex. Commit neither generated schemas nor secrets. Use the generated version marker when adapting to protocol changes.
 
 ## QQ preparation
 

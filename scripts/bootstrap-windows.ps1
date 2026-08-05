@@ -17,7 +17,6 @@ $ok = $true
 $ok = (Test-Command node) -and $ok
 $ok = (Test-Command git) -and $ok
 $ok = (Test-Command corepack) -and $ok
-Test-Command tailscale $false | Out-Null
 Test-Command ssh $false | Out-Null
 
 if (-not (Test-Path .env)) {
@@ -26,8 +25,22 @@ if (-not (Test-Path .env)) {
 }
 
 if (-not $ok) {
-    throw "Install required tools before continuing. Node.js 24 LTS is recommended."
+    throw "Install required tools before continuing. Node.js 22 or newer is required."
 }
 
-corepack enable
-Write-Host "Next: pnpm install; pnpm bootstrap:validate; pnpm doctor; pnpm test"
+# Do not run `corepack enable` here. With MSI-installed Node.js it may try to
+# create package-manager shims under C:\Program Files\nodejs and fail without
+# elevation. Calling Corepack explicitly uses the pnpm version pinned by
+# package.json without modifying the system installation.
+& corepack pnpm --version
+if ($LASTEXITCODE -ne 0) {
+    throw "Corepack could not start the project's pnpm version."
+}
+
+Write-Host "✓ project pnpm is available through Corepack"
+Write-Host "Next commands:"
+Write-Host "  corepack pnpm install"
+Write-Host "  corepack pnpm bootstrap:validate"
+Write-Host "  corepack pnpm doctor"
+Write-Host "  corepack pnpm test"
+Write-Host "  corepack pnpm dev"

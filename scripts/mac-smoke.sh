@@ -17,7 +17,7 @@ sw_vers
 uname -m
 
 echo "== Required commands =="
-for cmd in node git codex tailscale; do
+for cmd in node git codex; do
   command -v "$cmd" >/dev/null || { echo "missing: $cmd" >&2; exit 1; }
   "$cmd" --version 2>/dev/null | head -n 1 || true
 done
@@ -31,9 +31,6 @@ if command -v peekaboo >/dev/null; then
 else
   echo "Peekaboo not installed yet"
 fi
-
-echo "== Tailscale =="
-tailscale status || true
 
 echo "== Codex app-server schema smoke =="
 rm -rf .codex-schemas-smoke

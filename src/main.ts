@@ -26,7 +26,7 @@ const gateway = new GatewayService(
   transport,
   agent,
   new MemoryThreadStore(),
-  { cwd: env.CODEX_CWD, model: env.CODEX_MODEL }
+  { cwd: env.CODEX_CWD, ...(env.CODEX_MODEL ? { model: env.CODEX_MODEL } : {}) }
 );
 
 const shutdown = async (signal: string) => {

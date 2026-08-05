@@ -30,19 +30,17 @@ else
   action_required=1
 fi
 
-check tailscale
 check codex
 check peekaboo
 
 cat <<'MANUAL'
 
 Manual macOS steps:
-1. Enable System Settings → General → Sharing → Remote Login.
-2. Keep the intended GUI user logged in.
-3. Grant Peekaboo/host app Screen Recording and Accessibility access.
-4. Configure Codex + DeepSeek using DeepSeek's official setup script.
-5. Add Peekaboo as a local stdio MCP server in ~/.codex/config.toml.
-6. Run foreground smoke tests before installing the LaunchAgent.
+1. Keep the intended GUI user logged in.
+2. Grant Peekaboo/host app Screen Recording and Accessibility access.
+3. Configure the Codex model provider in ~/.codex/config.toml.
+4. Add Peekaboo as a local stdio MCP server in ~/.codex/config.toml.
+5. Run foreground smoke tests before installing the LaunchAgent.
 MANUAL
 
 if [[ "$action_required" -ne 0 ]]; then
@@ -55,7 +53,6 @@ Suggested installation commands (review before running):
   brew install steipete/tap/peekaboo
 
 pnpm does not need a global shim when `corepack pnpm` works in this project.
-Install Tailscale using the official standalone macOS package, then sign in.
 SUGGESTED
   exit 2
 fi

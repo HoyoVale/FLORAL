@@ -43,7 +43,6 @@ const checks = [
     },
   },
   { name: "git", command: "git", args: ["--version"], required: true },
-  { name: "tailscale", command: "tailscale", args: ["version"], required: false },
   { name: "codex", command: "codex", args: ["--version"], required: false },
   ...(process.platform === "darwin"
     ? [{ name: "peekaboo", command: "peekaboo", args: ["--version"], required: false }]

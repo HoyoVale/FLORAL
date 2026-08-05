@@ -1,6 +1,10 @@
 import { z } from "zod";
 
 const modeSchema = z.enum(["mock", "real"]);
+const optionalNonEmptyString = z.preprocess(
+  (value: unknown) => typeof value === "string" && value.trim() === "" ? undefined : value,
+  z.string().trim().min(1).optional(),
+);
 
 const envSchema = z.object({
   NODE_ENV: z.enum(["development", "test", "production"]).default("development"),
@@ -12,17 +16,17 @@ const envSchema = z.object({
   CODEX_MODE: modeSchema.default("mock"),
   MACOS_MODE: modeSchema.default("mock"),
   AUTH_MODE: z.enum(["local", "better-auth"]).default("local"),
-  QQBOT_APP_ID: z.string().optional(),
-  QQBOT_APP_SECRET: z.string().optional(),
+  QQBOT_APP_ID: optionalNonEmptyString,
+  QQBOT_APP_SECRET: optionalNonEmptyString,
   CODEX_COMMAND: z.string().default("codex"),
   CODEX_ARGS: z.string().default("app-server"),
-  CODEX_MODEL: z.string().default("deepseek-v4-flash"),
+  CODEX_MODEL: optionalNonEmptyString,
   CODEX_CWD: z.string().default("."),
   CODEX_REQUEST_TIMEOUT_MS: z.coerce.number().int().positive().default(120_000),
   BETTER_AUTH_SECRET: z.string().min(32).optional(),
   BETTER_AUTH_URL: z.string().url().default("http://127.0.0.1:8787"),
-  OWNER_PAIRING_CODE: z.string().optional(),
-  PEEKABOO_COMMAND: z.string().default("peekaboo")
+  OWNER_PAIRING_CODE: optionalNonEmptyString,
+  PEEKABOO_COMMAND: z.string().default("peekaboo"),
 });
 
 export type AppEnv = z.infer<typeof envSchema>;
@@ -31,7 +35,7 @@ export function loadEnv(source: NodeJS.ProcessEnv = process.env): AppEnv {
   const parsed = envSchema.safeParse(source);
   if (!parsed.success) {
     const details = parsed.error.issues
-      .map((issue) => `${issue.path.join(".") || "environment"}: ${issue.message}`)
+      .map((issue: { path: PropertyKey[]; message: string }) => `${issue.path.join(".") || "environment"}: ${issue.message}`)
       .join("\n");
     throw new Error(`Invalid environment configuration:\n${details}`);
   }

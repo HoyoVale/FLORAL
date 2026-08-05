@@ -11,7 +11,6 @@ Use read-only commands only. Report:
 - uptime and load
 - disk free space
 - memory pressure summary
-- Tailscale connectivity
 - gateway process status
 - Codex and Peekaboo versions
 

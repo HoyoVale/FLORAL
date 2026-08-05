@@ -5,34 +5,44 @@
 - Windows and macOS doctor scripts
 - mock QQ and mock Agent loop
 - Codex JSON-RPC process/client boundary
+- Codex schema generation on the target Mac
 - Peekaboo readiness checks and MCP configuration sample
-- remote SSH test script
 - security and launchd documentation
 
-## Phase 1 — real QQ + persistent identity
+## Phase 1 — real Codex App Server runtime
+
+- initialize / initialized handshake
+- thread/start and thread/resume lifecycle
+- turn/start, turn/completed, and turn/interrupt
+- streamed assistant deltas with authoritative final items
+- fail-closed server-request handling
+- typed quota, authentication, network, timeout, process, and protocol failures
+- Fake App Server tests that run on Windows and CI
+- real Mac protocol probe with usage-limit classification
+
+## Phase 2 — model provider integration
+
+- validate a Responses-compatible provider path
+- implement the reserved ModelBridge only when protocol translation is necessary
+- keep provider credentials outside the repository
+- provider health checks, retries, rate limits, and redacted diagnostics
+
+## Phase 3 — real QQ + persistent identity
 
 - official QQ SDK private chat
 - owner pairing by QQ OpenID
 - SQLite conversation/thread mapping
 - audit events
-- `/new`, `/status`, `/stop` commands
+- `/new`, `/status`, and `/stop` commands
 
-## Phase 2 — real Codex execution
-
-- stable thread/start, thread/resume, turn/start, turn/interrupt
-- streamed assistant/tool events
-- server-request approval handling
-- DeepSeek provider validation
-- protocol version/schema compatibility tests
-
-## Phase 3 — macOS GUI
+## Phase 4 — macOS GUI
 
 - Peekaboo MCP health and required-tool checks
 - screenshot and application-control smoke tests
 - per-tool authorization proxy or Codex approval mapping
 - evidence artifacts for each GUI E2E run
 
-## Phase 4 — Better Auth and web administration
+## Phase 5 — Better Auth and web administration
 
 - account/session endpoints
 - QQ identity linking
@@ -40,7 +50,7 @@
 - approval and audit dashboard
 - passkeys/2FA for owner administration
 
-## Phase 5 — service hardening
+## Phase 6 — service hardening
 
 - LaunchAgent install/uninstall/diagnostics
 - crash recovery and backoff

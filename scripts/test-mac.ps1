@@ -1,6 +1,6 @@
 $ErrorActionPreference = "Stop"
 
-# Edit these values for your Tailscale/MagicDNS environment.
+# Optional generic SSH helper. Remote networking is external to FLORAL.
 $MacHost = "mac-user@mac-mini"
 $Project = "~/Projects/mac-agent-gateway"
 $ArtifactDestination = Join-Path $PSScriptRoot "..\artifacts-macos"
@@ -11,7 +11,7 @@ ssh $MacHost @"
 set -euo pipefail
 cd $Project
 git status --short
-corepack pnpm install --no-frozen-lockfile
+corepack pnpm install --frozen-lockfile
 corepack pnpm bootstrap:validate
 corepack pnpm typecheck
 corepack pnpm test

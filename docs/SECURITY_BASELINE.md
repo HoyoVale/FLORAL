@@ -15,9 +15,9 @@ This system can control a real computer. Treat every inbound message, model outp
 - Record user request, thread/turn IDs, command summaries, file changes, approval decisions, and results.
 - Provide a local emergency stop command and disable the LaunchAgent before debugging permission loops.
 
-## Tailscale
+## Remote access boundary
 
-Use Tailscale only as the private network path. Standard macOS SSH can run over the Tailscale IP/MagicDNS name. Do not publish SSH, VNC, Codex WebSocket, or MCP ports to the public internet.
+Remote networking is external to FLORAL. Do not publish SSH, Screen Sharing, Codex WebSocket, or MCP ports directly to the public internet. Use a private authenticated network path and restrict access to the dedicated development user.
 
 ## Secrets
 
