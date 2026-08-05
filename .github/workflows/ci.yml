@@ -1,23 +1,50 @@
 name: CI
+
 on:
   push:
   pull_request:
 
 jobs:
   test:
-    strategy:
-      matrix:
-        os: [windows-latest, ubuntu-latest, macos-latest]
+    name: Test (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os:
+          - windows-latest
+          - ubuntu-latest
+          - macos-latest
+
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      # setup-node's pnpm cache support needs the pnpm executable to
+      # already be available on PATH. Install the project-pinned pnpm first.
+      - name: Install pnpm
+        uses: pnpm/action-setup@v6
+        with:
+          version: 10.15.0
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v6
         with:
           node-version: 24
           cache: pnpm
-      - run: corepack enable
-      - run: pnpm install --no-frozen-lockfile
-      - run: pnpm bootstrap:validate
-      - run: pnpm typecheck
-      - run: pnpm test
-      - run: pnpm build
+          cache-dependency-path: pnpm-lock.yaml
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Validate bootstrap
+        run: pnpm bootstrap:validate
+
+      - name: Typecheck
+        run: pnpm typecheck
+
+      - name: Test
+        run: pnpm test
+
+      - name: Build
+        run: pnpm build
