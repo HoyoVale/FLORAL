@@ -19,6 +19,7 @@
     "bootstrap:validate": "node scripts/validate-bootstrap.mjs",
     "codex:schema": "bash scripts/generate-codex-schema.sh",
     "codex:probe": "tsx scripts/codex-probe.ts",
+    "deepseek:probe": "tsx scripts/deepseek-probe.ts",
     "mac:smoke": "bash scripts/mac-smoke.sh",
     "dev:watch": "tsx watch src/main.ts"
   },

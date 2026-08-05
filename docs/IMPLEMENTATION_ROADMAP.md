@@ -22,10 +22,21 @@
 
 ## Phase 2 — model provider integration
 
-- validate a Responses-compatible provider path
-- implement the reserved ModelBridge only when protocol translation is necessary
-- keep provider credentials outside the repository
-- provider health checks, retries, rate limits, and redacted diagnostics
+### Phase 2A — DeepSeek provider baseline
+
+- direct DeepSeek Chat Completions client and probe
+- `.env` loading with credentials kept outside the repository
+- provider health, timeout, error classification, and secret redaction
+- fake HTTP provider tests on Windows and CI
+- validate `deepseek-v4-flash` before introducing protocol translation
+
+### Phase 2B — Codex Responses bridge
+
+- implement Responses request → DeepSeek Chat Completions translation
+- translate streaming text, reasoning, function calls, and terminal status
+- expose a loopback-only `/v1/responses` endpoint
+- configure Codex through a user-level custom model provider
+- end-to-end App Server → bridge → DeepSeek validation
 
 ## Phase 3 — real QQ + persistent identity
 
