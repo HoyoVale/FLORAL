@@ -11,14 +11,13 @@ ssh $MacHost @"
 set -euo pipefail
 cd $Project
 git status --short
-corepack enable
-pnpm install --no-frozen-lockfile
-pnpm bootstrap:validate
-pnpm typecheck
-pnpm test
-pnpm build
+corepack pnpm install --no-frozen-lockfile
+corepack pnpm bootstrap:validate
+corepack pnpm typecheck
+corepack pnpm test
+corepack pnpm build
 mkdir -p artifacts
-pnpm doctor > artifacts/doctor.txt 2>&1 || true
+corepack pnpm doctor > artifacts/doctor.txt 2>&1 || true
 if [ "`$(uname -s)" = "Darwin" ]; then
   bash scripts/mac-smoke.sh > artifacts/mac-smoke.txt 2>&1 || true
 fi

@@ -8,7 +8,7 @@ sw_vers
 
 action_required=0
 check() {
-  local command="$1"; shift
+  local command="$1"
   if command -v "$command" >/dev/null 2>&1; then
     printf '✓ %s\n' "$command"
   else
@@ -20,12 +20,21 @@ check() {
 check git
 check node
 check corepack
-check pnpm
+
+if command -v pnpm >/dev/null 2>&1; then
+  printf '✓ pnpm\n'
+elif command -v corepack >/dev/null 2>&1 && corepack pnpm --version >/dev/null 2>&1; then
+  printf '✓ pnpm (via corepack)\n'
+else
+  printf '✗ pnpm missing and corepack fallback unavailable\n'
+  action_required=1
+fi
+
 check tailscale
 check codex
 check peekaboo
 
-cat <<'EOF'
+cat <<'MANUAL'
 
 Manual macOS steps:
 1. Enable System Settings → General → Sharing → Remote Login.
@@ -34,19 +43,20 @@ Manual macOS steps:
 4. Configure Codex + DeepSeek using DeepSeek's official setup script.
 5. Add Peekaboo as a local stdio MCP server in ~/.codex/config.toml.
 6. Run foreground smoke tests before installing the LaunchAgent.
-EOF
+MANUAL
 
 if [[ "$action_required" -ne 0 ]]; then
-  cat <<'EOF'
+  cat <<'SUGGESTED'
 
 Suggested installation commands (review before running):
   xcode-select --install
-  brew install node@24 pnpm git
+  brew install node@24 git
   curl -fsSL https://chatgpt.com/codex/install.sh | sh
   brew install steipete/tap/peekaboo
 
+pnpm does not need a global shim when `corepack pnpm` works in this project.
 Install Tailscale using the official standalone macOS package, then sign in.
-EOF
+SUGGESTED
   exit 2
 fi
 
