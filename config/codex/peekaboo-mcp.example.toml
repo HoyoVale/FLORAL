@@ -1,0 +1,9 @@
+# Merge this block into ~/.codex/config.toml on the Mac.
+# Keep it local; do not expose Peekaboo over a public HTTP endpoint.
+
+[mcp_servers.peekaboo]
+command = "npx"
+args = ["-y", "@steipete/peekaboo"]
+required = false
+startup_timeout_sec = 30
+tool_timeout_sec = 120

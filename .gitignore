@@ -1,0 +1,10 @@
+node_modules/
+dist/
+.env
+data/*.sqlite
+data/*.sqlite-*
+logs/
+artifacts/
+.codex-schemas/
+.DS_Store
+*.log

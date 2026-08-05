@@ -1,0 +1,38 @@
+{
+  "name": "mac-agent-gateway",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "QQ-connected macOS agent gateway powered by Codex app-server, DeepSeek, Better Auth, and Peekaboo.",
+  "engines": {
+    "node": ">=22.0.0"
+  },
+  "packageManager": "pnpm@10.15.0",
+  "scripts": {
+    "dev": "tsx watch src/main.ts",
+    "start": "node dist/main.js",
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "doctor": "node scripts/doctor.mjs",
+    "bootstrap:validate": "node scripts/validate-bootstrap.mjs",
+    "codex:schema": "bash scripts/generate-codex-schema.sh",
+    "mac:smoke": "bash scripts/mac-smoke.sh"
+  },
+  "dependencies": {
+    "@tencent-connect/qqbot-nodejs": "^1.0.2",
+    "better-auth": "^1.6.25",
+    "better-sqlite3": "^12.2.0",
+    "fastify": "^5.10.0",
+    "pino": "^9.9.0",
+    "zod": "^4.1.0"
+  },
+  "devDependencies": {
+    "@types/better-sqlite3": "^7.6.13",
+    "@types/node": "^24.0.0",
+    "tsx": "^4.20.0",
+    "typescript": "^5.9.0",
+    "vitest": "^3.2.0"
+  }
+}
