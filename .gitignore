@@ -18,3 +18,4 @@ infra/searxng/runtime/
 FLORAL.zip
 data/config/inventory/
 data/config/effective/
+data/config/native/

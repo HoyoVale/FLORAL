@@ -143,8 +143,24 @@
 - private atomic effective-config artifacts;
 - no production runtime adoption yet.
 
-Later Phase 4.0 stages will add native component adapters, deterministic
-renderers, runtime adoption, and drift diagnostics.
+### Phase 4.0C — native adapters and deterministic renderers
+
+- typed Codex native model/provider/MCP configuration;
+- Codex `config.toml` and non-installed `requirements.toml` preview;
+- typed SearXNG container and `settings.yml` configuration;
+- redacted QQ SDK constructor/delivery contract;
+- unified MCP transport and tool-policy manifest;
+- deterministic artifact and bundle fingerprints;
+- private atomic native artifact output;
+- no production runtime adoption yet.
+
+### Phase 4.0D — drift and runtime diagnostics
+
+- compare requested, rendered, installed, and observed configuration;
+- capture SearXNG effective engines/plugins and QQ SDK declaration surface;
+- verify Codex version/config compatibility;
+- explain per-key provenance and drift;
+- define the controlled production cutover gate.
 
 ## Phase 4 — macOS GUI
 

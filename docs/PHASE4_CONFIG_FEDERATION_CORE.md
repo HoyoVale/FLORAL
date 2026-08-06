@@ -51,8 +51,16 @@ permission and approval authority:
 ```text
 codex.native_web_search=false
 codex.sandbox.mode=read-only
+codex.native.provider_id=floral-deepseek
+codex.native.wire_api=responses
+codex.native.web_search=disabled
 codex.approval.policy=never
 auth.email_password_enabled=false
+qq.sdk.expected_version=1.0.4
+qq.sdk.logger=redacted
+search.container.host_bind_address=127.0.0.1
+search.container.image=<pinned digest>
+mcp.search.*_approval_mode=approve
 mcp.*.inherit_parent_environment=false
 ```
 
@@ -111,9 +119,10 @@ The directory is mode `0700`; files are mode `0600`; Git ignores the directory.
 Phase 4.0B does not:
 
 - replace `loadEnv()` in the production gateway;
-- render Codex `config.toml` or `requirements.toml`;
-- render SearXNG `settings.yml`;
-- change QQ SDK constructor options;
+- adopt rendered Codex `config.toml` or `requirements.toml` in production;
+- substitute the runtime bridge URL into Codex configuration;
+- substitute the runtime SearXNG secret;
+- change QQ SDK constructor options at runtime;
 - enable native passthrough;
 - enable MiMo or Peekaboo MCP;
 - make sandbox or approval configurable.

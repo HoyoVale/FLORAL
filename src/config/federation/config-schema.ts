@@ -33,6 +33,13 @@ export const requestedConfigSchema = z.object({
     probe_timeout_ms: positiveInteger,
     full_chain_timeout_ms: positiveInteger,
     reconnect_probe_timeout_ms: positiveInteger,
+    sdk: z.object({
+      expected_version: z.string().trim().min(1),
+      account_id_strategy: z.literal("sha256-app-id"),
+      session_persistence: z.literal("file"),
+      token_prefetch: z.enum(["sync", "async"]),
+      logger: z.literal("redacted"),
+    }).strict(),
   }).strict(),
   codex: z.object({
     mode: modeSchema,
@@ -48,6 +55,16 @@ export const requestedConfigSchema = z.object({
     }).strict(),
     approval: z.object({
       policy: z.enum(["never", "on-request", "on-failure", "untrusted"]),
+    }).strict(),
+    native: z.object({
+      provider_id: z.string().trim().min(1),
+      wire_api: z.literal("responses"),
+      reasoning_effort: z.enum(["inherit", "minimal", "low", "medium", "high", "xhigh"]),
+      reasoning_summary: z.enum(["auto", "concise", "detailed", "none"]),
+      web_search: z.enum(["disabled", "cached", "indexed", "live"]),
+      request_max_retries: nonNegativeInteger,
+      stream_max_retries: nonNegativeInteger,
+      supports_websockets: z.boolean(),
     }).strict(),
   }).strict(),
   deepseek: z.object({
@@ -71,6 +88,35 @@ export const requestedConfigSchema = z.object({
   search: z.object({
     service_url: z.string().url(),
     request_timeout_ms: positiveInteger,
+    container: z.object({
+      image: z.string().trim().min(1),
+      container_name: z.string().trim().min(1),
+      restart: z.enum(["no", "always", "on-failure", "unless-stopped"]),
+      host_bind_address: z.string().trim().min(1),
+      host_port: z.number().int().min(1).max(65_535),
+      stop_grace_period_sec: positiveInteger,
+      health_interval_sec: positiveInteger,
+      health_timeout_sec: positiveInteger,
+      health_retries: positiveInteger,
+      health_start_period_sec: positiveInteger,
+    }).strict(),
+    settings: z.object({
+      use_default_settings: z.boolean(),
+      instance_name: z.string().trim().min(1),
+      safe_search: z.number().int().min(0).max(2),
+      autocomplete: z.string(),
+      default_lang: z.string().trim().min(1),
+      formats: strictStringArray,
+      internal_port: z.number().int().min(1).max(65_535),
+      bind_address: z.string().trim().min(1),
+      limiter: z.boolean(),
+      public_instance: z.boolean(),
+      image_proxy: z.boolean(),
+      method: z.enum(["GET", "POST"]),
+      outgoing_request_timeout_ms: positiveInteger,
+      outgoing_max_request_timeout_ms: positiveInteger,
+      enable_http2: z.boolean(),
+    }).strict(),
   }).strict(),
   auth: z.object({
     mode: z.enum(["local", "better-auth"]),
@@ -86,10 +132,15 @@ export const requestedConfigSchema = z.object({
       enabled: z.boolean(),
       id: z.string().trim().min(1),
       package: z.string().trim().min(1),
+      command: z.string().trim().min(1),
+      command_args: strictStringArray,
+      no_proxy: z.string().trim().min(1),
       enabled_tools: strictStringArray,
       required: z.boolean(),
       startup_timeout_sec: positiveInteger,
       tool_timeout_sec: positiveInteger,
+      default_tools_approval_mode: z.enum(["auto", "prompt", "writes", "approve"]),
+      tool_approval_mode: z.enum(["auto", "prompt", "writes", "approve"]),
       inherit_parent_environment: z.boolean(),
     }).strict(),
     vision: z.object({
@@ -135,6 +186,13 @@ export interface RequestedConfig {
     probe_timeout_ms: number;
     full_chain_timeout_ms: number;
     reconnect_probe_timeout_ms: number;
+    sdk: {
+      expected_version: string;
+      account_id_strategy: "sha256-app-id";
+      session_persistence: "file";
+      token_prefetch: "sync" | "async";
+      logger: "redacted";
+    };
   };
   codex: {
     mode: "mock" | "real";
@@ -147,6 +205,16 @@ export interface RequestedConfig {
     native_web_search: boolean;
     sandbox: { mode: "read-only" | "workspace-write" | "danger-full-access" };
     approval: { policy: "never" | "on-request" | "on-failure" | "untrusted" };
+    native: {
+      provider_id: string;
+      wire_api: "responses";
+      reasoning_effort: "inherit" | "minimal" | "low" | "medium" | "high" | "xhigh";
+      reasoning_summary: "auto" | "concise" | "detailed" | "none";
+      web_search: "disabled" | "cached" | "indexed" | "live";
+      request_max_retries: number;
+      stream_max_retries: number;
+      supports_websockets: boolean;
+    };
   };
   deepseek: {
     base_url: string;
@@ -166,7 +234,39 @@ export interface RequestedConfig {
     max_queued_requests: number;
     queue_timeout_ms: number;
   };
-  search: { service_url: string; request_timeout_ms: number };
+  search: {
+    service_url: string;
+    request_timeout_ms: number;
+    container: {
+      image: string;
+      container_name: string;
+      restart: "no" | "always" | "on-failure" | "unless-stopped";
+      host_bind_address: string;
+      host_port: number;
+      stop_grace_period_sec: number;
+      health_interval_sec: number;
+      health_timeout_sec: number;
+      health_retries: number;
+      health_start_period_sec: number;
+    };
+    settings: {
+      use_default_settings: boolean;
+      instance_name: string;
+      safe_search: number;
+      autocomplete: string;
+      default_lang: string;
+      formats: string[];
+      internal_port: number;
+      bind_address: string;
+      limiter: boolean;
+      public_instance: boolean;
+      image_proxy: boolean;
+      method: "GET" | "POST";
+      outgoing_request_timeout_ms: number;
+      outgoing_max_request_timeout_ms: number;
+      enable_http2: boolean;
+    };
+  };
   auth: {
     mode: "local" | "better-auth";
     better_auth_url: string;
@@ -178,10 +278,15 @@ export interface RequestedConfig {
       enabled: boolean;
       id: string;
       package: string;
+      command: string;
+      command_args: string[];
+      no_proxy: string;
       enabled_tools: string[];
       required: boolean;
       startup_timeout_sec: number;
       tool_timeout_sec: number;
+      default_tools_approval_mode: "auto" | "prompt" | "writes" | "approve";
+      tool_approval_mode: "auto" | "prompt" | "writes" | "approve";
       inherit_parent_environment: boolean;
     };
     vision: {
@@ -227,6 +332,13 @@ export const DEFAULT_REQUESTED_CONFIG: RequestedConfig = {
     probe_timeout_ms: 120_000,
     full_chain_timeout_ms: 300_000,
     reconnect_probe_timeout_ms: 300_000,
+    sdk: {
+      expected_version: "1.0.4",
+      account_id_strategy: "sha256-app-id",
+      session_persistence: "file",
+      token_prefetch: "sync",
+      logger: "redacted",
+    },
   },
   codex: {
     mode: "mock",
@@ -239,6 +351,16 @@ export const DEFAULT_REQUESTED_CONFIG: RequestedConfig = {
     native_web_search: false,
     sandbox: { mode: "read-only" },
     approval: { policy: "never" },
+    native: {
+      provider_id: "floral-deepseek",
+      wire_api: "responses",
+      reasoning_effort: "inherit",
+      reasoning_summary: "auto",
+      web_search: "disabled",
+      request_max_retries: 0,
+      stream_max_retries: 0,
+      supports_websockets: false,
+    },
   },
   deepseek: {
     base_url: "https://api.deepseek.com",
@@ -261,6 +383,35 @@ export const DEFAULT_REQUESTED_CONFIG: RequestedConfig = {
   search: {
     service_url: "http://127.0.0.1:8888",
     request_timeout_ms: 15_000,
+    container: {
+      image: "docker.io/searxng/searxng@sha256:02aa607ecc87165ebe6212476a176b8984d891c01a2d130ad03a58109d13db77",
+      container_name: "floral-searxng",
+      restart: "unless-stopped",
+      host_bind_address: "127.0.0.1",
+      host_port: 8_888,
+      stop_grace_period_sec: 20,
+      health_interval_sec: 30,
+      health_timeout_sec: 7,
+      health_retries: 3,
+      health_start_period_sec: 20,
+    },
+    settings: {
+      use_default_settings: true,
+      instance_name: "FLORAL Search",
+      safe_search: 1,
+      autocomplete: "",
+      default_lang: "auto",
+      formats: ["html", "json"],
+      internal_port: 8_080,
+      bind_address: "0.0.0.0",
+      limiter: false,
+      public_instance: false,
+      image_proxy: false,
+      method: "GET",
+      outgoing_request_timeout_ms: 5_000,
+      outgoing_max_request_timeout_ms: 10_000,
+      enable_http2: true,
+    },
   },
   auth: {
     mode: "local",
@@ -276,10 +427,15 @@ export const DEFAULT_REQUESTED_CONFIG: RequestedConfig = {
       enabled: true,
       id: "floral_search",
       package: "mcp-searxng@1.0.3",
+      command: "npx",
+      command_args: ["-y"],
+      no_proxy: "127.0.0.1,localhost,::1",
       enabled_tools: ["searxng_web_search"],
       required: true,
       startup_timeout_sec: 60,
       tool_timeout_sec: 45,
+      default_tools_approval_mode: "approve",
+      tool_approval_mode: "approve",
       inherit_parent_environment: false,
     },
     vision: {
@@ -301,8 +457,17 @@ export const DEFAULT_REQUESTED_CONFIG: RequestedConfig = {
 export const LOCKED_CONFIG_VALUES = {
   "codex.native_web_search": false,
   "codex.sandbox.mode": "read-only",
+  "codex.native.provider_id": "floral-deepseek",
+  "codex.native.wire_api": "responses",
+  "codex.native.web_search": "disabled",
   "codex.approval.policy": "never",
   "auth.email_password_enabled": false,
+  "qq.sdk.expected_version": "1.0.4",
+  "qq.sdk.logger": "redacted",
+  "search.container.host_bind_address": "127.0.0.1",
+  "search.container.image": "docker.io/searxng/searxng@sha256:02aa607ecc87165ebe6212476a176b8984d891c01a2d130ad03a58109d13db77",
+  "mcp.search.default_tools_approval_mode": "approve",
+  "mcp.search.tool_approval_mode": "approve",
   "mcp.search.inherit_parent_environment": false,
   "mcp.vision.inherit_parent_environment": false,
   "mcp.macos.inherit_parent_environment": false,

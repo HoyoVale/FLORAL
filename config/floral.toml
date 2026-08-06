@@ -1,7 +1,7 @@
 # FLORAL requested configuration authority.
 # Secrets remain in .env or the inherited process environment.
-# Phase 4.0B validates and renders this file but does not yet switch the
-# production runtime away from the existing environment-based configuration.
+# Phase 4.0C validates this file and renders native upstream artifacts, but it
+# does not yet switch production away from the existing environment readers.
 
 schema_version = 1
 profile = "production"
@@ -31,6 +31,14 @@ probe_timeout_ms = 120000
 full_chain_timeout_ms = 300000
 reconnect_probe_timeout_ms = 300000
 
+[qq.sdk]
+# Pinned installed SDK contract; secrets remain environment-only.
+expected_version = "1.0.4"
+account_id_strategy = "sha256-app-id"
+session_persistence = "file"
+token_prefetch = "sync"
+logger = "redacted"
+
 [codex]
 mode = "mock"
 command = "codex"
@@ -49,6 +57,18 @@ mode = "read-only"
 [codex.approval]
 # Locked Phase 4.0 safety baseline.
 policy = "never"
+
+[codex.native]
+# Native Codex config.toml fields. "inherit" maps DeepSeek high/max to
+# Codex high/xhigh. Provider identity and web-search policy remain locked.
+provider_id = "floral-deepseek"
+wire_api = "responses"
+reasoning_effort = "inherit"
+reasoning_summary = "auto"
+web_search = "disabled"
+request_max_retries = 0
+stream_max_retries = 0
+supports_websockets = false
 
 [deepseek]
 base_url = "https://api.deepseek.com"
@@ -72,6 +92,37 @@ queue_timeout_ms = 15000
 service_url = "http://127.0.0.1:8888"
 request_timeout_ms = 15000
 
+[search.container]
+# Native container runtime surface. The host bind and image digest are locked.
+image = "docker.io/searxng/searxng@sha256:02aa607ecc87165ebe6212476a176b8984d891c01a2d130ad03a58109d13db77"
+container_name = "floral-searxng"
+restart = "unless-stopped"
+host_bind_address = "127.0.0.1"
+host_port = 8888
+stop_grace_period_sec = 20
+health_interval_sec = 30
+health_timeout_sec = 7
+health_retries = 3
+health_start_period_sec = 20
+
+[search.settings]
+# Native SearXNG settings.yml surface currently managed by FLORAL.
+use_default_settings = true
+instance_name = "FLORAL Search"
+safe_search = 1
+autocomplete = ""
+default_lang = "auto"
+formats = ["html", "json"]
+internal_port = 8080
+bind_address = "0.0.0.0"
+limiter = false
+public_instance = false
+image_proxy = false
+method = "GET"
+outgoing_request_timeout_ms = 5000
+outgoing_max_request_timeout_ms = 10000
+enable_http2 = true
+
 [auth]
 mode = "local"
 better_auth_url = "http://127.0.0.1:8787"
@@ -86,10 +137,15 @@ peekaboo_command = "peekaboo"
 enabled = true
 id = "floral_search"
 package = "mcp-searxng@1.0.3"
+command = "npx"
+command_args = ["-y"]
+no_proxy = "127.0.0.1,localhost,::1"
 enabled_tools = ["searxng_web_search"]
 required = true
 startup_timeout_sec = 60
 tool_timeout_sec = 45
+default_tools_approval_mode = "approve"
+tool_approval_mode = "approve"
 inherit_parent_environment = false
 
 [mcp.vision]

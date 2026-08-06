@@ -52,6 +52,19 @@ corepack pnpm config:effective:write
 See `docs/PHASE4_CONFIG_FEDERATION_CORE.md` for precedence, locked fields,
 SecretRef handling, fingerprints, and the non-goals of this phase.
 
+Phase 4.0C can also render and verify the native upstream configuration bundle
+without adopting it in production:
+
+```bash
+corepack pnpm config:native
+corepack pnpm config:native:json
+corepack pnpm config:native:check
+corepack pnpm config:native:write
+```
+
+See `docs/PHASE4_NATIVE_CONFIG_RENDERERS.md` for the Codex, SearXNG, QQ SDK,
+and MCP artifact contracts.
+
 ## Prepare the Mac mini
 
 Copy or clone the project onto the Mac and run:

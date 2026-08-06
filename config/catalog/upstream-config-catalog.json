@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
-  "reviewedAt": "2026-08-06",
-  "purpose": "Phase 4.0A inventory of FLORAL-owned, upstream-managed, passthrough, observed-only, and locked configuration surfaces. This catalog records configuration possibilities and evidence; it does not change production behavior.",
+  "reviewedAt": "2026-08-07",
+  "purpose": "Phase 4.0A/4.0C inventory and typed native-renderer catalog for FLORAL-owned, upstream-managed, passthrough, observed-only, and locked configuration surfaces. Native artifacts are deterministic previews; production cutover remains a later phase.",
   "classifications": [
     "floral-owned",
     "upstream-managed",
@@ -85,7 +85,7 @@
         {
           "id": "model-provider",
           "classification": "upstream-managed",
-          "coverage": "partial",
+          "coverage": "typed-renderer-preview",
           "knownKeys": [
             "model",
             "model_provider",
@@ -97,7 +97,11 @@
             "model_providers.*.request_max_retries",
             "model_providers.*.stream_max_retries",
             "model_providers.*.stream_idle_timeout_ms",
-            "model_providers.*.supports_websockets"
+            "model_providers.*.supports_websockets",
+            "model_reasoning_summary",
+            "approval_policy",
+            "sandbox_mode",
+            "web_search"
           ]
         },
         {
@@ -115,7 +119,7 @@
         {
           "id": "mcp-client",
           "classification": "upstream-managed",
-          "coverage": "partial",
+          "coverage": "typed-renderer-preview",
           "knownKeys": [
             "mcp_servers.*.command",
             "mcp_servers.*.args",
@@ -126,7 +130,9 @@
             "mcp_servers.*.startup_timeout_sec",
             "mcp_servers.*.tool_timeout_sec",
             "mcp_servers.*.default_tools_approval_mode",
-            "mcp_servers.*.tools.*.approval_mode"
+            "mcp_servers.*.tools.*.approval_mode",
+            "mcp_servers.*.cwd",
+            "mcp_servers.*.env_vars"
           ]
         },
         {
@@ -255,7 +261,7 @@
         {
           "id": "container-runtime",
           "classification": "upstream-managed",
-          "coverage": "managed",
+          "coverage": "typed-renderer-preview",
           "knownKeys": [
             "image digest",
             "restart policy",

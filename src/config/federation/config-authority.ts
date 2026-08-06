@@ -215,8 +215,12 @@ export function renderConfigurationAuthority(
     `config.codex.mode=${authority.effective.codex.mode}`,
     `config.codex.sandbox=${authority.effective.codex.sandbox.mode}`,
     `config.codex.approval=${authority.effective.codex.approval.policy}`,
+    `config.codex.native.reasoning_effort=${authority.effective.codex.native.reasoning_effort}`,
+    `config.codex.native.web_search=${authority.effective.codex.native.web_search}`,
     `config.deepseek.model=${authority.effective.deepseek.model}`,
     `config.deepseek.reasoning_effort=${authority.effective.deepseek.reasoning_effort}`,
+    `config.search.safe_search=${String(authority.effective.search.settings.safe_search)}`,
+    `config.qq.sdk.expected_version=${authority.effective.qq.sdk.expected_version}`,
     `config.mcp.search.enabled=${String(authority.effective.mcp.search.enabled)}`,
     `config.mcp.vision.enabled=${String(authority.effective.mcp.vision.enabled)}`,
     `config.mcp.macos.enabled=${String(authority.effective.mcp.macos.enabled)}`,
@@ -329,6 +333,20 @@ function validateCrossFieldRules(
   if (config.deepseek.retry_max_delay_ms < config.deepseek.retry_base_delay_ms) {
     throw new Error("deepseek.retry_max_delay_ms must be greater than or equal to retry_base_delay_ms");
   }
+  if (
+    config.search.settings.outgoing_max_request_timeout_ms
+    < config.search.settings.outgoing_request_timeout_ms
+  ) {
+    throw new Error(
+      "search.settings.outgoing_max_request_timeout_ms must be greater than or equal to outgoing_request_timeout_ms",
+    );
+  }
+  if (new Set(config.search.settings.formats).size !== config.search.settings.formats.length) {
+    throw new Error("search.settings.formats contains duplicates");
+  }
+  if (!config.search.settings.formats.includes("json")) {
+    throw new Error("search.settings.formats must include json for FLORAL MCP integration");
+  }
   if (config.codex.mode === "real" && !secrets.deepseek_api_key.present) {
     throw new Error("codex.mode=real requires secret DEEPSEEK_API_KEY");
   }
@@ -346,6 +364,9 @@ function validateCrossFieldRules(
   const mcpIds = [config.mcp.search.id, config.mcp.vision.id, config.mcp.macos.id];
   if (new Set(mcpIds).size !== mcpIds.length) {
     throw new Error("mcp server IDs must be unique");
+  }
+  if (config.mcp.search.enabled && config.mcp.search.enabled_tools.length === 0) {
+    throw new Error("mcp.search.enabled requires at least one enabled tool");
   }
   for (const [id, tools] of [
     ["search", config.mcp.search.enabled_tools],
