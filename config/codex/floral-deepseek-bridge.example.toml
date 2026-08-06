@@ -3,7 +3,8 @@
 model = "deepseek-v4-flash"
 model_provider = "floral-deepseek"
 model_reasoning_effort = "high"
-
+# DeepSeek does not implement OpenAI-hosted web_search.
+web_search = "disabled"
 [model_providers.floral-deepseek]
 name = "FLORAL DeepSeek Bridge"
 base_url = "http://127.0.0.1:8790/v1"

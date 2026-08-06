@@ -23,7 +23,7 @@ const config = [
   `model = ${tomlString(env.DEEPSEEK_MODEL)}`,
   `model_provider = "floral-deepseek"`,
   `model_reasoning_effort = "high"`,
-  ``,
+  `web_search = "disabled"`,  ``,
   `[model_providers.floral-deepseek]`,
   `name = "FLORAL DeepSeek Bridge"`,
   `base_url = ${tomlString(address.baseUrl)}`,

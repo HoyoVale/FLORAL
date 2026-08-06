@@ -12,6 +12,8 @@ Codex App Server
 
 ## Security boundary
 
+- Codex hosted web search is disabled for the DeepSeek bridge because DeepSeek cannot execute OpenAI-hosted `web_search`.
+- The bridge continues to reject `web_search` fail-closed instead of pretending it is an executable function.
 - The bridge refuses non-loopback bind addresses.
 - Every `/v1/responses` request requires a separate local bearer token.
 - The bridge token is not the DeepSeek API key.
