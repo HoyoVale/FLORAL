@@ -53,6 +53,82 @@ describe("Responses request translation", () => {
     });
   });
 
+  it("flattens Codex namespace tools into DeepSeek function tools", () => {
+    const request = parseResponsesRequest({
+      model: "deepseek-v4-flash",
+      input: "inspect the screen",
+      tools: [{
+        type: "namespace",
+        name: "mcp__peekaboo__",
+        description: "Peekaboo MCP tools",
+        tools: [{
+          type: "function",
+          name: "screenshot",
+          description: "Capture the current screen",
+          parameters: {
+            type: "object",
+            properties: {
+              app: { type: "string" },
+            },
+          },
+        }],
+      }],
+    });
+
+    const translated = translateResponsesRequest(request, "deepseek-v4-flash");
+    expect(translated.tools).toContainEqual({
+      type: "function",
+      function: {
+        name: "mcp__peekaboo__screenshot",
+        description: "Peekaboo MCP tools\n\nCapture the current screen",
+        parameters: {
+          type: "object",
+          properties: {
+            app: { type: "string" },
+          },
+        },
+      },
+    });
+    expect(translated.toolMap.get("mcp__peekaboo__screenshot")).toEqual({
+      deepSeekName: "mcp__peekaboo__screenshot",
+      originalName: "mcp__peekaboo__screenshot",
+      originalKind: "function",
+    });
+  });
+
+  it("supports namespace child inputSchema from Codex dynamic tools", () => {
+    const request = parseResponsesRequest({
+      model: "deepseek-v4-flash",
+      input: "lookup a ticket",
+      tools: [{
+        type: "namespace",
+        name: "tickets",
+        tools: [{
+          type: "function",
+          name: "lookup_ticket",
+          inputSchema: {
+            type: "object",
+            required: ["id"],
+            properties: {
+              id: { type: "string" },
+            },
+          },
+        }],
+      }],
+    });
+
+    const translated = translateResponsesRequest(request, "deepseek-v4-flash");
+    expect(translated.tools[0]).toMatchObject({
+      function: {
+        name: "tickets__lookup_ticket",
+        parameters: {
+          type: "object",
+          required: ["id"],
+        },
+      },
+    });
+  });
+
   it("translates prior function calls and outputs into chat history", () => {
     const request = parseResponsesRequest({
       model: "deepseek-v4-flash",

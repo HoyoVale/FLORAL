@@ -9,6 +9,7 @@ import type {
 } from "./bridge-types.js";
 
 const TOOL_NAME_PATTERN = /^[A-Za-z0-9_-]{1,128}$/;
+const NAMESPACE_NAME_PATTERN = /^[A-Za-z0-9_-]{1,64}$/;
 
 export function parseResponsesRequest(value: unknown): ResponsesBridgeRequest {
   const record = asRecord(value);
@@ -89,8 +90,7 @@ function translateTools(
 
     if (type === "function") {
       const name = requireToolName(tool.name, type);
-      const parameters = asRecord(tool.parameters) ?? { type: "object", properties: {} };
-      toolMap.set(name, {
+      registerTool(toolMap, {
         deepSeekName: name,
         originalName: name,
         originalKind: "function",
@@ -100,7 +100,7 @@ function translateTools(
         function: {
           name,
           ...(typeof tool.description === "string" ? { description: tool.description } : {}),
-          parameters,
+          parameters: readParameters(tool),
         },
       });
       continue;
@@ -108,7 +108,7 @@ function translateTools(
 
     if (type === "custom") {
       const name = requireToolName(tool.name, type);
-      toolMap.set(name, {
+      registerTool(toolMap, {
         deepSeekName: name,
         originalName: name,
         originalKind: "custom",
@@ -134,6 +134,11 @@ function translateTools(
       continue;
     }
 
+    if (type === "namespace") {
+      translateNamespaceTool(tool, tools, toolMap);
+      continue;
+    }
+
     throw new ResponsesBridgeError({
       kind: "unsupported",
       status: 400,
@@ -143,6 +148,91 @@ function translateTools(
   }
 
   return tools;
+}
+
+function translateNamespaceTool(
+  namespace: Record<string, unknown>,
+  tools: DeepSeekFunctionTool[],
+  toolMap: Map<string, ToolBridgeDescriptor>,
+): void {
+  const namespaceName = readString(namespace.name);
+  if (!namespaceName || !NAMESPACE_NAME_PATTERN.test(namespaceName)) {
+    throw badRequest(
+      `namespace tool name must match ${NAMESPACE_NAME_PATTERN.source}`,
+    );
+  }
+
+  if (!Array.isArray(namespace.tools)) {
+    throw badRequest(`namespace ${namespaceName} requires a tools array`);
+  }
+
+  for (const value of namespace.tools) {
+    const child = asRecord(value);
+    if (!child || child.type !== "function") {
+      throw new ResponsesBridgeError({
+        kind: "unsupported",
+        status: 400,
+        message: `Namespace ${namespaceName} contains a non-function tool`,
+        data: { namespace: namespaceName, childType: child?.type },
+      });
+    }
+
+    const childName = requireToolName(child.name, "namespace function");
+    const flattenedName = flattenNamespaceName(namespaceName, childName);
+    const description = joinDescriptions(namespace.description, child.description);
+
+    registerTool(toolMap, {
+      deepSeekName: flattenedName,
+      originalName: flattenedName,
+      originalKind: "function",
+    });
+
+    tools.push({
+      type: "function",
+      function: {
+        name: flattenedName,
+        ...(description ? { description } : {}),
+        parameters: readParameters(child),
+      },
+    });
+  }
+}
+
+function flattenNamespaceName(namespaceName: string, childName: string): string {
+  const flattened = namespaceName.endsWith("__")
+    ? `${namespaceName}${childName}`
+    : `${namespaceName}__${childName}`;
+
+  if (!TOOL_NAME_PATTERN.test(flattened)) {
+    throw badRequest(
+      `Flattened namespace tool name must match ${TOOL_NAME_PATTERN.source}: ${flattened}`,
+    );
+  }
+  return flattened;
+}
+
+function registerTool(
+  toolMap: Map<string, ToolBridgeDescriptor>,
+  descriptor: ToolBridgeDescriptor,
+): void {
+  if (toolMap.has(descriptor.deepSeekName)) {
+    throw badRequest(`Duplicate translated tool name: ${descriptor.deepSeekName}`);
+  }
+  toolMap.set(descriptor.deepSeekName, descriptor);
+}
+
+function readParameters(tool: Record<string, unknown>): Record<string, unknown> {
+  return asRecord(tool.parameters)
+    ?? asRecord(tool.inputSchema)
+    ?? asRecord(tool.input_schema)
+    ?? { type: "object", properties: {} };
+}
+
+function joinDescriptions(namespaceDescription: unknown, childDescription: unknown): string | undefined {
+  const parts = [namespaceDescription, childDescription]
+    .filter((value): value is string => typeof value === "string" && value.trim().length > 0)
+    .map((value) => value.trim());
+  return parts.length > 0 ? parts.join("\n\n") : undefined;
 }
 
 function translateInputItem(
