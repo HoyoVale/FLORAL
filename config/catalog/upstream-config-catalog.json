@@ -1,0 +1,1089 @@
+{
+  "schemaVersion": 1,
+  "reviewedAt": "2026-08-06",
+  "purpose": "Phase 4.0A inventory of FLORAL-owned, upstream-managed, passthrough, observed-only, and locked configuration surfaces. This catalog records configuration possibilities and evidence; it does not change production behavior.",
+  "classifications": [
+    "floral-owned",
+    "upstream-managed",
+    "upstream-passthrough",
+    "observed-only",
+    "locked"
+  ],
+  "components": [
+    {
+      "id": "floral",
+      "displayName": "FLORAL Gateway",
+      "integrationStatus": "active",
+      "versionSource": "package.json#version",
+      "officialSources": [
+        "README.md",
+        "docs/ARCHITECTURE.md",
+        "docs/SECURITY_BASELINE.md"
+      ],
+      "groups": [
+        {
+          "id": "service-runtime",
+          "classification": "floral-owned",
+          "coverage": "partial",
+          "knownKeys": [
+            "NODE_ENV",
+            "HOST",
+            "PORT",
+            "LOG_LEVEL",
+            "DATA_DIR",
+            "DATABASE_PATH",
+            "FLORAL_INSTANCE_LOCK_PATH",
+            "FLORAL_SERVICE_STATE_PATH",
+            "FLORAL_SERVICE_MODE"
+          ]
+        },
+        {
+          "id": "identity-policy",
+          "classification": "floral-owned",
+          "coverage": "partial",
+          "knownKeys": [
+            "MOCK_TRUST_OWNER",
+            "AUTH_MODE",
+            "OWNER_PAIRING_CODE"
+          ],
+          "futureKeys": [
+            "approval_ttl_ms",
+            "approval_owner_scope",
+            "local_confirmation_policy",
+            "audit_retention"
+          ]
+        },
+        {
+          "id": "security-invariants",
+          "classification": "locked",
+          "coverage": "documented",
+          "knownKeys": [
+            "loopback-only app-server and MCP exposure",
+            "no unrestricted sudo",
+            "no Keychain access",
+            "model is not an authorization boundary"
+          ]
+        }
+      ],
+      "runtimeIntrospection": [
+        "package version",
+        "effective environment key names without values",
+        "service mode",
+        "source fingerprint"
+      ]
+    },
+    {
+      "id": "codex",
+      "displayName": "Codex CLI / app-server",
+      "integrationStatus": "active",
+      "versionSource": "CODEX_COMMAND --version",
+      "officialSources": [
+        "https://developers.openai.com/codex/config-reference",
+        "https://developers.openai.com/codex/app-server"
+      ],
+      "groups": [
+        {
+          "id": "model-provider",
+          "classification": "upstream-managed",
+          "coverage": "partial",
+          "knownKeys": [
+            "model",
+            "model_provider",
+            "model_reasoning_effort",
+            "model_providers.*.name",
+            "model_providers.*.base_url",
+            "model_providers.*.wire_api",
+            "model_providers.*.env_key",
+            "model_providers.*.request_max_retries",
+            "model_providers.*.stream_max_retries",
+            "model_providers.*.stream_idle_timeout_ms",
+            "model_providers.*.supports_websockets"
+          ]
+        },
+        {
+          "id": "sandbox-approval-trust",
+          "classification": "locked",
+          "coverage": "hardcoded-safe-baseline",
+          "knownKeys": [
+            "approvalPolicy",
+            "sandboxPolicy",
+            "project trust",
+            "permission profiles"
+          ],
+          "notes": "Phase 4P will make approved subsets configurable; current production behavior remains read-only and never-approve."
+        },
+        {
+          "id": "mcp-client",
+          "classification": "upstream-managed",
+          "coverage": "partial",
+          "knownKeys": [
+            "mcp_servers.*.command",
+            "mcp_servers.*.args",
+            "mcp_servers.*.env",
+            "mcp_servers.*.enabled_tools",
+            "mcp_servers.*.disabled_tools",
+            "mcp_servers.*.required",
+            "mcp_servers.*.startup_timeout_sec",
+            "mcp_servers.*.tool_timeout_sec",
+            "mcp_servers.*.default_tools_approval_mode",
+            "mcp_servers.*.tools.*.approval_mode"
+          ]
+        },
+        {
+          "id": "native-advanced",
+          "classification": "upstream-passthrough",
+          "coverage": "inventory-only",
+          "knownKeys": [
+            "profiles",
+            "project-scoped .codex/config.toml",
+            "shell environment inheritance and filtering",
+            "history and memories",
+            "skills and agents",
+            "hooks",
+            "feature flags",
+            "network and proxy",
+            "logging, feedback, telemetry, updates"
+          ],
+          "notes": "No passthrough is enabled in Phase 4.0A. Each key requires installed-version schema validation and locked-key filtering."
+        },
+        {
+          "id": "protocol-schema",
+          "classification": "observed-only",
+          "coverage": "partial",
+          "knownKeys": [
+            "app-server generated TypeScript schema",
+            "app-server generated JSON schema",
+            "Codex version",
+            "compatibility fixture schema version"
+          ]
+        }
+      ],
+      "runtimeIntrospection": [
+        "codex --version",
+        "app-server generated schemas",
+        "managed CODEX_HOME config path",
+        "rendered config fingerprint"
+      ]
+    },
+    {
+      "id": "deepseek",
+      "displayName": "DeepSeek API",
+      "integrationStatus": "active",
+      "versionSource": "remote model response and configured model ID",
+      "officialSources": [
+        "https://api-docs.deepseek.com/api/create-chat-completion",
+        "https://api-docs.deepseek.com/guides/thinking_mode",
+        "https://api-docs.deepseek.com/guides/tool_calls",
+        "https://api-docs.deepseek.com/guides/json_mode/"
+      ],
+      "groups": [
+        {
+          "id": "endpoint-auth-model",
+          "classification": "upstream-managed",
+          "coverage": "managed",
+          "knownKeys": [
+            "DEEPSEEK_API_KEY",
+            "DEEPSEEK_BASE_URL",
+            "DEEPSEEK_MODEL"
+          ]
+        },
+        {
+          "id": "reasoning",
+          "classification": "upstream-managed",
+          "coverage": "managed",
+          "knownKeys": [
+            "thinking.type",
+            "reasoning_effort",
+            "reasoning_content round-trip for tool-call turns"
+          ]
+        },
+        {
+          "id": "request-shaping",
+          "classification": "upstream-passthrough",
+          "coverage": "partial",
+          "knownKeys": [
+            "stream",
+            "max_tokens",
+            "response_format",
+            "tools",
+            "tool_choice",
+            "strict function schemas"
+          ],
+          "notes": "Sampling penalties are ineffective in thinking mode according to the upstream documentation and must not be exposed without mode-aware validation."
+        },
+        {
+          "id": "reliability",
+          "classification": "floral-owned",
+          "coverage": "managed",
+          "knownKeys": [
+            "DEEPSEEK_REQUEST_TIMEOUT_MS",
+            "DEEPSEEK_PRESTREAM_MAX_ATTEMPTS",
+            "DEEPSEEK_RETRY_BASE_DELAY_MS",
+            "DEEPSEEK_RETRY_MAX_DELAY_MS"
+          ]
+        },
+        {
+          "id": "provider-observations",
+          "classification": "observed-only",
+          "coverage": "partial",
+          "knownKeys": [
+            "response model ID",
+            "finish reason",
+            "token usage",
+            "prompt cache hit and miss tokens"
+          ]
+        }
+      ],
+      "runtimeIntrospection": [
+        "configured endpoint and model without API key",
+        "response model ID",
+        "usage fields"
+      ]
+    },
+    {
+      "id": "searxng",
+      "displayName": "SearXNG",
+      "integrationStatus": "active",
+      "versionSource": "pinned container image digest",
+      "officialSources": [
+        "https://docs.searxng.org/admin/settings/",
+        "https://docs.searxng.org/admin/settings/settings",
+        "https://docs.searxng.org/admin/settings/settings_engines.html",
+        "https://docs.searxng.org/admin/installation-docker"
+      ],
+      "groups": [
+        {
+          "id": "container-runtime",
+          "classification": "upstream-managed",
+          "coverage": "managed",
+          "knownKeys": [
+            "image digest",
+            "restart policy",
+            "port binding",
+            "environment",
+            "volumes",
+            "security_opt",
+            "healthcheck",
+            "stop_grace_period"
+          ]
+        },
+        {
+          "id": "settings-yml",
+          "classification": "upstream-managed",
+          "coverage": "partial",
+          "knownKeys": [
+            "use_default_settings",
+            "brand",
+            "general",
+            "search",
+            "server",
+            "ui",
+            "preferences",
+            "engines",
+            "plugins",
+            "outgoing",
+            "categories_as_tabs",
+            "redis",
+            "valkey"
+          ]
+        },
+        {
+          "id": "engine-catalog",
+          "classification": "observed-only",
+          "coverage": "not-frozen",
+          "knownKeys": [
+            "effective engine names",
+            "enabled and disabled state",
+            "categories",
+            "timeouts",
+            "weights",
+            "safe-search support",
+            "API-key requirements"
+          ],
+          "notes": "use_default_settings inherits upstream defaults, so the effective engine list can drift even while FLORAL's template is unchanged."
+        },
+        {
+          "id": "secrets",
+          "classification": "locked",
+          "coverage": "managed",
+          "knownKeys": [
+            "server.secret_key",
+            "private engine tokens",
+            "engine API keys"
+          ]
+        }
+      ],
+      "runtimeIntrospection": [
+        "container image digest",
+        "effective top-level settings keys",
+        "health endpoint",
+        "result count",
+        "future effective engine list through local /config"
+      ]
+    },
+    {
+      "id": "qq-sdk",
+      "displayName": "Tencent QQ Bot Node.js SDK",
+      "integrationStatus": "active",
+      "versionSource": "@tencent-connect/qqbot-nodejs package.json",
+      "officialSources": [
+        "https://www.npmjs.com/package/@tencent-connect/qqbot-nodejs",
+        "https://q.qq.com/qqbot/openclaw/index.html"
+      ],
+      "groups": [
+        {
+          "id": "floral-adapter",
+          "classification": "floral-owned",
+          "coverage": "managed",
+          "knownKeys": [
+            "QQBOT_STARTUP_TIMEOUT_MS",
+            "QQBOT_REPLY_TARGET_TTL_MS",
+            "QQBOT_REPLY_TARGET_CACHE_ENTRIES",
+            "QQBOT_TEXT_CHUNK_CHARACTERS",
+            "QQBOT_MAX_REPLY_CHUNKS",
+            "QQBOT_OUTBOUND_TIMEOUT_MS"
+          ]
+        },
+        {
+          "id": "sdk-constructor-and-runtime",
+          "classification": "upstream-managed",
+          "coverage": "installed-package-introspection-required",
+          "knownKeys": [
+            "QQBot constructor options",
+            "FileKVStore options",
+            "kvSessionPersistence options",
+            "gateway startup and stop behavior",
+            "logger interface"
+          ]
+        },
+        {
+          "id": "protocol-capabilities",
+          "classification": "observed-only",
+          "coverage": "installed-package-introspection-required",
+          "knownKeys": [
+            "HTTP API methods",
+            "WebSocket Gateway events",
+            "message and media methods",
+            "streaming methods",
+            "session resume contract"
+          ]
+        },
+        {
+          "id": "remote-platform",
+          "classification": "observed-only",
+          "coverage": "not-integrated",
+          "knownKeys": [
+            "bot capabilities approved by QQ Open Platform",
+            "event subscriptions",
+            "message scopes",
+            "platform review status"
+          ],
+          "notes": "Remote platform capabilities are not local SDK options and must remain a separate observed configuration layer."
+        },
+        {
+          "id": "credentials",
+          "classification": "locked",
+          "coverage": "managed",
+          "knownKeys": [
+            "QQBOT_APP_ID",
+            "QQBOT_APP_SECRET",
+            "session persistence data"
+          ]
+        }
+      ],
+      "runtimeIntrospection": [
+        "installed package version",
+        "exported runtime symbols",
+        "declaration-file symbol catalog",
+        "config-like type names",
+        "current adapter methods"
+      ]
+    },
+    {
+      "id": "better-auth",
+      "displayName": "Better Auth",
+      "integrationStatus": "optional-not-active",
+      "versionSource": "package.json dependency and installed package",
+      "officialSources": [
+        "https://www.better-auth.com/docs/reference/options"
+      ],
+      "groups": [
+        {
+          "id": "core",
+          "classification": "upstream-managed",
+          "coverage": "minimal-wrapper",
+          "knownKeys": [
+            "database",
+            "secret",
+            "baseURL",
+            "emailAndPassword.enabled"
+          ]
+        },
+        {
+          "id": "native-advanced",
+          "classification": "upstream-passthrough",
+          "coverage": "not-inventoried-from-installed-version",
+          "knownKeys": [
+            "session",
+            "cookies",
+            "trusted origins",
+            "plugins",
+            "rate limiting",
+            "account and user fields",
+            "database hooks",
+            "advanced options"
+          ],
+          "notes": "The exact option surface must be frozen against the installed Better Auth version before enabling the optional web administration path."
+        },
+        {
+          "id": "secrets",
+          "classification": "locked",
+          "coverage": "managed",
+          "knownKeys": [
+            "BETTER_AUTH_SECRET",
+            "session and cookie signing material"
+          ]
+        }
+      ],
+      "runtimeIntrospection": [
+        "installed package version",
+        "exported option types",
+        "effective enabled authentication methods"
+      ]
+    },
+    {
+      "id": "mcp",
+      "displayName": "Model Context Protocol client/server boundary",
+      "integrationStatus": "active-partial",
+      "versionSource": "Codex client implementation and each server package",
+      "officialSources": [
+        "https://modelcontextprotocol.io/specification/",
+        "https://developers.openai.com/codex/config-reference"
+      ],
+      "groups": [
+        {
+          "id": "client-transport",
+          "classification": "upstream-managed",
+          "coverage": "partial",
+          "knownKeys": [
+            "stdio command and args",
+            "HTTP URL",
+            "cwd",
+            "environment",
+            "authentication",
+            "startup timeout",
+            "tool timeout",
+            "required flag"
+          ]
+        },
+        {
+          "id": "tool-exposure",
+          "classification": "locked",
+          "coverage": "partial",
+          "knownKeys": [
+            "enabled_tools",
+            "disabled_tools",
+            "default tool approval",
+            "per-tool approval",
+            "FLORAL capability mapping"
+          ]
+        },
+        {
+          "id": "server-business-config",
+          "classification": "upstream-managed",
+          "coverage": "component-specific",
+          "knownKeys": [
+            "SearXNG endpoint and query policy",
+            "MiMo endpoint and model",
+            "Peekaboo Bridge and snapshot policy"
+          ]
+        },
+        {
+          "id": "elicitation-and-approval",
+          "classification": "locked",
+          "coverage": "decline-only-baseline",
+          "knownKeys": [
+            "MCP elicitation",
+            "tool approval requests",
+            "QQ approval authority"
+          ]
+        }
+      ],
+      "runtimeIntrospection": [
+        "server IDs",
+        "server package or command versions",
+        "advertised tool names",
+        "effective allowlist",
+        "approval mode"
+      ]
+    },
+    {
+      "id": "peekaboo",
+      "displayName": "Peekaboo macOS automation MCP",
+      "integrationStatus": "planned",
+      "versionSource": "PEEKABOO_COMMAND --version",
+      "officialSources": [
+        "https://github.com/steipete/Peekaboo",
+        "https://github.com/steipete/Peekaboo/blob/main/docs/permissions.md",
+        "https://github.com/steipete/Peekaboo/blob/main/docs/cli-command-reference.md"
+      ],
+      "groups": [
+        {
+          "id": "observation",
+          "classification": "upstream-managed",
+          "coverage": "not-integrated",
+          "knownKeys": [
+            "image",
+            "see",
+            "capture engine",
+            "target app/window/screen",
+            "retina/native scale",
+            "snapshot cache"
+          ]
+        },
+        {
+          "id": "control",
+          "classification": "locked",
+          "coverage": "disabled",
+          "knownKeys": [
+            "click",
+            "type",
+            "press",
+            "hotkey",
+            "scroll",
+            "drag",
+            "app/window/menu/dock/dialog control",
+            "agent",
+            "run"
+          ]
+        },
+        {
+          "id": "permissions-and-bridge",
+          "classification": "observed-only",
+          "coverage": "version-sensitive",
+          "knownKeys": [
+            "Screen Recording",
+            "Accessibility",
+            "Automation",
+            "Bridge/daemon status",
+            "signed host and socket policy"
+          ]
+        },
+        {
+          "id": "native-config",
+          "classification": "upstream-passthrough",
+          "coverage": "not-integrated",
+          "knownKeys": [
+            "provider catalog",
+            "configuration file",
+            "environment expansion",
+            "daemon",
+            "capture and timeout defaults"
+          ]
+        }
+      ],
+      "runtimeIntrospection": [
+        "version",
+        "permissions status",
+        "Bridge/daemon status",
+        "advertised MCP tools"
+      ]
+    },
+    {
+      "id": "mimo-vision",
+      "displayName": "MiMo V2.5 vision provider",
+      "integrationStatus": "planned",
+      "versionSource": "configured remote model ID and API response",
+      "officialSources": [
+        "https://github.com/XiaomiMiMo",
+        "https://platform.xiaomimimo.com/"
+      ],
+      "groups": [
+        {
+          "id": "provider",
+          "classification": "upstream-managed",
+          "coverage": "endpoint-schema-unverified",
+          "knownKeys": [
+            "API endpoint",
+            "API key",
+            "model ID",
+            "request timeout",
+            "image input encoding",
+            "image size limits",
+            "structured output support"
+          ],
+          "notes": "The exact MiMo V2.5 endpoint schema must be frozen from the user's purchased endpoint documentation before implementation."
+        },
+        {
+          "id": "floral-vision-mcp",
+          "classification": "floral-owned",
+          "coverage": "planned",
+          "knownKeys": [
+            "evidence ID input only",
+            "allowed image directory",
+            "task length",
+            "output schema",
+            "retention",
+            "redaction"
+          ]
+        },
+        {
+          "id": "secrets",
+          "classification": "locked",
+          "coverage": "planned",
+          "knownKeys": [
+            "MIMO_API_KEY",
+            "child-process-only secret injection",
+            "no prompt/log/manifest exposure"
+          ]
+        }
+      ],
+      "runtimeIntrospection": [
+        "configured model ID",
+        "provider response model ID",
+        "supported image request shape",
+        "limits and error contract"
+      ]
+    }
+  ],
+  "hardcodedDecisions": [
+    {
+      "id": "codex.reasoning-effort.high",
+      "component": "codex",
+      "classification": "upstream-managed",
+      "file": "src/agent/codex-deepseek-config.ts",
+      "needle": "model_reasoning_effort = \"high\"",
+      "risk": "DEEPSEEK_REASONING_EFFORT can drift from the generated Codex config."
+    },
+    {
+      "id": "codex.web-search.disabled",
+      "component": "codex",
+      "classification": "locked",
+      "file": "src/agent/codex-deepseek-config.ts",
+      "needle": "web_search = \"disabled\"",
+      "risk": "Native Codex web search is disabled in favor of the local SearXNG MCP."
+    },
+    {
+      "id": "codex.provider-retries.zero",
+      "component": "codex",
+      "classification": "floral-owned",
+      "file": "src/agent/codex-deepseek-config.ts",
+      "needle": "request_max_retries = 0",
+      "risk": "Retry ownership is intentionally moved to the FLORAL bridge."
+    },
+    {
+      "id": "codex.provider-stream-retries.zero",
+      "component": "codex",
+      "classification": "floral-owned",
+      "file": "src/agent/codex-deepseek-config.ts",
+      "needle": "stream_max_retries = 0",
+      "risk": "Retry ownership is intentionally moved to the FLORAL bridge."
+    },
+    {
+      "id": "codex.provider-websockets.false",
+      "component": "codex",
+      "classification": "upstream-managed",
+      "file": "src/agent/codex-deepseek-config.ts",
+      "needle": "supports_websockets = false",
+      "risk": "The bridge currently supports HTTP/SSE only."
+    },
+    {
+      "id": "codex.search-mcp.npx",
+      "component": "mcp",
+      "classification": "upstream-managed",
+      "file": "src/agent/codex-deepseek-config.ts",
+      "needle": "command = \"npx\"",
+      "risk": "Runtime package resolution remains an implicit dependency."
+    },
+    {
+      "id": "codex.search-mcp.allowlist",
+      "component": "mcp",
+      "classification": "locked",
+      "file": "src/agent/codex-deepseek-config.ts",
+      "needle": "enabled_tools = [\"searxng_web_search\"]",
+      "risk": "Only the approved search tool is exposed."
+    },
+    {
+      "id": "codex.search-mcp.required",
+      "component": "mcp",
+      "classification": "upstream-managed",
+      "file": "src/agent/codex-deepseek-config.ts",
+      "needle": "required = true",
+      "risk": "A search MCP startup failure prevents the managed stack from starting."
+    },
+    {
+      "id": "codex.search-mcp.approve",
+      "component": "mcp",
+      "classification": "locked",
+      "file": "src/agent/codex-deepseek-config.ts",
+      "needle": "default_tools_approval_mode = \"approve\"",
+      "risk": "Codex's MCP approval setting is separate from FLORAL's future QQ approval authority."
+    },
+    {
+      "id": "codex.turn.approval-never",
+      "component": "codex",
+      "classification": "locked",
+      "file": "src/agent/codex-app-server.ts",
+      "needle": "approvalPolicy: \"never\"",
+      "risk": "All Codex approval requests are closed in the current safety baseline."
+    },
+    {
+      "id": "codex.turn.sandbox-read-only",
+      "component": "codex",
+      "classification": "locked",
+      "file": "src/agent/codex-app-server.ts",
+      "needle": "sandboxPolicy: { type: \"readOnly\" }",
+      "risk": "The current agent turn is always read-only."
+    },
+    {
+      "id": "deepseek.stream.false",
+      "component": "deepseek",
+      "classification": "upstream-managed",
+      "file": "src/agent/provider/deepseek-client.ts",
+      "needle": "stream: false",
+      "risk": "The direct provider client uses non-streaming requests; the bridge path has separate streaming behavior."
+    },
+    {
+      "id": "searxng.use-default-settings",
+      "component": "searxng",
+      "classification": "upstream-managed",
+      "file": "infra/searxng/settings.template.yml",
+      "needle": "use_default_settings: true",
+      "risk": "Unpinned upstream defaults can change the effective engine and plugin configuration."
+    },
+    {
+      "id": "searxng.safe-search.one",
+      "component": "searxng",
+      "classification": "upstream-managed",
+      "file": "infra/searxng/settings.template.yml",
+      "needle": "safe_search: 1",
+      "risk": "Search filtering is currently fixed at level 1."
+    },
+    {
+      "id": "searxng.image-proxy.false",
+      "component": "searxng",
+      "classification": "upstream-managed",
+      "file": "infra/searxng/settings.template.yml",
+      "needle": "image_proxy: false",
+      "risk": "Image proxy privacy behavior is currently fixed."
+    },
+    {
+      "id": "searxng.limiter.false",
+      "component": "searxng",
+      "classification": "upstream-managed",
+      "file": "infra/searxng/settings.template.yml",
+      "needle": "limiter: false",
+      "risk": "Acceptable only while the service remains loopback-only."
+    },
+    {
+      "id": "searxng.http-method.get",
+      "component": "searxng",
+      "classification": "upstream-managed",
+      "file": "infra/searxng/settings.template.yml",
+      "needle": "method: \"GET\"",
+      "risk": "Search query transport method is fixed."
+    },
+    {
+      "id": "searxng.container.digest",
+      "component": "searxng",
+      "classification": "upstream-managed",
+      "file": "infra/searxng/compose.yaml",
+      "needle": "docker.io/searxng/searxng@sha256:",
+      "risk": "The image is pinned, but the digest must be tied to a reviewed effective settings catalog."
+    },
+    {
+      "id": "searxng.loopback-port",
+      "component": "searxng",
+      "classification": "locked",
+      "file": "infra/searxng/compose.yaml",
+      "needle": "127.0.0.1:8888:8080",
+      "risk": "The local search service must not be publicly exposed."
+    },
+    {
+      "id": "qq.sdk.version",
+      "component": "qq-sdk",
+      "classification": "upstream-managed",
+      "file": "package.json",
+      "needle": "\"@tencent-connect/qqbot-nodejs\": \"1.0.4\"",
+      "risk": "The package type surface must be re-inventoried on every version change."
+    },
+    {
+      "id": "qq.sdk.redacted-logger",
+      "component": "qq-sdk",
+      "classification": "locked",
+      "file": "src/transport/qq/qq-transport.ts",
+      "needle": "createRedactedLogger()",
+      "risk": "SDK logs must not expose credentials or message payloads."
+    },
+    {
+      "id": "peekaboo.version-only-check",
+      "component": "peekaboo",
+      "classification": "observed-only",
+      "file": "src/macos/peekaboo-health.ts",
+      "needle": "--version",
+      "risk": "Permissions, Bridge/daemon state, tool catalog, and configuration are not yet inventoried."
+    },
+    {
+      "id": "better-auth.email-password.disabled",
+      "component": "better-auth",
+      "classification": "locked",
+      "file": "src/auth/better-auth.ts",
+      "needle": "emailAndPassword: { enabled: false }",
+      "risk": "The optional web auth surface must not silently enable password authentication."
+    },
+    {
+      "id": "sqlite.journal-mode.wal",
+      "component": "floral",
+      "classification": "floral-owned",
+      "file": "src/storage/sqlite.ts",
+      "needle": "PRAGMA journal_mode = WAL;",
+      "risk": "Database durability and concurrency behavior is currently hardcoded."
+    },
+    {
+      "id": "sqlite.foreign-keys.on",
+      "component": "floral",
+      "classification": "locked",
+      "file": "src/storage/sqlite.ts",
+      "needle": "PRAGMA foreign_keys = ON;",
+      "risk": "Referential integrity must not be disabled by passthrough configuration."
+    },
+    {
+      "id": "sqlite.busy-timeout.5000",
+      "component": "floral",
+      "classification": "floral-owned",
+      "file": "src/storage/sqlite.ts",
+      "needle": "PRAGMA busy_timeout = 5000;",
+      "risk": "Contention behavior is implicit and should become an effective-config observation."
+    }
+  ],
+  "environmentKeyPolicies": {
+    "AUTH_MODE": {
+      "component": "floral",
+      "classification": "floral-owned"
+    },
+    "BETTER_AUTH_SECRET": {
+      "component": "better-auth",
+      "classification": "locked"
+    },
+    "BETTER_AUTH_URL": {
+      "component": "better-auth",
+      "classification": "upstream-managed"
+    },
+    "CODEX_ARGS": {
+      "component": "codex",
+      "classification": "floral-owned"
+    },
+    "CODEX_COMMAND": {
+      "component": "codex",
+      "classification": "floral-owned"
+    },
+    "CODEX_CWD": {
+      "component": "codex",
+      "classification": "floral-owned"
+    },
+    "CODEX_MANAGED_HOME": {
+      "component": "codex",
+      "classification": "floral-owned"
+    },
+    "CODEX_MODE": {
+      "component": "floral",
+      "classification": "floral-owned"
+    },
+    "CODEX_MODEL": {
+      "component": "codex",
+      "classification": "upstream-managed"
+    },
+    "CODEX_REQUEST_TIMEOUT_MS": {
+      "component": "codex",
+      "classification": "floral-owned"
+    },
+    "DATABASE_PATH": {
+      "component": "floral",
+      "classification": "floral-owned"
+    },
+    "DATA_DIR": {
+      "component": "floral",
+      "classification": "floral-owned"
+    },
+    "DEEPSEEK_API_KEY": {
+      "component": "deepseek",
+      "classification": "locked"
+    },
+    "DEEPSEEK_BASE_URL": {
+      "component": "deepseek",
+      "classification": "upstream-managed"
+    },
+    "DEEPSEEK_MODEL": {
+      "component": "deepseek",
+      "classification": "upstream-managed"
+    },
+    "DEEPSEEK_PRESTREAM_MAX_ATTEMPTS": {
+      "component": "deepseek",
+      "classification": "floral-owned"
+    },
+    "DEEPSEEK_REASONING_EFFORT": {
+      "component": "deepseek",
+      "classification": "upstream-managed"
+    },
+    "DEEPSEEK_REQUEST_TIMEOUT_MS": {
+      "component": "deepseek",
+      "classification": "floral-owned"
+    },
+    "DEEPSEEK_RETRY_BASE_DELAY_MS": {
+      "component": "deepseek",
+      "classification": "floral-owned"
+    },
+    "DEEPSEEK_RETRY_MAX_DELAY_MS": {
+      "component": "deepseek",
+      "classification": "floral-owned"
+    },
+    "DEEPSEEK_THINKING": {
+      "component": "deepseek",
+      "classification": "upstream-managed"
+    },
+    "FLORAL_BRIDGE_HOST": {
+      "component": "floral",
+      "classification": "floral-owned"
+    },
+    "FLORAL_BRIDGE_MAX_BODY_BYTES": {
+      "component": "floral",
+      "classification": "floral-owned"
+    },
+    "FLORAL_BRIDGE_MAX_CONCURRENT_REQUESTS": {
+      "component": "floral",
+      "classification": "floral-owned"
+    },
+    "FLORAL_BRIDGE_MAX_QUEUED_REQUESTS": {
+      "component": "floral",
+      "classification": "floral-owned"
+    },
+    "FLORAL_BRIDGE_PORT": {
+      "component": "floral",
+      "classification": "floral-owned"
+    },
+    "FLORAL_BRIDGE_QUEUE_TIMEOUT_MS": {
+      "component": "floral",
+      "classification": "floral-owned"
+    },
+    "FLORAL_BRIDGE_TOKEN": {
+      "component": "floral",
+      "classification": "locked"
+    },
+    "FLORAL_INSTANCE_LOCK_PATH": {
+      "component": "floral",
+      "classification": "floral-owned"
+    },
+    "FLORAL_SERVICE_MODE": {
+      "component": "floral",
+      "classification": "floral-owned"
+    },
+    "FLORAL_SERVICE_STATE_PATH": {
+      "component": "floral",
+      "classification": "floral-owned"
+    },
+    "HOST": {
+      "component": "floral",
+      "classification": "floral-owned"
+    },
+    "LOG_LEVEL": {
+      "component": "floral",
+      "classification": "floral-owned"
+    },
+    "MACOS_MODE": {
+      "component": "floral",
+      "classification": "floral-owned"
+    },
+    "MOCK_TRUST_OWNER": {
+      "component": "floral",
+      "classification": "floral-owned"
+    },
+    "NODE_ENV": {
+      "component": "floral",
+      "classification": "floral-owned"
+    },
+    "OWNER_PAIRING_CODE": {
+      "component": "floral",
+      "classification": "locked"
+    },
+    "PEEKABOO_COMMAND": {
+      "component": "peekaboo",
+      "classification": "upstream-managed"
+    },
+    "PORT": {
+      "component": "floral",
+      "classification": "floral-owned"
+    },
+    "QQBOT_APP_ID": {
+      "component": "qq-sdk",
+      "classification": "locked"
+    },
+    "QQBOT_APP_SECRET": {
+      "component": "qq-sdk",
+      "classification": "locked"
+    },
+    "QQBOT_FULL_CHAIN_TIMEOUT_MS": {
+      "component": "qq-sdk",
+      "classification": "floral-owned"
+    },
+    "QQBOT_MAX_REPLY_CHUNKS": {
+      "component": "qq-sdk",
+      "classification": "floral-owned"
+    },
+    "QQBOT_OUTBOUND_TIMEOUT_MS": {
+      "component": "qq-sdk",
+      "classification": "floral-owned"
+    },
+    "QQBOT_PROBE_TIMEOUT_MS": {
+      "component": "qq-sdk",
+      "classification": "floral-owned"
+    },
+    "QQBOT_RECONNECT_PROBE_TIMEOUT_MS": {
+      "component": "qq-sdk",
+      "classification": "floral-owned"
+    },
+    "QQBOT_REPLY_TARGET_CACHE_ENTRIES": {
+      "component": "qq-sdk",
+      "classification": "floral-owned"
+    },
+    "QQBOT_REPLY_TARGET_TTL_MS": {
+      "component": "qq-sdk",
+      "classification": "floral-owned"
+    },
+    "QQBOT_SESSION_DIR": {
+      "component": "qq-sdk",
+      "classification": "locked"
+    },
+    "QQBOT_STARTUP_TIMEOUT_MS": {
+      "component": "qq-sdk",
+      "classification": "floral-owned"
+    },
+    "QQBOT_TEXT_CHUNK_CHARACTERS": {
+      "component": "qq-sdk",
+      "classification": "floral-owned"
+    },
+    "QQ_MODE": {
+      "component": "floral",
+      "classification": "floral-owned"
+    },
+    "SEARXNG_MCP_PACKAGE": {
+      "component": "mcp",
+      "classification": "upstream-managed"
+    },
+    "SEARXNG_MCP_STARTUP_TIMEOUT_SEC": {
+      "component": "mcp",
+      "classification": "upstream-managed"
+    },
+    "SEARXNG_MCP_TOOL_TIMEOUT_SEC": {
+      "component": "mcp",
+      "classification": "upstream-managed"
+    },
+    "SEARXNG_REQUEST_TIMEOUT_MS": {
+      "component": "searxng",
+      "classification": "floral-owned"
+    },
+    "SEARXNG_URL": {
+      "component": "searxng",
+      "classification": "upstream-managed"
+    }
+  }
+}

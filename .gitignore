@@ -16,3 +16,4 @@ artifacts/
 本次有改动文件的文件夹包.zip
 infra/searxng/runtime/
 FLORAL.zip
+data/config/inventory/

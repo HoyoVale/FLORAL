@@ -121,6 +121,20 @@
 - explicit install/start/status/restart/stop/logs/uninstall commands
 - opt-in crash-recovery probe that verifies a new ready PID
 
+## Phase 4.0 — configuration federation
+
+### Phase 4.0A — inventory and capability catalog
+
+- inventory explicit `.env`/schema keys without reading secret values;
+- freeze hardcoded Codex, DeepSeek, SearXNG, QQ SDK, MCP, and Peekaboo decisions;
+- record upstream-managed, passthrough, observed-only, and locked surfaces;
+- probe installed versions and QQ SDK declaration types when available;
+- emit stable source and runtime fingerprints;
+- do not change production behavior.
+
+Later Phase 4.0 stages will introduce the unified requested/effective
+configuration authority, native adapters, renderers, and drift diagnostics.
+
 ## Phase 4 — macOS GUI
 
 - Peekaboo MCP health and required-tool checks
