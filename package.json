@@ -23,6 +23,12 @@
     "bridge:start": "tsx scripts/responses-bridge.ts",
     "bridge:probe": "tsx scripts/responses-bridge-probe.ts",
     "codex:deepseek:probe": "tsx scripts/codex-deepseek-probe.ts",
+    "codex:deepseek:web-search:probe": "tsx scripts/codex-deepseek-web-search-probe.ts",
+    "searxng:prepare": "tsx scripts/searxng.ts prepare",
+    "searxng:up": "tsx scripts/searxng.ts up",
+    "searxng:down": "tsx scripts/searxng.ts down",
+    "searxng:status": "tsx scripts/searxng.ts status",
+    "searxng:health": "tsx scripts/searxng.ts health",
     "mac:smoke": "bash scripts/mac-smoke.sh",
     "dev:watch": "tsx watch src/main.ts"
   },

@@ -30,7 +30,7 @@ interface TurnCompletedParams {
   };
 }
 
-interface ItemCompletedParams {
+interface ItemLifecycleParams {
   threadId?: string;
   turnId?: string;
   item?: {
@@ -38,6 +38,10 @@ interface ItemCompletedParams {
     type?: string;
     text?: string;
     phase?: string;
+    server?: string;
+    tool?: string;
+    status?: string;
+    error?: unknown;
   };
 }
 
@@ -157,9 +161,32 @@ export class CodexAppServerRuntime implements AgentRuntime {
       onEvent?.({ type: "assistant.delta", text: delta });
     };
 
-    const itemCompletedListener = (value: unknown) => {
-      const params = value as ItemCompletedParams;
+    const itemStartedListener = (value: unknown) => {
+      const params = value as ItemLifecycleParams;
       if (!matchesTurn(params, threadId, activeTurnId)) return;
+      const tool = readMcpToolEvent(params.item);
+      if (!tool) return;
+      onEvent?.({
+        type: "tool.started",
+        name: tool.name,
+        detail: tool.detail,
+      });
+    };
+
+    const itemCompletedListener = (value: unknown) => {
+      const params = value as ItemLifecycleParams;
+      if (!matchesTurn(params, threadId, activeTurnId)) return;
+
+      const tool = readMcpToolEvent(params.item);
+      if (tool) {
+        onEvent?.({
+          type: "tool.completed",
+          name: tool.name,
+          detail: tool.detail,
+        });
+        return;
+      }
+
       if (params.item?.type !== "agentMessage" || typeof params.item.text !== "string") return;
       if (params.item.phase === "final_answer") {
         authoritativeText = params.item.text;
@@ -193,6 +220,7 @@ export class CodexAppServerRuntime implements AgentRuntime {
     };
 
     this.#client.on("notification:item/agentMessage/delta", deltaListener);
+    this.#client.on("notification:item/started", itemStartedListener);
     this.#client.on("notification:item/completed", itemCompletedListener);
     this.#client.on("notification:error", errorListener);
     this.#client.on("notification:turn/completed", turnCompletedListener);
@@ -261,6 +289,7 @@ export class CodexAppServerRuntime implements AgentRuntime {
       throw wrapped;
     } finally {
       this.#client.off("notification:item/agentMessage/delta", deltaListener);
+      this.#client.off("notification:item/started", itemStartedListener);
       this.#client.off("notification:item/completed", itemCompletedListener);
       this.#client.off("notification:error", errorListener);
       this.#client.off("notification:turn/completed", turnCompletedListener);
@@ -397,6 +426,29 @@ export class CodexAppServerRuntime implements AgentRuntime {
       });
     }
   }
+}
+
+
+function readMcpToolEvent(
+  item: ItemLifecycleParams["item"],
+): { name: string; detail: Record<string, unknown> } | undefined {
+  if (
+    item?.type !== "mcpToolCall"
+    || typeof item.server !== "string"
+    || typeof item.tool !== "string"
+  ) {
+    return undefined;
+  }
+
+  return {
+    name: `${item.server}/${item.tool}`,
+    detail: {
+      server: item.server,
+      tool: item.tool,
+      status: item.status ?? "unknown",
+      ...(item.error !== undefined ? { error: item.error } : {}),
+    },
+  };
 }
 
 function matchesTurn(

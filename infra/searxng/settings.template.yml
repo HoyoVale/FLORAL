@@ -1,0 +1,28 @@
+use_default_settings: true
+
+general:
+  debug: false
+  instance_name: "FLORAL Search"
+
+search:
+  safe_search: 1
+  autocomplete: ""
+  default_lang: "auto"
+  formats:
+    - html
+    - json
+
+server:
+  port: 8080
+  bind_address: "0.0.0.0"
+  base_url: "http://127.0.0.1:8888/"
+  secret_key: "__FLORAL_SEARXNG_SECRET__"
+  limiter: false
+  public_instance: false
+  image_proxy: false
+  method: "GET"
+
+outgoing:
+  request_timeout: 5.0
+  max_request_timeout: 10.0
+  enable_http2: true

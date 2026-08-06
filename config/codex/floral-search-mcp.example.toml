@@ -1,0 +1,16 @@
+# Add this alongside the FLORAL DeepSeek provider configuration.
+# The package version is deliberately pinned.
+# Only search is exposed; web_url_read remains disabled until SSRF hardening lands.
+
+[mcp_servers.floral_search]
+command = "npx"
+args = ["-y", "mcp-searxng@1.0.3"]
+env = { SEARXNG_URL = "http://127.0.0.1:8888", NO_PROXY = "127.0.0.1,localhost,::1" }
+enabled_tools = ["searxng_web_search"]
+required = true
+startup_timeout_sec = 60
+tool_timeout_sec = 45
+default_tools_approval_mode = "approve"
+
+[mcp_servers.floral_search.tools.searxng_web_search]
+approval_mode = "approve"

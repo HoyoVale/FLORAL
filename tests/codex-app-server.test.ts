@@ -66,6 +66,41 @@ describe("CodexAppServerRuntime", () => {
     }
   });
 
+
+  it("emits bounded MCP tool lifecycle events", async () => {
+    const runtime = createRuntime("mcp-tool");
+    const events: AgentEvent[] = [];
+    try {
+      await runtime.start();
+      const result = await runtime.run(
+        { text: "search", cwd: process.cwd() },
+        (event) => events.push(event),
+      );
+
+      expect(result.finalText).toBe("search complete");
+      expect(events).toContainEqual({
+        type: "tool.started",
+        name: "floral_search/searxng_web_search",
+        detail: {
+          server: "floral_search",
+          tool: "searxng_web_search",
+          status: "inProgress",
+        },
+      });
+      expect(events).toContainEqual({
+        type: "tool.completed",
+        name: "floral_search/searxng_web_search",
+        detail: {
+          server: "floral_search",
+          tool: "searxng_web_search",
+          status: "completed",
+        },
+      });
+    } finally {
+      await runtime.stop();
+    }
+  });
+
   it("surfaces provider usage limits as a typed error", async () => {
     const runtime = createRuntime("quota");
     try {

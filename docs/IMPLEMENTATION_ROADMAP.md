@@ -38,13 +38,21 @@
 - direct bridge probe and real Codex App Server end-to-end probe
 - fail closed on unsupported Responses item and tool types
 
-### Phase 2B.2 — bridge hardening
+### Phase 2B.2-A — local web search tool
+
+- loopback-only SearXNG Docker development service
+- pinned open-source `mcp-searxng@1.0.3` stdio adapter
+- expose only `searxng_web_search`; keep URL reading disabled
+- bounded MCP tool lifecycle events
+- Codex → DeepSeek → MCP → SearXNG multi-turn E2E probe
+
+### Phase 2B.2-B — bridge and search hardening
 
 - captured Codex request compatibility fixtures
-- namespace/MCP tool normalization where a verified mapping exists
 - bounded retries, concurrency and backpressure
-- persistent service lifecycle and diagnostics
-- multi-turn tool execution E2E
+- persistent bridge/search service lifecycle and diagnostics
+- pin the validated SearXNG image digest
+- SSRF-safe URL reading only after explicit policy work
 
 ## Phase 3 — real QQ + persistent identity
 

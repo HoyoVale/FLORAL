@@ -3,6 +3,7 @@ import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { CodexAppServerRuntime } from "../src/agent/codex-app-server.js";
+import { buildCodexDeepSeekConfig } from "../src/agent/codex-deepseek-config.js";
 import { CodexRuntimeError } from "../src/agent/codex-errors.js";
 import { createResponsesBridge } from "../src/agent/bridge/bridge-factory.js";
 import { loadEnv } from "../src/config/env.js";
@@ -19,23 +20,15 @@ console.log("probe.chain=codex-app-server->floral-bridge->deepseek");
 console.log(`probe.bridge_url=${address.baseUrl}`);
 console.log(`probe.model=${env.DEEPSEEK_MODEL}`);
 
-const config = [
-  `model = ${tomlString(env.DEEPSEEK_MODEL)}`,
-  `model_provider = "floral-deepseek"`,
-  `model_reasoning_effort = "high"`,
-  `web_search = "disabled"`,  ``,
-  `[model_providers.floral-deepseek]`,
-  `name = "FLORAL DeepSeek Bridge"`,
-  `base_url = ${tomlString(address.baseUrl)}`,
-  `wire_api = "responses"`,
-  `env_key = "FLORAL_BRIDGE_TOKEN"`,
-  `request_max_retries = 0`,
-  `stream_max_retries = 0`,
-  `stream_idle_timeout_ms = ${env.DEEPSEEK_REQUEST_TIMEOUT_MS}`,
-  `supports_websockets = false`,
-  ``,
-].join("\n");
-await writeFile(join(codexHome, "config.toml"), config, { encoding: "utf8", mode: 0o600 });
+const config = buildCodexDeepSeekConfig({
+  model: env.DEEPSEEK_MODEL,
+  bridgeBaseUrl: address.baseUrl,
+  streamIdleTimeoutMs: env.DEEPSEEK_REQUEST_TIMEOUT_MS,
+});
+await writeFile(join(codexHome, "config.toml"), config, {
+  encoding: "utf8",
+  mode: 0o600,
+});
 
 const childEnv: NodeJS.ProcessEnv = {
   ...process.env,
@@ -91,8 +84,4 @@ try {
   await runtime.stop();
   await bridge.stop();
   await rm(codexHome, { recursive: true, force: true });
-}
-
-function tomlString(value: string): string {
-  return JSON.stringify(value);
 }

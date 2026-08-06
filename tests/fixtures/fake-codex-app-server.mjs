@@ -125,6 +125,39 @@ lines.on("line", (line) => {
         return;
       }
 
+      if (scenario === "mcp-tool") {
+        send({
+          method: "item/started",
+          params: {
+            threadId: activeThreadId,
+            turnId: activeTurnId,
+            item: {
+              id: "mcp_1",
+              type: "mcpToolCall",
+              server: "floral_search",
+              tool: "searxng_web_search",
+              status: "inProgress",
+            },
+          },
+        });
+        send({
+          method: "item/completed",
+          params: {
+            threadId: activeThreadId,
+            turnId: activeTurnId,
+            item: {
+              id: "mcp_1",
+              type: "mcpToolCall",
+              server: "floral_search",
+              tool: "searxng_web_search",
+              status: "completed",
+            },
+          },
+        });
+        sendSuccess(activeThreadId, activeTurnId, "search complete");
+        return;
+      }
+
       if (scenario === "timeout") return;
       if (scenario === "exit-turn") {
         process.stderr.write("fixture forced exit\n");
