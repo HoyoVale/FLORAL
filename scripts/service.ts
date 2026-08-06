@@ -15,6 +15,7 @@ import { fileURLToPath } from "node:url";
 import { loadEnv } from "../src/config/env.js";
 import { loadProjectEnv } from "../src/config/load-project-env.js";
 import { readServiceState } from "../src/runtime/service-state.js";
+import { waitForLaunchAgentShutdown } from "../src/service/launchagent-lifecycle.js";
 import {
   buildServicePath,
   FLORAL_LAUNCH_AGENT_LABEL,
@@ -144,7 +145,7 @@ async function install(): Promise<void> {
   });
 
   const previous = await readServiceState(paths.state);
-  if (await isLoaded()) await bootout();
+  await stopLoadedLaunchAgent(previous?.pid);
   await writeFile(launchAgentPath, plist, { encoding: "utf8", mode: 0o600 });
   await chmod(launchAgentPath, 0o600);
   await runExecutable("/usr/bin/plutil", ["-lint", launchAgentPath]);
@@ -188,14 +189,15 @@ async function status(): Promise<void> {
 }
 
 async function restart(): Promise<void> {
-  if (await isLoaded()) await bootout();
+  const previous = await readServiceState(paths.state);
+  await stopLoadedLaunchAgent(previous?.pid);
   await start();
   console.log("service.restart=ok");
 }
 
 async function stop(): Promise<void> {
-  if (await isLoaded()) await bootout();
-  await waitForStopped(30_000);
+  const previous = await readServiceState(paths.state);
+  await stopLoadedLaunchAgent(previous?.pid);
   console.log("service.stop=ok");
 }
 
@@ -230,7 +232,8 @@ async function recoveryProbe(): Promise<void> {
 }
 
 async function uninstall(): Promise<void> {
-  if (await isLoaded()) await bootout();
+  const previous = await readServiceState(paths.state);
+  await stopLoadedLaunchAgent(previous?.pid);
   await rm(launchAgentPath, { force: true });
   console.log("service.uninstall=ok");
   console.log("service.data_preserved=true");
@@ -261,25 +264,45 @@ async function isLoaded(): Promise<boolean> {
   return result.code === 0;
 }
 
+async function stopLoadedLaunchAgent(previousPid: number | undefined): Promise<void> {
+  if (await isLoaded()) await bootout();
+  await waitForLaunchAgentShutdown({
+    previousPid,
+    timeoutMs: 30_000,
+    isLoaded,
+    isProcessAlive,
+  });
+}
+
 async function bootout(): Promise<void> {
-  const result = await runCapture("/bin/launchctl", ["bootout", serviceTarget], true);
+  const args = ["bootout", serviceTarget];
+  const result = await runCapture("/bin/launchctl", args, true);
   if (result.code !== 0 && !/could not find service|no such process/i.test(result.stderr)) {
-    throw new Error(`launchctl bootout failed with exit code ${String(result.code)}`);
+    throw new Error(formatCommandFailure("/bin/launchctl", args, result));
   }
 }
 
 async function runLaunchctl(args: string[]): Promise<void> {
-  const result = await runCapture("/bin/launchctl", args, false);
+  const result = await runCapture("/bin/launchctl", args, true);
   if (result.code !== 0) {
-    throw new Error(`launchctl ${args[0] ?? ""} failed with exit code ${String(result.code)}`);
+    throw new Error(formatCommandFailure("/bin/launchctl", args, result));
   }
 }
 
 async function runExecutable(executable: string, args: string[]): Promise<void> {
   const result = await runCapture(executable, args, true);
   if (result.code !== 0) {
-    throw new Error(`${executable} failed with exit code ${String(result.code)}`);
+    throw new Error(formatCommandFailure(executable, args, result));
   }
+}
+
+function formatCommandFailure(
+  executable: string,
+  args: string[],
+  result: { code: number; stdout: string; stderr: string },
+): string {
+  const details = [result.stderr, result.stdout].filter(Boolean).join(" | ");
+  return `${executable} ${args.join(" ")} failed with exit code ${String(result.code)}${details ? `: ${details}` : ""}`;
 }
 
 async function waitForReady(
@@ -350,16 +373,6 @@ async function printTimeoutLog(name: string, path: string): Promise<void> {
     );
   }
   console.error(`service.ready_timeout.${name}.end`);
-}
-
-async function waitForStopped(timeoutMs: number): Promise<void> {
-  const deadline = Date.now() + timeoutMs;
-  while (Date.now() < deadline) {
-    const state = await readServiceState(paths.state);
-    if (!state || state.phase === "stopped" || !isProcessAlive(state.pid)) return;
-    await delay(500);
-  }
-  throw new Error("FLORAL service did not stop before timeout");
 }
 
 function isProcessAlive(pid: number): boolean {

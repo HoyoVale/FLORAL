@@ -53,6 +53,15 @@ corepack pnpm service:stop
 corepack pnpm service:start
 ```
 
+Reinstall, restart, stop, and uninstall wait for both conditions before continuing:
+
+- launchd no longer reports the previous job as loaded;
+- the previous FLORAL application PID has actually exited.
+
+A `stopped` state-file phase alone is not treated as full shutdown. This prevents
+`launchctl bootstrap` code 5 races while the prior runner is still finishing its
+graceful shutdown.
+
 Uninstall the LaunchAgent while preserving local data:
 
 ```bash
