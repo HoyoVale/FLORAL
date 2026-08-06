@@ -1,10 +1,11 @@
+import { resolve } from "node:path";
 import { CodexAppServerRuntime } from "./agent/codex-app-server.js";
 import { MockAgentRuntime } from "./agent/mock-agent.js";
 import { loadEnv } from "./config/env.js";
 import { loadProjectEnv } from "./config/load-project-env.js";
 import type { AgentRuntime, ChatTransport } from "./core/contracts.js";
 import { GatewayService } from "./service/gateway.js";
-import { MemoryThreadStore } from "./storage/memory-thread-store.js";
+import { SqliteGatewayStore } from "./storage/sqlite.js";
 import { MockQqTransport } from "./transport/qq/mock-qq-transport.js";
 import { QqTransport } from "./transport/qq/qq-transport.js";
 
@@ -12,7 +13,10 @@ loadProjectEnv();
 const env = loadEnv();
 
 const transport: ChatTransport = env.QQ_MODE === "real"
-  ? new QqTransport({ appId: env.QQBOT_APP_ID!, appSecret: env.QQBOT_APP_SECRET! })
+  ? new QqTransport({
+      appId: env.QQBOT_APP_ID!,
+      appSecret: env.QQBOT_APP_SECRET!,
+    })
   : new MockQqTransport();
 
 const agent: AgentRuntime = env.CODEX_MODE === "real"
@@ -24,11 +28,19 @@ const agent: AgentRuntime = env.CODEX_MODE === "real"
     })
   : new MockAgentRuntime();
 
+const store = await SqliteGatewayStore.open(resolve(env.DATABASE_PATH));
 const gateway = new GatewayService(
   transport,
   agent,
-  new MemoryThreadStore(),
-  { cwd: env.CODEX_CWD, ...(env.CODEX_MODEL ? { model: env.CODEX_MODEL } : {}) },
+  store,
+  {
+    cwd: env.CODEX_CWD,
+    ...(env.CODEX_MODEL ? { model: env.CODEX_MODEL } : {}),
+    ...(env.OWNER_PAIRING_CODE
+      ? { ownerPairingCode: env.OWNER_PAIRING_CODE }
+      : {}),
+    trustMockOwner: env.MOCK_TRUST_OWNER,
+  },
 );
 
 const shutdown = async (signal: string) => {

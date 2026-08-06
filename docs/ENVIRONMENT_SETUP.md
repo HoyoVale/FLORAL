@@ -28,6 +28,29 @@ Run `corepack pnpm codex:schema` on the target Mac after installing/updating Cod
 
 Create an official QQ bot, record AppID/AppSecret, and keep mock mode until the bot can receive and send a private test message. Configure `QQ_MODE=real` only on the Mac or a secured integration environment.
 
+Before real mode, generate a random owner pairing code with at least 12 characters and store it only in `.env`:
+
+```dotenv
+OWNER_PAIRING_CODE=<local-random-value>
+```
+
+The first authorized private QQ identity claims ownership with `/pair <code>`. Unknown identities fail closed before reaching Codex.
+
+## Gateway database
+
+Persistent identity, conversation, thread, deduplication, and audit state defaults to:
+
+```dotenv
+DATABASE_PATH=./data/floral.sqlite
+```
+
+The `data/*.sqlite*` files are ignored by Git. Validate a development database with:
+
+```bash
+corepack pnpm storage:doctor
+corepack pnpm storage:probe
+```
+
 ## Better Auth preparation
 
 The first private QQ-only MVP may bind QQ OpenID directly and keep `AUTH_MODE=local`. Better Auth becomes active when a web admin or independent account/session surface is introduced. It is already included to avoid a later identity migration.

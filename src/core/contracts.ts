@@ -1,4 +1,14 @@
-import type { AgentEvent, AgentRunRequest, AgentRunResult, IncomingMessage, OutgoingMessage } from "./types.js";
+import type {
+  AgentEvent,
+  AgentRunRequest,
+  AgentRunResult,
+  AuditEventInput,
+  ExternalIdentity,
+  IncomingMessage,
+  OutgoingMessage,
+  ResolvedGatewayIdentity,
+  TransportKind,
+} from "./types.js";
 
 export interface ChatTransport {
   readonly name: string;
@@ -15,7 +25,18 @@ export interface AgentRuntime {
   stop(): Promise<void>;
 }
 
-export interface ThreadStore {
+export interface GatewayStore {
+  resolveIdentity(identity: ExternalIdentity): Promise<ResolvedGatewayIdentity | undefined>;
+  claimOwner(identity: ExternalIdentity): Promise<ResolvedGatewayIdentity>;
+  hasOwner(transport: TransportKind, botId: string): Promise<boolean>;
+  acceptMessage(
+    identity: ExternalIdentity,
+    messageId: string,
+    receivedAt: Date,
+  ): Promise<boolean>;
   getActiveThread(conversationId: string): Promise<string | undefined>;
   setActiveThread(conversationId: string, threadId: string): Promise<void>;
+  clearActiveThread(conversationId: string): Promise<void>;
+  appendAudit(event: AuditEventInput): Promise<void>;
+  close(): Promise<void>;
 }

@@ -16,6 +16,8 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "doctor": "node scripts/doctor.mjs",
+    "storage:doctor": "tsx scripts/storage-doctor.ts",
+    "storage:probe": "tsx scripts/storage-probe.ts",
     "bootstrap:validate": "node scripts/validate-bootstrap.mjs",
     "codex:schema": "bash scripts/generate-codex-schema.sh",
     "codex:probe": "tsx scripts/codex-probe.ts",
@@ -37,7 +39,7 @@
     "dev:watch": "tsx watch src/main.ts"
   },
   "dependencies": {
-    "@tencent-connect/qqbot-nodejs": "^1.0.2",
+    "@tencent-connect/qqbot-nodejs": "1.0.4",
     "better-auth": "^1.6.25",
     "better-sqlite3": "^12.2.0",
     "fastify": "^5.10.0",

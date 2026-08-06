@@ -1,4 +1,5 @@
 export type TransportKind = "qq" | "mock";
+export type GatewayRole = "owner" | "operator" | "viewer";
 
 export interface ExternalIdentity {
   transport: TransportKind;
@@ -39,4 +40,18 @@ export interface AgentRunRequest {
 export interface AgentRunResult {
   threadId: string;
   finalText: string;
+}
+
+export interface ResolvedGatewayIdentity {
+  userId: string;
+  role: GatewayRole;
+  conversationId: string;
+}
+
+export interface AuditEventInput {
+  userId?: string;
+  conversationId?: string;
+  eventType: string;
+  payload?: Record<string, unknown>;
+  createdAt?: Date;
 }

@@ -9,7 +9,7 @@ importers:
   .:
     dependencies:
       '@tencent-connect/qqbot-nodejs':
-        specifier: ^1.0.2
+        specifier: 1.0.4
         version: 1.0.4
       better-auth:
         specifier: ^1.6.25

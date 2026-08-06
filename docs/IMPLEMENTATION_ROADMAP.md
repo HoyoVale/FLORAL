@@ -79,11 +79,22 @@
 
 ## Phase 3 — real QQ + persistent identity
 
-- official QQ SDK private chat
-- owner pairing by QQ OpenID
-- SQLite conversation/thread mapping
-- audit events
-- `/new`, `/status`, and `/stop` commands
+### Phase 3A — persistent gateway state and command policy
+
+- SQLite users, external identities, conversations, message receipts, and audit events
+- owner pairing policy with constant-time code comparison and bounded failed attempts
+- persistent Codex thread mapping and duplicate-message rejection
+- `/new`, `/status`, and `/stop` command core
+- one active agent run per conversation and interrupt propagation
+- mock-mode and cross-platform tests before enabling the public transport
+
+### Phase 3B — verified QQ private-chat transport
+
+- validate the exact current official QQ SDK runtime contract on the Mac
+- C2C private-message receive and passive reply smoke test
+- message length/chunking, reply-target lifetime, reconnect, and delivery-error handling
+- OpenID and conversation mapping evidence without logging identifiers
+- end-to-end QQ → FLORAL → Codex → DeepSeek → QQ probe
 
 ## Phase 4 — macOS GUI
 

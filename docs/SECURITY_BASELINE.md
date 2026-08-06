@@ -22,3 +22,13 @@ Remote networking is external to FLORAL. Do not publish SSH, Screen Sharing, Cod
 ## Secrets
 
 QQ AppSecret, DeepSeek API key, Better Auth secret, and any future OAuth tokens must never appear in source control, model prompts, audit payloads, or QQ replies.
+
+
+## Identity and persistence
+
+- Unknown QQ identities fail closed before a model turn is created.
+- The owner pairing code must be random, at least 12 characters, and stored only outside Git.
+- Pairing attempts are rate-limited and the code is never persisted.
+- Duplicate transport message IDs are rejected before authorization and execution.
+- SQLite audit records store bounded event metadata only, never prompts, responses, credentials, reasoning, tool arguments, or tool result bodies.
+- `/status` must not reveal OpenIDs, internal IDs, or Codex thread IDs.

@@ -5,6 +5,12 @@ const optionalNonEmptyString = z.preprocess(
   (value: unknown) => typeof value === "string" && value.trim() === "" ? undefined : value,
   z.string().trim().min(1).optional(),
 );
+const booleanString = z.enum(["true", "false"])
+  .transform((value: "true" | "false") => value === "true");
+const optionalPairingCode = z.preprocess(
+  (value: unknown) => typeof value === "string" && value.trim() === "" ? undefined : value,
+  z.string().trim().min(12).max(256).optional(),
+);
 
 const envSchema = z.object({
   NODE_ENV: z.enum(["development", "test", "production"]).default("development"),
@@ -12,6 +18,8 @@ const envSchema = z.object({
   PORT: z.coerce.number().int().min(1).max(65535).default(8787),
   LOG_LEVEL: z.string().default("info"),
   DATA_DIR: z.string().default("./data"),
+  DATABASE_PATH: z.string().trim().min(1).default("./data/floral.sqlite"),
+  MOCK_TRUST_OWNER: booleanString.default(true),
   QQ_MODE: modeSchema.default("mock"),
   CODEX_MODE: modeSchema.default("mock"),
   MACOS_MODE: modeSchema.default("mock"),
@@ -46,7 +54,7 @@ const envSchema = z.object({
   SEARXNG_MCP_TOOL_TIMEOUT_SEC: z.coerce.number().int().positive().default(45),
   BETTER_AUTH_SECRET: z.string().min(32).optional(),
   BETTER_AUTH_URL: z.string().url().default("http://127.0.0.1:8787"),
-  OWNER_PAIRING_CODE: optionalNonEmptyString,
+  OWNER_PAIRING_CODE: optionalPairingCode,
   PEEKABOO_COMMAND: z.string().default("peekaboo"),
 });
 
@@ -73,6 +81,9 @@ export function loadEnv(source: NodeJS.ProcessEnv = process.env): AppEnv {
   if (parsed.data.QQ_MODE === "real") {
     if (!parsed.data.QQBOT_APP_ID || !parsed.data.QQBOT_APP_SECRET) {
       throw new Error("QQ_MODE=real requires QQBOT_APP_ID and QQBOT_APP_SECRET");
+    }
+    if (!parsed.data.OWNER_PAIRING_CODE) {
+      throw new Error("QQ_MODE=real requires OWNER_PAIRING_CODE with at least 12 characters");
     }
   }
 

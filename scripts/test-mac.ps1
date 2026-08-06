@@ -16,8 +16,10 @@ corepack pnpm bootstrap:validate
 corepack pnpm typecheck
 corepack pnpm test
 corepack pnpm build
+corepack pnpm storage:probe
 mkdir -p artifacts
 corepack pnpm doctor > artifacts/doctor.txt 2>&1 || true
+corepack pnpm storage:doctor > artifacts/storage-doctor.txt 2>&1 || true
 if [ "`$(uname -s)" = "Darwin" ]; then
   bash scripts/mac-smoke.sh > artifacts/mac-smoke.txt 2>&1 || true
 fi
