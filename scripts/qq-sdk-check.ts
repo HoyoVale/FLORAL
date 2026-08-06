@@ -1,5 +1,5 @@
-import { createRequire } from "node:module";
 import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { access, readFile } from "node:fs/promises";
 import * as sdk from "@tencent-connect/qqbot-nodejs";
 
@@ -37,8 +37,8 @@ console.log("qq.sdk.export.kvSessionPersistence=ok");
 console.log("qq.sdk.contract=ok");
 
 async function resolveInstalledVersion(): Promise<string> {
-  const require = createRequire(import.meta.url);
-  let current = dirname(require.resolve("@tencent-connect/qqbot-nodejs"));
+  const resolvedEntry = import.meta.resolve("@tencent-connect/qqbot-nodejs");
+  let current = dirname(fileURLToPath(resolvedEntry));
 
   for (let depth = 0; depth < 8; depth += 1) {
     const candidate = join(current, "package.json");

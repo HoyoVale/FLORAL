@@ -25,7 +25,7 @@ interface QqBotClient {
     ) => Promise<void>,
   ): void;
   start(signal?: AbortSignal): Promise<void>;
-  stop(): Promise<void>;
+  stop(): void | Promise<void>;
   sendText(target: ReplyTarget, text: string): Promise<unknown>;
 }
 

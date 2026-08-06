@@ -32,7 +32,7 @@ describe("QQ text chunking", () => {
     });
     expect(chunks).toHaveLength(2);
     expect(Array.from(chunks[1] ?? "")).toHaveLength(20);
-    expect(chunks[1]).toEndWith("[cut]");
+    expect(chunks[1]?.endsWith("[cut]")).toBe(true);
   });
 
   it("provides a bounded placeholder for empty model output", () => {
