@@ -30,13 +30,21 @@
 - fake HTTP provider tests on Windows and CI
 - validate `deepseek-v4-flash` before introducing protocol translation
 
-### Phase 2B — Codex Responses bridge
+### Phase 2B.1 — Codex Responses bridge baseline
 
-- implement Responses request → DeepSeek Chat Completions translation
-- translate streaming text, reasoning, function calls, and terminal status
-- expose a loopback-only `/v1/responses` endpoint
-- configure Codex through a user-level custom model provider
-- end-to-end App Server → bridge → DeepSeek validation
+- loopback-only authenticated `/v1/responses` bridge
+- Responses messages → DeepSeek Chat Completions translation
+- streamed text and function/custom tool-call translation
+- direct bridge probe and real Codex App Server end-to-end probe
+- fail closed on unsupported Responses item and tool types
+
+### Phase 2B.2 — bridge hardening
+
+- captured Codex request compatibility fixtures
+- namespace/MCP tool normalization where a verified mapping exists
+- bounded retries, concurrency and backpressure
+- persistent service lifecycle and diagnostics
+- multi-turn tool execution E2E
 
 ## Phase 3 — real QQ + persistent identity
 

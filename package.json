@@ -20,6 +20,9 @@
     "codex:schema": "bash scripts/generate-codex-schema.sh",
     "codex:probe": "tsx scripts/codex-probe.ts",
     "deepseek:probe": "tsx scripts/deepseek-probe.ts",
+    "bridge:start": "tsx scripts/responses-bridge.ts",
+    "bridge:probe": "tsx scripts/responses-bridge-probe.ts",
+    "codex:deepseek:probe": "tsx scripts/codex-deepseek-probe.ts",
     "mac:smoke": "bash scripts/mac-smoke.sh",
     "dev:watch": "tsx watch src/main.ts"
   },

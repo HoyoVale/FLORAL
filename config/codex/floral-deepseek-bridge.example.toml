@@ -1,0 +1,15 @@
+# Merge into ~/.codex/config.toml only after the bridge passes its probes.
+# Keep the bridge bound to loopback.
+model = "deepseek-v4-flash"
+model_provider = "floral-deepseek"
+model_reasoning_effort = "high"
+
+[model_providers.floral-deepseek]
+name = "FLORAL DeepSeek Bridge"
+base_url = "http://127.0.0.1:8790/v1"
+wire_api = "responses"
+env_key = "FLORAL_BRIDGE_TOKEN"
+request_max_retries = 0
+stream_max_retries = 0
+stream_idle_timeout_ms = 120000
+supports_websockets = false
