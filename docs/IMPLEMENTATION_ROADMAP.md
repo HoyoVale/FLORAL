@@ -132,8 +132,19 @@
 - emit stable source and runtime fingerprints;
 - do not change production behavior.
 
-Later Phase 4.0 stages will introduce the unified requested/effective
-configuration authority, native adapters, renderers, and drift diagnostics.
+### Phase 4.0B — configuration federation core
+
+- canonical non-secret `config/floral.toml`;
+- typed requested and effective configuration;
+- environment override provenance for every inventoried key;
+- SecretRef presence metadata without secret values;
+- locked-field and cross-component validation;
+- separate requested/effective fingerprints;
+- private atomic effective-config artifacts;
+- no production runtime adoption yet.
+
+Later Phase 4.0 stages will add native component adapters, deterministic
+renderers, runtime adoption, and drift diagnostics.
 
 ## Phase 4 — macOS GUI
 

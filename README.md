@@ -37,6 +37,21 @@ corepack pnpm dev
 
 The default `QQ_MODE=mock` exposes a terminal chat loop. Type a message and the mock agent echoes a deterministic response. This validates configuration, message routing, and shutdown behavior without contacting any external service.
 
+## Inspect the unified configuration authority
+
+Phase 4.0B keeps production behavior unchanged while resolving the requested
+`config/floral.toml` and explicit `.env` overrides into one redacted effective
+configuration:
+
+```bash
+corepack pnpm config:validate
+corepack pnpm config:show
+corepack pnpm config:effective:write
+```
+
+See `docs/PHASE4_CONFIG_FEDERATION_CORE.md` for precedence, locked fields,
+SecretRef handling, fingerprints, and the non-goals of this phase.
+
 ## Prepare the Mac mini
 
 Copy or clone the project onto the Mac and run:
