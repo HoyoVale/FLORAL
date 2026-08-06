@@ -1,5 +1,5 @@
 import { join, resolve } from "node:path";
-import { CodexAppServerRuntime } from "./agent/codex-app-server.js";
+import { ManagedCodexDeepSeekRuntime } from "./agent/managed-codex-deepseek-runtime.js";
 import { MockAgentRuntime } from "./agent/mock-agent.js";
 import { loadEnv } from "./config/env.js";
 import { loadProjectEnv } from "./config/load-project-env.js";
@@ -27,12 +27,7 @@ const transport: ChatTransport = env.QQ_MODE === "real"
   : new MockQqTransport();
 
 const agent: AgentRuntime = env.CODEX_MODE === "real"
-  ? new CodexAppServerRuntime({
-      command: env.CODEX_COMMAND,
-      args: env.CODEX_ARGS.split(/\s+/).filter(Boolean),
-      requestTimeoutMs: env.CODEX_REQUEST_TIMEOUT_MS,
-      defaultModel: env.CODEX_MODEL,
-    })
+  ? new ManagedCodexDeepSeekRuntime(env)
   : new MockAgentRuntime();
 
 const store = await SqliteGatewayStore.open(resolve(env.DATABASE_PATH));

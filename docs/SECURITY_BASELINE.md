@@ -36,3 +36,12 @@ QQ AppSecret, DeepSeek API key, Better Auth secret, and any future OAuth tokens 
 - QQ SDK session-resume files remain local and are treated as credential-adjacent state.
 - SQLite audit records store bounded event metadata only, never prompts, responses, credentials, reasoning, tool arguments, or tool result bodies.
 - `/status` must not reveal OpenIDs, internal IDs, or Codex thread IDs.
+
+
+## Managed provider runtime
+
+- Real gateway mode generates a fresh random bridge token for each process.
+- The bridge binds to loopback and uses an ephemeral port.
+- Codex receives the bridge token but not the DeepSeek API key.
+- Temporary Codex configuration is mode 0600 and deleted during shutdown.
+- Full-chain acceptance logs only bounded milestones and never user or provider content.

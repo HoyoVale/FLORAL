@@ -44,6 +44,8 @@ describe("Phase 3 environment configuration", () => {
     expect(env.QQBOT_MAX_REPLY_CHUNKS).toBe(4);
     expect(env.QQBOT_OUTBOUND_TIMEOUT_MS).toBe(30_000);
     expect(env.QQBOT_PROBE_TIMEOUT_MS).toBe(120_000);
+    expect(env.QQBOT_FULL_CHAIN_TIMEOUT_MS).toBe(300_000);
+    expect(env.QQBOT_RECONNECT_PROBE_TIMEOUT_MS).toBe(300_000);
   });
 
   it("rejects unsafe QQ reply and timeout bounds", () => {
@@ -53,6 +55,14 @@ describe("Phase 3 environment configuration", () => {
     expect(() => loadEnv({
       QQBOT_MAX_REPLY_CHUNKS: "6",
     })).toThrow("QQBOT_MAX_REPLY_CHUNKS");
+  });
+
+  it("requires a DeepSeek key for the managed real Codex stack", () => {
+    expect(() => loadEnv({ CODEX_MODE: "real" })).toThrow("DEEPSEEK_API_KEY");
+    expect(loadEnv({
+      CODEX_MODE: "real",
+      DEEPSEEK_API_KEY: "local-secret",
+    }).CODEX_MODE).toBe("real");
   });
 
 });

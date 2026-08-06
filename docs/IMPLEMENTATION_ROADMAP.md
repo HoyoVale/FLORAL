@@ -101,10 +101,12 @@
 
 #### Phase 3B.2 — real full-chain acceptance
 
+- managed Codex + Responses bridge lifecycle with ephemeral local credentials
 - owner pairing from the intended QQ account
 - QQ → SQLite → Codex → DeepSeek → QQ foreground smoke test
-- reconnect/resume evidence after process and network restart
-- LaunchAgent remains blocked until the foreground chain passes
+- persistent owner and Codex thread evidence after process restart
+- reconnect/resume evidence after network restart
+- LaunchAgent remains blocked until both acceptance probes pass
 
 ## Phase 4 — macOS GUI
 

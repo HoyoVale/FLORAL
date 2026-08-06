@@ -34,6 +34,8 @@ const envSchema = z.object({
   QQBOT_MAX_REPLY_CHUNKS: z.coerce.number().int().min(1).max(5).default(4),
   QQBOT_OUTBOUND_TIMEOUT_MS: z.coerce.number().int().min(1_000).max(120_000).default(30_000),
   QQBOT_PROBE_TIMEOUT_MS: z.coerce.number().int().min(10_000).max(10 * 60_000).default(120_000),
+  QQBOT_FULL_CHAIN_TIMEOUT_MS: z.coerce.number().int().min(30_000).max(20 * 60_000).default(300_000),
+  QQBOT_RECONNECT_PROBE_TIMEOUT_MS: z.coerce.number().int().min(30_000).max(20 * 60_000).default(300_000),
   CODEX_COMMAND: z.string().default("codex"),
   CODEX_ARGS: z.string().default("app-server"),
   CODEX_MODEL: optionalNonEmptyString,
@@ -84,6 +86,10 @@ export function loadEnv(source: NodeJS.ProcessEnv = process.env): AppEnv {
     throw new Error(
       "DEEPSEEK_RETRY_MAX_DELAY_MS must be greater than or equal to DEEPSEEK_RETRY_BASE_DELAY_MS",
     );
+  }
+
+  if (parsed.data.CODEX_MODE === "real" && !parsed.data.DEEPSEEK_API_KEY) {
+    throw new Error("CODEX_MODE=real requires DEEPSEEK_API_KEY");
   }
 
   if (parsed.data.QQ_MODE === "real") {

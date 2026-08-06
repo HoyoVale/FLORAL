@@ -50,6 +50,15 @@ OWNER_PAIRING_CODE=<local-random-value>
 
 The first authorized private QQ identity claims ownership with `/pair <code>`. Unknown identities fail closed before reaching Codex.
 
+After the passive-reply probe, validate the complete foreground chain with:
+
+```bash
+corepack pnpm qq:full-chain:probe
+corepack pnpm qq:reconnect:probe
+```
+
+In real Codex mode FLORAL starts an ephemeral loopback bridge and temporary Codex configuration itself. A separately running `bridge:start` process is not required for the main gateway.
+
 ## Gateway database
 
 Persistent identity, conversation, thread, deduplication, and audit state defaults to:
