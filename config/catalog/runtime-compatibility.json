@@ -1,0 +1,32 @@
+{
+  "schemaVersion": 1,
+  "reviewedAt": "2026-08-07",
+  "codex": {
+    "validatedVersions": [
+      "0.146.1"
+    ],
+    "versionPrefix": "codex-cli "
+  },
+  "qqSdk": {
+    "package": "@tencent-connect/qqbot-nodejs",
+    "validatedVersions": [
+      "1.0.4"
+    ],
+    "requiredExports": [
+      "QQBot",
+      "FileKVStore",
+      "kvSessionPersistence"
+    ],
+    "requiredMethods": [
+      "QQBot.prototype.start",
+      "QQBot.prototype.stop",
+      "QQBot.prototype.sendText"
+    ]
+  },
+  "searxng": {
+    "validatedImages": [
+      "docker.io/searxng/searxng@sha256:02aa607ecc87165ebe6212476a176b8984d891c01a2d130ad03a58109d13db77"
+    ],
+    "configEndpoint": "config"
+  }
+}

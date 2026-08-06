@@ -2,8 +2,10 @@ import { execFile } from "node:child_process";
 import { createHash } from "node:crypto";
 import { createRequire } from "node:module";
 import {
+  access,
   readFile,
   readdir,
+  realpath,
 } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
 import { promisify } from "node:util";
@@ -532,15 +534,13 @@ async function observeCommand(
 
 async function observeQqSdk(repositoryRoot: string): Promise<QqSdkDeclarationObservation> {
   try {
-    const requireFromProject = createRequire(join(repositoryRoot, "package.json"));
-    const entry = requireFromProject.resolve("@tencent-connect/qqbot-nodejs");
-    const packageRoot = await findPackageRoot(dirname(entry));
+    const packageRoot = await resolveQqSdkPackageRoot(repositoryRoot);
     if (!packageRoot) {
       return {
         declarationFileCount: 0,
         exportedSymbols: [],
         configLikeSymbols: [],
-        status: "error",
+        status: "not-installed",
         errorType: "PackageRootNotFound",
       };
     }
@@ -585,6 +585,29 @@ async function observeQqSdk(repositoryRoot: string): Promise<QqSdkDeclarationObs
       status: type === "MODULE_NOT_FOUND" ? "not-installed" : "error",
       errorType: type,
     };
+  }
+}
+
+
+async function resolveQqSdkPackageRoot(repositoryRoot: string): Promise<string | undefined> {
+  const direct = join(
+    repositoryRoot,
+    "node_modules",
+    "@tencent-connect",
+    "qqbot-nodejs",
+  );
+  try {
+    await access(join(direct, "package.json"));
+    return await realpath(direct).catch(() => direct);
+  } catch {
+    // Fall back to Node resolution for non-standard package layouts.
+  }
+  try {
+    const requireFromProject = createRequire(join(repositoryRoot, "package.json"));
+    const entry = requireFromProject.resolve("@tencent-connect/qqbot-nodejs");
+    return await findPackageRoot(dirname(entry));
+  } catch {
+    return undefined;
   }
 }
 

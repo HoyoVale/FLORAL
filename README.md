@@ -52,18 +52,25 @@ corepack pnpm config:effective:write
 See `docs/PHASE4_CONFIG_FEDERATION_CORE.md` for precedence, locked fields,
 SecretRef handling, fingerprints, and the non-goals of this phase.
 
-Phase 4.0C can also render and verify the native upstream configuration bundle
-without adopting it in production:
+Phase 4.0C renders the native upstream configuration bundle. Phase 4.0D then
+compares requested, effective, rendered, installed, and observed state without
+adopting the new renderers in production:
 
 ```bash
 corepack pnpm config:native
 corepack pnpm config:native:json
 corepack pnpm config:native:check
 corepack pnpm config:native:write
+corepack pnpm config:diagnostics
+corepack pnpm config:diagnostics:check
+corepack pnpm config:diagnostics:write
+corepack pnpm config:cutover:check
+corepack pnpm config:explain -- codex.native.reasoning_effort
 ```
 
 See `docs/PHASE4_NATIVE_CONFIG_RENDERERS.md` for the Codex, SearXNG, QQ SDK,
-and MCP artifact contracts.
+and MCP artifact contracts, and `docs/PHASE4_CONFIG_DRIFT_DIAGNOSTICS.md` for
+the drift report and controlled cutover gate.
 
 ## Prepare the Mac mini
 

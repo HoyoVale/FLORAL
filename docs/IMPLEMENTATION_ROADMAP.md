@@ -156,11 +156,13 @@
 
 ### Phase 4.0D — drift and runtime diagnostics
 
-- compare requested, rendered, installed, and observed configuration;
-- capture SearXNG effective engines/plugins and QQ SDK declaration surface;
-- verify Codex version/config compatibility;
-- explain per-key provenance and drift;
-- define the controlled production cutover gate.
+- compare requested, effective, rendered, installed, and observed configuration;
+- capture a bounded SearXNG effective engine/plugin/category surface and QQ SDK package surface;
+- verify reviewed Codex, QQ SDK, and SearXNG runtime compatibility;
+- explain per-key provenance and affected native artifacts;
+- persist a private redacted diagnostic report;
+- define a strict, non-destructive controlled production cutover gate;
+- keep production runtime generation unchanged until the gate is intentionally adopted.
 
 ## Phase 4 — macOS GUI
 
