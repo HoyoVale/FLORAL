@@ -50,12 +50,20 @@ OWNER_PAIRING_CODE=<local-random-value>
 
 The first authorized private QQ identity claims ownership with `/pair <code>`. Unknown identities fail closed before reaching Codex.
 
-After the passive-reply probe, validate the complete foreground chain with:
+After the passive-reply probe, validate the complete foreground chain. These
+real probes are exclusive production stacks and must not run alongside the
+LaunchAgent service:
 
 ```bash
+corepack pnpm service:stop
 corepack pnpm qq:full-chain:probe
 corepack pnpm qq:reconnect:probe
+corepack pnpm service:start
+corepack pnpm service:status
 ```
+
+`qq:full-chain:probe` also acquires the normal FLORAL instance lock and fails
+closed before opening QQ, SQLite, or Codex when another stack is already active.
 
 In real Codex mode FLORAL starts an ephemeral loopback bridge and manages the Codex configuration itself. Codex thread/session data remains under `CODEX_MANAGED_HOME` (default `./data/codex-runtime`) across process restarts, while the short-lived `config.toml` is removed during a clean shutdown. A separately running `bridge:start` process is not required for the main gateway.
 

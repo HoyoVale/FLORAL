@@ -8,6 +8,7 @@ const required = [
   "src/transport/qq/reply-target-cache.ts", "src/storage/sqlite.ts",
   "src/agent/managed-codex-deepseek-runtime.ts",
   "src/service/full-chain-acceptance.ts",
+  "src/service/probe-stack-guard.ts",
   "src/service/gateway-commands.ts", "docs/ENVIRONMENT_SETUP.md",
   "docs/MODEL_PROVIDER_PHASE2A.md", "docs/MODEL_PROVIDER_PHASE2B.md",
   "docs/WEB_SEARCH_PHASE2B2.md", "docs/BRIDGE_RETRY_AND_CANCELLATION.md",

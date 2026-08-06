@@ -37,10 +37,29 @@ Codex child environment. Codex receives only the temporary bridge token.
 
 ## Full-chain probe
 
-Keep all credentials in the Mac-local `.env` and run:
+Keep all credentials in the Mac-local `.env`. The real full-chain probe owns
+the same exclusive production-stack lock as the LaunchAgent service, so stop the
+background service before starting it:
 
 ```bash
+corepack pnpm service:stop
 corepack pnpm qq:full-chain:probe
+```
+
+If the service or another probe is still running, the command exits without
+opening SQLite, QQ transport, or Codex and reports:
+
+```text
+qq.full_chain.blocked_reason=floral-stack-already-running
+qq.full_chain.instructions=run-service-stop-before-probe
+qq.full_chain.result=blocked
+```
+
+After the probe exits, restore the background service with:
+
+```bash
+corepack pnpm service:start
+corepack pnpm service:status
 ```
 
 The probe uses the configured persistent `DATABASE_PATH`. When no owner exists,
