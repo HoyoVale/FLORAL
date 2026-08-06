@@ -1,0 +1,118 @@
+{
+  "schemaVersion": 1,
+  "name": "namespace-tool-result",
+  "fingerprint": "sha256:909541410e5e6ad3aa8706c7254670a1d1861853b3e4844246e373d2e4e53aba",
+  "request": {
+    "model": "<model>",
+    "input": [
+      {
+        "type": "reasoning",
+        "id": "id_1",
+        "summary": [
+          {
+            "type": "summary_text",
+            "text": "<string>"
+          }
+        ],
+        "future_reasoning_field": true
+      },
+      {
+        "type": "function_call",
+        "call_id": "call_1",
+        "namespace": "mcp__floral_search__",
+        "name": "searxng_web_search",
+        "arguments": "{\"query\":\"<string>\",\"safesearch\":1}",
+        "status": "<string>",
+        "future_call_field": {
+          "attempt": 1
+        }
+      },
+      {
+        "type": "function_call_output",
+        "call_id": "call_1",
+        "output": "<string>",
+        "status": "<string>"
+      },
+      {
+        "type": "item_reference",
+        "id": "id_2"
+      }
+    ],
+    "tools": [
+      {
+        "type": "namespace",
+        "name": "mcp__floral_search__",
+        "description": "<string>",
+        "tools": [
+          {
+            "type": "function",
+            "name": "searxng_web_search",
+            "description": "<string>",
+            "inputSchema": {
+              "type": "object",
+              "properties": {
+                "query": {
+                  "type": "string"
+                },
+                "categories": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                }
+              },
+              "required": [
+                "query"
+              ],
+              "additionalProperties": false
+            },
+            "future_tool_field": {
+              "enabled": true
+            }
+          }
+        ]
+      }
+    ],
+    "parallel_tool_calls": true,
+    "stream": true,
+    "future_top_level": {
+      "mode": "<string>"
+    }
+  },
+  "context": {
+    "reasoningByCallId": {
+      "call_1": "<reasoning>"
+    }
+  },
+  "expect": {
+    "messageRoles": [
+      "assistant",
+      "tool"
+    ],
+    "deepSeekToolNames": [
+      "mcp__floral_search__searxng_web_search"
+    ],
+    "toolDescriptors": [
+      {
+        "deepSeekName": "mcp__floral_search__searxng_web_search",
+        "originalName": "searxng_web_search",
+        "originalNamespace": "mcp__floral_search__",
+        "originalKind": "function"
+      }
+    ],
+    "assistantToolCalls": [
+      {
+        "callId": "call_1",
+        "name": "mcp__floral_search__searxng_web_search"
+      }
+    ],
+    "toolResultCallIds": [
+      "call_1"
+    ],
+    "reasoningCallIds": [
+      "call_1"
+    ],
+    "parallelToolCalls": true,
+    "maxTokens": null
+  }
+}

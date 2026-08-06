@@ -24,6 +24,8 @@
     "bridge:probe": "tsx scripts/responses-bridge-probe.ts",
     "codex:deepseek:probe": "tsx scripts/codex-deepseek-probe.ts",
     "codex:deepseek:web-search:probe": "tsx scripts/codex-deepseek-web-search-probe.ts",
+    "codex:compat:capture": "tsx scripts/codex-deepseek-web-search-probe.ts --capture-compat",
+    "codex:compat:check": "tsx scripts/codex-compat-check.ts",
     "searxng:prepare": "tsx scripts/searxng.ts prepare",
     "searxng:up": "tsx scripts/searxng.ts up",
     "searxng:down": "tsx scripts/searxng.ts down",

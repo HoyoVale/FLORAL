@@ -1,11 +1,16 @@
 import { ResponsesBridgeServer } from "./responses-bridge-server.js";
 import type { AppEnv } from "../../config/env.js";
+import type { CapturedCodexResponsesRequest } from "./responses-compat.js";
 
 export interface ResponsesBridgeOverrides {
   thinking?: "enabled" | "disabled" | undefined;
   forceToolNameOnce?: string | undefined;
   forceToolWhenInputContains?: string | undefined;
   onForcedToolSelected?: ((name: string) => void) | undefined;
+  onCompatibilityRequest?: (
+    (capture: CapturedCodexResponsesRequest) => void
+  ) | undefined;
+  onCompatibilityCaptureError?: ((error: Error) => void) | undefined;
 }
 
 export function createResponsesBridge(
@@ -27,6 +32,16 @@ export function createResponsesBridge(
       maxQueuedRequests: env.FLORAL_BRIDGE_MAX_QUEUED_REQUESTS,
       queueTimeoutMs: env.FLORAL_BRIDGE_QUEUE_TIMEOUT_MS,
     },
+    ...(overrides.onCompatibilityRequest
+      ? {
+          compatibilityCapture: {
+            onRequest: overrides.onCompatibilityRequest,
+            ...(overrides.onCompatibilityCaptureError
+              ? { onError: overrides.onCompatibilityCaptureError }
+              : {}),
+          },
+        }
+      : {}),
     deepSeek: {
       apiKey: env.DEEPSEEK_API_KEY,
       baseUrl: env.DEEPSEEK_BASE_URL,

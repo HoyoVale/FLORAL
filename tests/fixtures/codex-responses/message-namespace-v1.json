@@ -1,0 +1,90 @@
+{
+  "schemaVersion": 1,
+  "name": "message-namespace",
+  "fingerprint": "sha256:1fe27c73ea3e43ae4794bc52b8f75fb4e8b75d0a88e0c33e5156a241f1c9b90e",
+  "request": {
+    "model": "<model>",
+    "instructions": "<string>",
+    "input": [
+      {
+        "type": "message",
+        "role": "user",
+        "content": [
+          {
+            "type": "input_text",
+            "text": "<string>"
+          }
+        ],
+        "id": "id_1",
+        "future_message_field": {
+          "mode": "<string>"
+        }
+      }
+    ],
+    "tools": [
+      {
+        "type": "namespace",
+        "name": "mcp__floral_search__",
+        "description": "<string>",
+        "tools": [
+          {
+            "type": "function",
+            "name": "searxng_web_search",
+            "description": "<string>",
+            "inputSchema": {
+              "type": "object",
+              "properties": {
+                "query": {
+                  "type": "string"
+                },
+                "categories": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                }
+              },
+              "required": [
+                "query"
+              ],
+              "additionalProperties": false
+            },
+            "future_tool_field": {
+              "enabled": true
+            }
+          }
+        ]
+      }
+    ],
+    "tool_choice": "<string>",
+    "parallel_tool_calls": false,
+    "max_output_tokens": 512,
+    "stream": true,
+    "store": false,
+    "metadata": {
+      "trace_id": "<string>"
+    }
+  },
+  "expect": {
+    "messageRoles": [
+      "system",
+      "user"
+    ],
+    "deepSeekToolNames": [
+      "mcp__floral_search__searxng_web_search"
+    ],
+    "toolDescriptors": [
+      {
+        "deepSeekName": "mcp__floral_search__searxng_web_search",
+        "originalName": "searxng_web_search",
+        "originalNamespace": "mcp__floral_search__",
+        "originalKind": "function"
+      }
+    ],
+    "assistantToolCalls": [],
+    "toolResultCallIds": [],
+    "reasoningCallIds": [],
+    "parallelToolCalls": false,
+    "maxTokens": 512
+  }
+}

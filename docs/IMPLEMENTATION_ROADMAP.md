@@ -57,9 +57,18 @@
 
 #### Phase 2B.2-B2 — protocol resilience
 
-- captured Codex request compatibility fixtures
+##### Phase 2B.2-B2.1 — Codex compatibility fixtures
+
+- explicit opt-in capture of sanitized real Codex Responses requests
+- structural fingerprints with model, content, credentials, paths, and identifiers removed
+- committed namespace, tool-result, reasoning, custom-tool, and unknown-field replay fixtures
+- `codex:compat:check` for Windows, CI, and post-upgrade Mac validation
+
+##### Phase 2B.2-B2.2 — pre-stream retry and fault injection
+
 - bounded retry before streamed output begins
 - cancellation and failure-injection E2E coverage
+- no retry after SSE output or tool execution begins
 - SSRF-safe URL reading only after explicit policy work
 
 ## Phase 3 — real QQ + persistent identity

@@ -15,6 +15,10 @@ import {
 import { streamDeepSeekChat } from "./deepseek-stream.js";
 import { ResponsesSseWriter } from "./responses-sse.js";
 import {
+  captureCodexResponsesRequest,
+  type CapturedCodexResponsesRequest,
+} from "./responses-compat.js";
+import {
   parseResponsesRequest,
   translateResponsesRequest,
 } from "./responses-translator.js";
@@ -28,6 +32,10 @@ export interface ResponsesBridgeServerOptions {
     maxConcurrentRequests: number;
     maxQueuedRequests: number;
     queueTimeoutMs: number;
+  } | undefined;
+  compatibilityCapture?: {
+    onRequest: (capture: CapturedCodexResponsesRequest) => void;
+    onError?: ((error: Error) => void) | undefined;
   } | undefined;
   deepSeek: {
     apiKey: string;
@@ -143,6 +151,16 @@ export class ResponsesBridgeServer {
     return resolvedName;
   }
 
+  #captureCompatibilityRequest(body: unknown): void {
+    const capture = this.#options.compatibilityCapture;
+    if (!capture) return;
+    try {
+      capture.onRequest(captureCodexResponsesRequest(body));
+    } catch (error) {
+      capture.onError?.(error instanceof Error ? error : new Error(String(error)));
+    }
+  }
+
   #rememberReasoning(callId: string, reasoning: string): void {
     if (this.#reasoningByCallId.size >= 128) {
       const oldest = this.#reasoningByCallId.keys().next().value as string | undefined;
@@ -218,6 +236,7 @@ export class ResponsesBridgeServer {
     let body: unknown;
     try {
       body = JSON.parse(await readBody(request, this.#options.maxBodyBytes)) as unknown;
+      this.#captureCompatibilityRequest(body);
       const responsesRequest = parseResponsesRequest(body);
       const translated = translateResponsesRequest(
         responsesRequest,

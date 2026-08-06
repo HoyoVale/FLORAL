@@ -1,0 +1,58 @@
+{
+  "schemaVersion": 1,
+  "name": "custom-tool-forward-fields",
+  "fingerprint": "sha256:d3a93d3f76ac1b412c1bff8e63c5272e26986d00d7e909f3038195eddadd62cb",
+  "request": {
+    "model": "<model>",
+    "input": [
+      {
+        "type": "message",
+        "role": "user",
+        "content": "<string>",
+        "future_message_field": {
+          "enabled": true
+        }
+      }
+    ],
+    "tools": [
+      {
+        "type": "custom",
+        "name": "shell",
+        "description": "<string>",
+        "format": {
+          "type": "text"
+        },
+        "future_custom_field": {
+          "mode": "<string>"
+        }
+      }
+    ],
+    "parallel_tool_calls": true,
+    "stream": true,
+    "unknown_top_level": [
+      "<string>",
+      1,
+      true
+    ]
+  },
+  "expect": {
+    "messageRoles": [
+      "user"
+    ],
+    "deepSeekToolNames": [
+      "shell"
+    ],
+    "toolDescriptors": [
+      {
+        "deepSeekName": "shell",
+        "originalName": "shell",
+        "originalKind": "custom"
+      }
+    ],
+    "assistantToolCalls": [],
+    "toolResultCallIds": [],
+    "reasoningCallIds": [],
+    "parallelToolCalls": true,
+    "maxTokens": null
+  }
+}

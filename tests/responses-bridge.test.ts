@@ -318,6 +318,57 @@ describe("ResponsesBridgeServer", () => {
     });
   });
 
+  it("emits sanitized compatibility captures without exposing request content", async () => {
+    const fake = await startFakeDeepSeek((_request, response) => {
+      sendSse(response, [{
+        id: "chat_capture",
+        model: "deepseek-v4-flash",
+        choices: [{ delta: { content: "done" }, finish_reason: "stop" }],
+      }]);
+    });
+    const captures: unknown[] = [];
+    const bridgeServer = new ResponsesBridgeServer({
+      host: "127.0.0.1",
+      port: 0,
+      token: "bridge-test-token",
+      maxBodyBytes: 1024 * 1024,
+      compatibilityCapture: {
+        onRequest: (capture) => captures.push(capture),
+      },
+      deepSeek: {
+        apiKey: "deepseek-test-key",
+        baseUrl: fake.baseUrl,
+        model: "deepseek-v4-flash",
+        requestTimeoutMs: 2_000,
+        thinking: "disabled",
+        reasoningEffort: "high",
+      },
+    });
+    const bridge = await bridgeServer.start();
+    servers.push({ close: () => bridgeServer.stop() });
+
+    const response = await fetch(`${bridge.baseUrl}/responses`, {
+      method: "POST",
+      headers: {
+        authorization: "Bearer bridge-test-token",
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({
+        model: "deepseek-v4-flash",
+        input: "private compatibility prompt",
+        metadata: { token: "private-session-token" },
+        stream: true,
+      }),
+    });
+    await response.text();
+
+    expect(captures).toHaveLength(1);
+    const serialized = JSON.stringify(captures[0]);
+    expect(serialized).not.toContain("private compatibility prompt");
+    expect(serialized).not.toContain("private-session-token");
+    expect(serialized).toContain("sha256:");
+  });
+
 });
 
 async function startBridge(deepSeekBaseUrl: string): Promise<{ baseUrl: string }> {

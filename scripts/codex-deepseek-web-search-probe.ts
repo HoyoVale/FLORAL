@@ -1,8 +1,14 @@
+import { spawn } from "node:child_process";
 import { randomBytes } from "node:crypto";
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 import { createResponsesBridge } from "../src/agent/bridge/bridge-factory.js";
+import type {
+  CapturedCodexResponsesRequest,
+  CodexCompatibilityCaptureArtifact,
+} from "../src/agent/bridge/responses-compat.js";
 import { CodexAppServerRuntime } from "../src/agent/codex-app-server.js";
 import { buildCodexDeepSeekConfig } from "../src/agent/codex-deepseek-config.js";
 import { CodexRuntimeError } from "../src/agent/codex-errors.js";
@@ -12,6 +18,9 @@ import { checkSearxng } from "../src/search/searxng.js";
 
 loadProjectEnv();
 const env = loadEnv();
+const compatibilityCaptureEnabled = process.argv.includes("--capture-compat");
+const capturedCompatibilityRequests: CapturedCodexResponsesRequest[] = [];
+let compatibilityCaptureError: Error | undefined;
 const health = await checkSearxng(
   env.SEARXNG_URL,
   env.SEARXNG_REQUEST_TIMEOUT_MS,
@@ -29,6 +38,16 @@ const bridge = createResponsesBridge(env, token, 0, {
     selectedForcedTool = name;
     console.log(`probe.bridge.forced_tool_selected=${name}`);
   },
+  ...(compatibilityCaptureEnabled
+    ? {
+        onCompatibilityRequest: (capture: CapturedCodexResponsesRequest) => {
+          capturedCompatibilityRequests.push(capture);
+        },
+        onCompatibilityCaptureError: (error: Error) => {
+          compatibilityCaptureError = error;
+        },
+      }
+    : {}),
 });
 const address = await bridge.start();
 const codexHome = await mkdtemp(join(tmpdir(), "floral-codex-search-"));
@@ -138,7 +157,81 @@ try {
 } finally {
   await runtime.stop();
   await bridge.stop();
+  if (compatibilityCaptureEnabled) {
+    try {
+      await writeCompatibilityCaptureArtifact();
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      console.log(`probe.compat.error=${message}`);
+      process.exitCode = 1;
+    }
+  }
   await rm(codexHome, { recursive: true, force: true });
+}
+
+async function writeCompatibilityCaptureArtifact(): Promise<void> {
+  if (compatibilityCaptureError) throw compatibilityCaptureError;
+  if (capturedCompatibilityRequests.length < 2) {
+    throw new Error(
+      `Expected at least two sanitized Codex requests, captured ${capturedCompatibilityRequests.length}`,
+    );
+  }
+
+  const repositoryRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
+  const outputRoot = join(repositoryRoot, "artifacts", "codex-compat");
+  const outputFile = join(outputRoot, "latest-capture.json");
+  const artifact: CodexCompatibilityCaptureArtifact = {
+    schemaVersion: 1,
+    generatedAt: new Date().toISOString(),
+    source: {
+      probe: "codex-deepseek-web-search",
+      codexVersion: await readCommandVersion(env.CODEX_COMMAND),
+      platform: process.platform,
+      arch: process.arch,
+    },
+    requests: capturedCompatibilityRequests.map((request, index) => ({
+      ...request,
+      name: `request-${String(index + 1).padStart(2, "0")}`,
+    })),
+  };
+
+  await mkdir(outputRoot, { recursive: true });
+  await writeFile(outputFile, `${JSON.stringify(artifact, null, 2)}\n`, {
+    encoding: "utf8",
+    mode: 0o600,
+  });
+  console.log(`probe.compat.capture=${outputFile}`);
+  console.log(`probe.compat.requests=${artifact.requests.length}`);
+}
+
+async function readCommandVersion(command: string): Promise<string> {
+  return await new Promise<string>((resolvePromise) => {
+    const child = spawn(command, ["--version"], {
+      cwd: env.CODEX_CWD,
+      env: process.env,
+      stdio: ["ignore", "pipe", "ignore"],
+    });
+    const chunks: Buffer[] = [];
+    let bytes = 0;
+    const timer = setTimeout(() => child.kill("SIGTERM"), 5_000);
+
+    child.stdout.on("data", (value: Buffer) => {
+      bytes += value.length;
+      if (bytes <= 4_096) chunks.push(value);
+    });
+    child.once("error", () => {
+      clearTimeout(timer);
+      resolvePromise("unknown");
+    });
+    child.once("exit", () => {
+      clearTimeout(timer);
+      const version = Buffer.concat(chunks)
+        .toString("utf8")
+        .trim()
+        .split(/\r?\n/, 1)[0];
+      resolvePromise(version || "unknown");
+    });
+  });
 }
 
 function readToolStatus(value: unknown): string {
