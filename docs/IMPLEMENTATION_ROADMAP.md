@@ -104,7 +104,8 @@
 - managed Codex + Responses bridge lifecycle with ephemeral local credentials
 - owner pairing from the intended QQ account
 - QQ → SQLite → Codex → DeepSeek → QQ foreground smoke test
-- persistent owner and Codex thread evidence after process restart
+- persistent managed `CODEX_HOME` and Codex thread evidence after process restart
+- safe pre-turn recovery for thread IDs left by the former temporary-home implementation
 - reconnect/resume evidence after network restart
 - LaunchAgent remains blocked until both acceptance probes pass
 

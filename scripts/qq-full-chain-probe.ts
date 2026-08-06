@@ -94,7 +94,7 @@ try {
     ? "created"
     : storeState.threadBeforeRun === storeState.threadAfterRun
       ? "reused"
-      : "changed";
+      : "recovered";
 
   console.log(`qq.full_chain.owner=${ownerResult}`);
   console.log("qq.full_chain.sqlite=ok");

@@ -119,7 +119,7 @@ export class CodexAppServerRuntime implements AgentRuntime {
     this.#ensureStarted();
 
     const threadId = request.threadId
-      ? await this.#resumeThread(request.threadId)
+      ? await this.#resumeOrRecoverThread(request)
       : await this.#startThread(request);
 
     onEvent?.({ type: "run.started", threadId });
@@ -321,6 +321,22 @@ export class CodexAppServerRuntime implements AgentRuntime {
     await this.#client.stop();
   }
 
+  async #resumeOrRecoverThread(request: AgentRunRequest): Promise<string> {
+    const requestedThreadId = request.threadId;
+    if (!requestedThreadId) return await this.#startThread(request);
+
+    try {
+      return await this.#resumeThread(requestedThreadId);
+    } catch (error) {
+      if (!isUnavailableThreadResume(error)) throw error;
+
+      // No turn has started yet, so replacing a missing local thread cannot
+      // duplicate provider or tool side effects. The caller persists the new ID.
+      process.stderr.write("codex.thread_resume=stale_reset\n");
+      return await this.#startThread(request);
+    }
+  }
+
   async #startThread(request: AgentRunRequest): Promise<string> {
     const params: Record<string, unknown> = {
       cwd: request.cwd,
@@ -428,6 +444,15 @@ export class CodexAppServerRuntime implements AgentRuntime {
   }
 }
 
+
+function isUnavailableThreadResume(error: unknown): boolean {
+  if (!(error instanceof CodexRuntimeError)) return false;
+  if (error.method !== "thread/resume") return false;
+
+  return error.kind === "bad_request"
+    || error.kind === "protocol"
+    || error.kind === "unknown";
+}
 
 function readMcpToolEvent(
   item: ItemLifecycleParams["item"],

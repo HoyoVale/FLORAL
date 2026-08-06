@@ -49,6 +49,24 @@ describe("CodexAppServerRuntime", () => {
     }
   });
 
+  it("starts a fresh thread when a persisted thread is no longer available", async () => {
+    const runtime = createRuntime("stale-resume");
+    try {
+      await runtime.start();
+      const result = await runtime.run({
+        threadId: "thr_deleted",
+        text: "recover",
+        cwd: process.cwd(),
+      });
+      expect(result).toEqual({
+        threadId: "thr_new",
+        finalText: "recovered final",
+      });
+    } finally {
+      await runtime.stop();
+    }
+  });
+
   it("declines approvals by default", async () => {
     const runtime = createRuntime("approval");
     const events: AgentEvent[] = [];

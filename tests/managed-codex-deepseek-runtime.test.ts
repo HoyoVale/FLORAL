@@ -1,5 +1,11 @@
+import { mkdtemp, mkdir, readFile, rm, stat, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { describe, expect, it } from "vitest";
-import { ManagedCodexDeepSeekRuntime } from "../src/agent/managed-codex-deepseek-runtime.js";
+import {
+  ManagedCodexDeepSeekRuntime,
+  createPersistentCodexWorkspace,
+} from "../src/agent/managed-codex-deepseek-runtime.js";
 import { loadEnv } from "../src/config/env.js";
 import type { AgentRuntime } from "../src/core/contracts.js";
 import type { AgentRunRequest, AgentRunResult } from "../src/core/types.js";
@@ -38,8 +44,9 @@ function setup(options: { runtimeStartError?: Error } = {}) {
       },
       stop: async () => { calls.push("bridge.stop"); },
     }),
-    createWorkspace: async (config) => {
+    createWorkspace: async (config, codexHome) => {
       calls.push(config.includes("floral_search") ? "workspace.search" : "workspace.missing");
+      calls.push(`workspace.home=${codexHome}`);
       return {
         codexHome: "/tmp/fake-codex",
         cleanup: async () => { calls.push("workspace.cleanup"); },
@@ -57,10 +64,11 @@ describe("ManagedCodexDeepSeekRuntime", () => {
   it("starts search, bridge, workspace, and Codex in order", async () => {
     const { managed, runtime, calls } = setup();
     await managed.start();
-    expect(calls.slice(0, 4)).toEqual([
+    expect(calls.slice(0, 5)).toEqual([
       "search",
       "bridge.start",
       "workspace.search",
+      `workspace.home=${join(process.cwd(), "data", "codex-runtime")}`,
       "/tmp/fake-codex:token",
     ]);
     expect(runtime.starts).toBe(1);
@@ -94,5 +102,29 @@ describe("ManagedCodexDeepSeekRuntime", () => {
     await expect(managed.start()).rejects.toThrow("failed");
     expect(calls).toContain("bridge.stop");
     expect(calls).toContain("workspace.cleanup");
+  });
+
+  it("preserves Codex thread state while removing the ephemeral bridge config", async () => {
+    const root = await mkdtemp(join(tmpdir(), "floral-managed-codex-test-"));
+    const codexHome = join(root, "codex-home");
+    try {
+      const first = await createPersistentCodexWorkspace(codexHome, "first-config");
+      const threadDir = join(codexHome, "sessions");
+      const threadFile = join(threadDir, "thread-state.json");
+      await mkdir(threadDir, { recursive: true });
+      await writeFile(threadFile, "persisted", "utf8");
+      expect(await readFile(join(codexHome, "config.toml"), "utf8")).toBe("first-config");
+
+      await first.cleanup();
+      await expect(stat(join(codexHome, "config.toml"))).rejects.toThrow();
+      expect(await readFile(threadFile, "utf8")).toBe("persisted");
+
+      const second = await createPersistentCodexWorkspace(codexHome, "second-config");
+      expect(await readFile(join(codexHome, "config.toml"), "utf8")).toBe("second-config");
+      expect(await readFile(threadFile, "utf8")).toBe("persisted");
+      await second.cleanup();
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
   });
 });

@@ -57,7 +57,7 @@ corepack pnpm qq:full-chain:probe
 corepack pnpm qq:reconnect:probe
 ```
 
-In real Codex mode FLORAL starts an ephemeral loopback bridge and temporary Codex configuration itself. A separately running `bridge:start` process is not required for the main gateway.
+In real Codex mode FLORAL starts an ephemeral loopback bridge and manages the Codex configuration itself. Codex thread/session data remains under `CODEX_MANAGED_HOME` (default `./data/codex-runtime`) across process restarts, while the short-lived `config.toml` is removed during a clean shutdown. A separately running `bridge:start` process is not required for the main gateway.
 
 ## Gateway database
 

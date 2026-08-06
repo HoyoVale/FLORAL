@@ -1,7 +1,6 @@
 import { randomBytes } from "node:crypto";
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { chmod, mkdir, rm, writeFile } from "node:fs/promises";
+import { join, resolve } from "node:path";
 import type { AppEnv } from "../config/env.js";
 import type { AgentRuntime } from "../core/contracts.js";
 import type {
@@ -19,7 +18,7 @@ interface ManagedBridge {
   stop(): Promise<void>;
 }
 
-interface ManagedWorkspace {
+export interface ManagedWorkspace {
   codexHome: string;
   cleanup(): Promise<void>;
 }
@@ -33,7 +32,7 @@ export interface ManagedCodexDeepSeekDependencies {
   createToken?: (() => string) | undefined;
   checkSearch?: (() => Promise<SearchEndpoint>) | undefined;
   createBridge?: ((token: string) => ManagedBridge) | undefined;
-  createWorkspace?: ((config: string) => Promise<ManagedWorkspace>) | undefined;
+  createWorkspace?: ((config: string, codexHome: string) => Promise<ManagedWorkspace>) | undefined;
   createRuntime?: ((options: {
     codexHome: string;
     bridgeToken: string;
@@ -125,9 +124,13 @@ export class ManagedCodexDeepSeekRuntime implements AgentRuntime {
           toolTimeoutSec: this.env.SEARXNG_MCP_TOOL_TIMEOUT_SEC,
         },
       });
-      const workspace = await (this.dependencies.createWorkspace?.(config)
-        ?? createTemporaryCodexWorkspace(config));
+      const managedCodexHome = resolve(this.env.CODEX_MANAGED_HOME);
+      const workspace = await (this.dependencies.createWorkspace?.(
+        config,
+        managedCodexHome,
+      ) ?? createPersistentCodexWorkspace(managedCodexHome, config));
       this.#workspace = workspace;
+      process.stderr.write("agent.stack.codex_home=persistent\n");
 
       const runtime = this.dependencies.createRuntime?.({
         codexHome: workspace.codexHome,
@@ -157,18 +160,27 @@ export class ManagedCodexDeepSeekRuntime implements AgentRuntime {
   }
 }
 
-async function createTemporaryCodexWorkspace(
+export async function createPersistentCodexWorkspace(
+  codexHome: string,
   config: string,
 ): Promise<ManagedWorkspace> {
-  const codexHome = await mkdtemp(join(tmpdir(), "floral-runtime-codex-"));
-  await writeFile(join(codexHome, "config.toml"), config, {
+  const resolvedHome = resolve(codexHome);
+  const configPath = join(resolvedHome, "config.toml");
+
+  await mkdir(resolvedHome, { recursive: true, mode: 0o700 });
+  await chmod(resolvedHome, 0o700).catch(() => undefined);
+  await writeFile(configPath, config, {
     encoding: "utf8",
     mode: 0o600,
   });
+  await chmod(configPath, 0o600).catch(() => undefined);
+
   return {
-    codexHome,
+    codexHome: resolvedHome,
     cleanup: async () => {
-      await rm(codexHome, { recursive: true, force: true });
+      // Keep Codex thread/session state across FLORAL restarts, but remove the
+      // short-lived bridge URL/token configuration once this process stops.
+      await rm(configPath, { force: true });
     },
   };
 }

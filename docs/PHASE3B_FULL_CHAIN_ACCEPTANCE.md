@@ -23,9 +23,14 @@ pre-edited global `~/.codex/config.toml`.
 1. validates the loopback SearXNG service;
 2. generates a random in-memory bridge token;
 3. starts the Responses bridge on an ephemeral loopback port;
-4. writes a temporary mode-0600 Codex configuration;
-5. starts Codex App Server with a private `CODEX_HOME`;
-6. removes the temporary configuration and stops the bridge on shutdown.
+4. writes a mode-0600 Codex configuration into the persistent managed home;
+5. starts Codex App Server with `CODEX_HOME=./data/codex-runtime` by default;
+6. stops Codex and the bridge, then removes only the ephemeral configuration.
+
+Codex thread/session files remain in `CODEX_MANAGED_HOME` across FLORAL process
+restarts. The directory is local-only and ignored by Git. The generated bridge
+URL and token are rewritten on every startup and `config.toml` is removed during
+a clean shutdown.
 
 The DeepSeek key remains in the FLORAL process only. It is removed from the
 Codex child environment. Codex receives only the temporary bridge token.
@@ -71,7 +76,18 @@ qq.full_chain.thread=reused
 qq.full_chain.result=ok
 ```
 
-This second run is the process-restart persistence evidence.
+When upgrading from the earlier temporary-`CODEX_HOME` implementation, SQLite
+may contain one thread ID whose Codex files were already deleted. The first run
+after this fix safely recovers before any turn starts and reports:
+
+```text
+codex.thread_resume=stale_reset
+qq.full_chain.thread=recovered
+qq.full_chain.result=ok
+```
+
+Run the probe once more; that next run must report `thread=reused`. This is the
+process-restart persistence evidence.
 
 The probe never prints the pairing code, credentials, QQ OpenIDs, message IDs,
 conversation IDs, prompts, model responses, thread IDs, or tool outputs.

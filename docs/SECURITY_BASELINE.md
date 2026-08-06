@@ -43,5 +43,6 @@ QQ AppSecret, DeepSeek API key, Better Auth secret, and any future OAuth tokens 
 - Real gateway mode generates a fresh random bridge token for each process.
 - The bridge binds to loopback and uses an ephemeral port.
 - Codex receives the bridge token but not the DeepSeek API key.
-- Temporary Codex configuration is mode 0600 and deleted during shutdown.
+- Managed Codex home is mode 0700 and ignored by Git; its per-run configuration is mode 0600 and deleted during clean shutdown.
+- Codex thread/session state is retained locally across restarts and must be included in backup/incident-response policy.
 - Full-chain acceptance logs only bounded milestones and never user or provider content.

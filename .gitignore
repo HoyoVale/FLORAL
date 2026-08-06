@@ -4,6 +4,7 @@ dist/
 data/*.sqlite
 data/*.sqlite-*
 data/qq-session/
+data/codex-runtime/
 logs/
 artifacts/
 .codex-schemas/

@@ -65,4 +65,11 @@ describe("Phase 3 environment configuration", () => {
     }).CODEX_MODE).toBe("real");
   });
 
+  it("uses a persistent managed Codex home", () => {
+    expect(loadEnv({}).CODEX_MANAGED_HOME).toBe("./data/codex-runtime");
+    expect(loadEnv({
+      CODEX_MANAGED_HOME: "/tmp/floral-codex-home",
+    }).CODEX_MANAGED_HOME).toBe("/tmp/floral-codex-home");
+  });
+
 });

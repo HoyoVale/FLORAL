@@ -65,6 +65,16 @@ lines.on("line", (line) => {
   }
 
   if (message.method === "thread/resume") {
+    if (scenario === "stale-resume") {
+      send({
+        id: message.id,
+        error: {
+          code: -32602,
+          message: `thread not found: ${String(message.params?.threadId)}`,
+        },
+      });
+      return;
+    }
     resumed = true;
     activeThreadId = message.params.threadId;
     send({ id: message.id, result: { thread: { id: activeThreadId } } });
@@ -167,7 +177,11 @@ lines.on("line", (line) => {
       sendSuccess(
         activeThreadId,
         activeTurnId,
-        scenario === "resume" ? "resumed final" : "authoritative final",
+        scenario === "resume"
+          ? "resumed final"
+          : scenario === "stale-resume"
+            ? "recovered final"
+            : "authoritative final",
       );
     });
     return;
