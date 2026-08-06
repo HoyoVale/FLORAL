@@ -1,7 +1,7 @@
 # FLORAL requested configuration authority.
 # Secrets remain in .env or the inherited process environment.
-# Phase 4.0C validates this file and renders native upstream artifacts, but it
-# does not yet switch production away from the existing environment readers.
+# Phase 4.0E2 adopts the unified Codex renderer in production. Phase 4.0E3
+# projects MCP registration from the canonical typed registry.
 
 schema_version = 1
 profile = "production"

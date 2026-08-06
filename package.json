@@ -72,7 +72,10 @@
     "service:stop": "tsx scripts/service.ts stop",
     "service:logs": "tsx scripts/service.ts logs",
     "service:recovery:probe": "tsx scripts/service.ts recovery-probe",
-    "service:uninstall": "tsx scripts/service.ts uninstall"
+    "service:uninstall": "tsx scripts/service.ts uninstall",
+    "config:mcp-adoption": "tsx scripts/mcp-registry-adoption.ts show",
+    "config:mcp-adoption:json": "tsx scripts/mcp-registry-adoption.ts json",
+    "config:mcp-adoption:check": "tsx scripts/mcp-registry-adoption.ts check"
   },
   "dependencies": {
     "@tencent-connect/qqbot-nodejs": "1.0.4",

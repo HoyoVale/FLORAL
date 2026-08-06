@@ -10,6 +10,10 @@ import {
   resolveConfigurationAuthority,
   type ResolvedConfigurationAuthority,
 } from "../federation/config-authority.js";
+import {
+  buildMcpRuntimeRegistry,
+  type McpRuntimeRegistry,
+} from "../mcp/mcp-runtime-registry.js";
 
 export type CodexConfigAdoptionMode = "legacy" | "unified-shadow" | "unified";
 
@@ -40,6 +44,7 @@ export interface CodexConfigAdoptionResult {
   codexConfigFingerprint?: string | undefined;
   shadowReport?: CodexShadowReport | undefined;
   shadowReportPath?: string | undefined;
+  mcpRegistry?: McpRuntimeRegistry | undefined;
 }
 
 export interface PrepareCodexConfigAdoptionOptions {
@@ -71,9 +76,11 @@ export async function prepareCodexConfigAdoption(
     return { mode, productionConfig: options.legacyConfig };
   }
 
+  const mcpRegistry = buildMcpRuntimeRegistry(authority.effective);
   const unifiedConfig = renderCodexConfig(
     authority.effective,
     options.bridgeBaseUrl,
+    mcpRegistry,
   );
   const codexConfigFingerprint = fingerprintCodexConfigSemantics(unifiedConfig);
 
@@ -93,6 +100,7 @@ export async function prepareCodexConfigAdoption(
       codexConfigFingerprint,
       shadowReport,
       shadowReportPath: join(repositoryRoot, "data/config/adoption/codex-shadow.json"),
+      mcpRegistry,
     };
   }
 
@@ -116,6 +124,7 @@ export async function prepareCodexConfigAdoption(
     codexConfigFingerprint,
     shadowReport,
     shadowReportPath,
+    mcpRegistry,
   };
 }
 

@@ -54,8 +54,9 @@ SecretRef handling, fingerprints, and the non-goals of this phase.
 
 Phase 4.0C renders the native upstream configuration bundle. Phase 4.0D then
 compares requested, effective, rendered, installed, and observed state. Phase
-4.0E1 validates the Codex renderer in shadow mode, and Phase 4.0E2 performs the
-controlled Codex-only production cutover:
+4.0E1 validates the Codex renderer in shadow mode, Phase 4.0E2 performs the
+controlled Codex-only production cutover, and Phase 4.0E3 adopts the canonical
+MCP registry inside that unified Codex configuration:
 
 ```bash
 corepack pnpm config:native
@@ -71,6 +72,8 @@ corepack pnpm config:codex-shadow
 corepack pnpm config:codex-shadow:check
 corepack pnpm config:codex-cutover
 corepack pnpm config:codex-cutover:check
+corepack pnpm config:mcp-adoption
+corepack pnpm config:mcp-adoption:check
 ```
 
 See `docs/PHASE4_NATIVE_CONFIG_RENDERERS.md` for the Codex, SearXNG, QQ SDK,
@@ -78,7 +81,8 @@ and MCP artifact contracts, `docs/PHASE4_CONFIG_DRIFT_DIAGNOSTICS.md` for
 the drift report and controlled cutover gate, and
 `docs/PHASE4_CODEX_SHADOW_ADOPTION.md` for the fail-open Codex shadow rollout,
 and `docs/PHASE4_CODEX_CONTROLLED_CUTOVER.md` for atomic unified activation
-and one-shot legacy rollback.
+and one-shot legacy rollback. See `docs/PHASE4_MCP_REGISTRY_ADOPTION.md` for
+the canonical MCP registry, runtime projection check, and adoption report.
 
 ## Prepare the Mac mini
 

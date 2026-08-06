@@ -13,6 +13,11 @@ import {
   type CodexShadowReport,
 } from "../adoption/codex-shadow-adoption.js";
 import {
+  assessMcpRegistryAdoptionReport,
+  readMcpRegistryAdoptionReport,
+  type McpRegistryAdoptionReport,
+} from "../adoption/mcp-registry-adoption.js";
+import {
   CODEX_BRIDGE_BASE_URL_PLACEHOLDER,
   renderCodexConfig,
 } from "../adapters/codex-native-config.js";
@@ -29,6 +34,7 @@ import type {
   ResolvedConfigurationAuthority,
 } from "../federation/config-authority.js";
 import { buildConfigurationInventory } from "../inventory/config-inventory.js";
+import { buildMcpRuntimeRegistry } from "../mcp/mcp-runtime-registry.js";
 import { assertLoopbackSearxngUrl } from "../../search/searxng.js";
 
 
@@ -126,6 +132,14 @@ export interface CodexCutoverObservation {
   reasonCode?: string | undefined;
 }
 
+export interface McpRegistryAdoptionObservation {
+  path: string;
+  status: "active" | "drift" | "missing" | "invalid" | "disabled";
+  reportFingerprint?: string | undefined;
+  registryFingerprint?: string | undefined;
+  codexMcpProjectionFingerprint?: string | undefined;
+}
+
 export interface ConfigurationCutoverGate {
   status: "ready" | "blocked";
   blockerCodes: string[];
@@ -159,6 +173,7 @@ export interface ConfigurationDiagnosticsReport {
   adoption: {
     codexShadow: CodexShadowObservation;
     codexCutover: CodexCutoverObservation;
+    mcpRegistry: McpRegistryAdoptionObservation;
   };
   findings: ConfigDiagnosticFinding[];
   cutoverGate: ConfigurationCutoverGate;
@@ -208,6 +223,7 @@ export async function buildConfigurationDiagnostics(
     searxngRuntime,
     codexShadow,
     codexCutover,
+    mcpRegistry,
   ] = await Promise.all([
     observeNativeInstallation(repositoryRoot, bundle),
     observeCodexInstallation(repositoryRoot, options.authority, bundle),
@@ -229,6 +245,7 @@ export async function buildConfigurationDiagnostics(
       : Promise.resolve(skippedSearxngRuntime(options.authority.effective.search.service_url)),
     observeCodexShadowAdoption(repositoryRoot, options.authority),
     observeCodexControlledCutover(repositoryRoot, options.authority),
+    observeMcpRegistryAdoption(repositoryRoot, options.authority),
   ]);
 
   const qqSdk = observeQqSdkInstallation(options.authority, inventory.runtime.qqSdk);
@@ -252,6 +269,7 @@ export async function buildConfigurationDiagnostics(
     searxngRuntime,
     codexShadow,
     codexCutover,
+    mcpRegistry,
   });
   const blockerCodes = findings
     .filter((finding) => finding.blocksCutover)
@@ -289,6 +307,7 @@ export async function buildConfigurationDiagnostics(
     adoption: {
       codexShadow,
       codexCutover,
+      mcpRegistry,
     },
     findings: findings.sort(compareFindings),
     cutoverGate: {
@@ -329,6 +348,8 @@ export function renderConfigurationDiagnostics(report: ConfigurationDiagnosticsR
     `config.diagnostics.codex_cutover=${report.adoption.codexCutover.status}`,
     `config.diagnostics.codex_cutover_target_fingerprint=${report.adoption.codexCutover.targetCodexConfigFingerprint ?? "unavailable"}`,
     `config.diagnostics.codex_cutover_fallback=${String(report.adoption.codexCutover.fallbackUsed ?? false)}`,
+    `config.diagnostics.mcp_registry=${report.adoption.mcpRegistry.status}`,
+    `config.diagnostics.mcp_registry_fingerprint=${report.adoption.mcpRegistry.registryFingerprint ?? "unavailable"}`,
     `config.diagnostics.findings=${String(report.findings.length)}`,
     `config.cutover.status=${report.cutoverGate.status}`,
     `config.cutover.blockers=${String(report.cutoverGate.blockerCodes.length)}`,
@@ -609,6 +630,7 @@ function buildFindings(input: {
   searxngRuntime: SearxngRuntimeObservation;
   codexShadow: CodexShadowObservation;
   codexCutover: CodexCutoverObservation;
+  mcpRegistry: McpRegistryAdoptionObservation;
 }): ConfigDiagnosticFinding[] {
   const findings: ConfigDiagnosticFinding[] = [];
   if (input.nativeInstallation.manifestStatus !== "match") {
@@ -693,6 +715,35 @@ function buildFindings(input: {
         input.codexCutover.path,
         fingerprintCodexConfigSemantics(renderCodexConfig(input.authority.effective)),
         input.codexCutover.targetCodexConfigFingerprint,
+      ));
+    }
+  }
+
+  if (
+    input.authority.effective.codex.mode === "real"
+    && input.authority.effective.runtime.adoption.codex.mode === "unified"
+  ) {
+    if (input.mcpRegistry.status === "missing") {
+      findings.push(finding(
+        "mcp-registry-adoption-report-missing",
+        "mcp",
+        "observed",
+        "warning",
+        true,
+        "Unified Codex mode is active but no MCP registry adoption report exists; restart the FLORAL service",
+        input.mcpRegistry.path,
+      ));
+    } else if (input.mcpRegistry.status !== "active") {
+      findings.push(finding(
+        `mcp-registry-adoption-${input.mcpRegistry.status}`,
+        "mcp",
+        "observed",
+        "warning",
+        true,
+        "Installed Codex MCP registration does not match the canonical MCP runtime registry",
+        input.mcpRegistry.path,
+        buildMcpRuntimeRegistry(input.authority.effective).registryFingerprint,
+        input.mcpRegistry.registryFingerprint,
       ));
     }
   }
@@ -884,6 +935,40 @@ async function observeCodexControlledCutover(
         : {}),
       fallbackUsed: report.fallbackUsed,
       reasonCode: report.reasonCode,
+    };
+  } catch {
+    return { path, status: "invalid" };
+  }
+}
+
+async function observeMcpRegistryAdoption(
+  repositoryRoot: string,
+  authority: ResolvedConfigurationAuthority,
+): Promise<McpRegistryAdoptionObservation> {
+  const path = join(repositoryRoot, "data/config/adoption/mcp-registry.json");
+  if (
+    authority.effective.codex.mode !== "real"
+    || authority.effective.runtime.adoption.codex.mode !== "unified"
+  ) {
+    return { path, status: "disabled" };
+  }
+  try {
+    const report: McpRegistryAdoptionReport | undefined = await readMcpRegistryAdoptionReport(
+      repositoryRoot,
+    );
+    if (!report) return { path, status: "missing" };
+    const registry = buildMcpRuntimeRegistry(authority.effective);
+    const status = assessMcpRegistryAdoptionReport(
+      report,
+      registry,
+      renderCodexConfig(authority.effective, undefined, registry),
+    );
+    return {
+      path,
+      status,
+      reportFingerprint: report.reportFingerprint,
+      registryFingerprint: report.registryFingerprint,
+      codexMcpProjectionFingerprint: report.codexMcpProjectionFingerprint,
     };
   } catch {
     return { path, status: "invalid" };

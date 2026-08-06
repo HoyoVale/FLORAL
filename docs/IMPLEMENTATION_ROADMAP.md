@@ -184,6 +184,16 @@
 - expose dedicated cutover status and check commands;
 - require installed, shadow, runtime, and cutover observations to agree before the global gate becomes ready.
 
+### Phase 4.0E3 — MCP registry runtime adoption
+
+- build one typed canonical registry for active and planned MCP servers;
+- render the private MCP manifest and Codex `mcp_servers.*` sections from the same registry;
+- reject duplicate IDs, tools, environment keys, parent-environment inheritance, and premature planned-adapter activation;
+- verify the active Codex MCP assignment projection against the registry after startup;
+- persist a private tamper-evident registry adoption report;
+- fold MCP registry status into the global configuration cutover gate;
+- retain the legacy Codex generator only for emergency rollback.
+
 ## Phase 4 — macOS GUI
 
 - Peekaboo MCP health and required-tool checks

@@ -1,4 +1,9 @@
 import type { EffectiveConfig } from "../federation/config-authority.js";
+import {
+  buildMcpRuntimeRegistry,
+  renderCodexMcpLines,
+  type McpRuntimeRegistry,
+} from "../mcp/mcp-runtime-registry.js";
 import { createNativeConfigArtifact, type NativeConfigArtifact } from "./native-config-types.js";
 
 export const CODEX_BRIDGE_BASE_URL_PLACEHOLDER = "__FLORAL_BRIDGE_BASE_URL__";
@@ -29,6 +34,7 @@ export function renderCodexNativeArtifacts(config: EffectiveConfig): NativeConfi
 export function renderCodexConfig(
   config: EffectiveConfig,
   bridgeBaseUrl = CODEX_BRIDGE_BASE_URL_PLACEHOLDER,
+  mcpRegistry: McpRuntimeRegistry = buildMcpRuntimeRegistry(config),
 ): string {
   const native = config.codex.native;
   const model = config.codex.model.trim() || config.deepseek.model;
@@ -53,29 +59,7 @@ export function renderCodexConfig(
     `supports_websockets = ${String(native.supports_websockets)}`,
   ];
 
-  if (config.mcp.search.enabled) {
-    const search = config.mcp.search;
-    const serverKey = tomlKey(search.id);
-    lines.push(
-      ``,
-      `[mcp_servers.${serverKey}]`,
-      `command = ${tomlString(search.command)}`,
-      `args = ${tomlArray([...search.command_args, search.package])}`,
-      `env = { SEARXNG_URL = ${tomlString(config.search.service_url)}, NO_PROXY = ${tomlString(search.no_proxy)} }`,
-      `enabled_tools = ${tomlArray(search.enabled_tools)}`,
-      `required = ${String(search.required)}`,
-      `startup_timeout_sec = ${positiveInteger(search.startup_timeout_sec, "startup_timeout_sec")}`,
-      `tool_timeout_sec = ${positiveInteger(search.tool_timeout_sec, "tool_timeout_sec")}`,
-      `default_tools_approval_mode = ${tomlString(search.default_tools_approval_mode)}`,
-    );
-    for (const tool of [...search.enabled_tools].sort()) {
-      lines.push(
-        ``,
-        `[mcp_servers.${serverKey}.tools.${tomlKey(tool)}]`,
-        `approval_mode = ${tomlString(search.tool_approval_mode)}`,
-      );
-    }
-  }
+  lines.push(...renderCodexMcpLines(mcpRegistry));
 
   return `${lines.join("\n")}\n`;
 }
@@ -121,10 +105,6 @@ function tomlKey(value: string): string {
 
 function tomlString(value: string): string {
   return JSON.stringify(value);
-}
-
-function tomlArray(values: readonly string[]): string {
-  return `[${values.map(tomlString).join(", ")}]`;
 }
 
 function positiveInteger(value: number, name: string): number {

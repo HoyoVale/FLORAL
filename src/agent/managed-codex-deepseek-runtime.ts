@@ -12,6 +12,12 @@ import {
   removeCodexShadowReport,
   type CodexConfigAdoptionResult,
 } from "../config/adoption/codex-shadow-adoption.js";
+import {
+  createMcpRegistryAdoptionReport,
+  removeMcpRegistryAdoptionReport,
+  writeMcpRegistryAdoptionReport,
+  type McpRegistryAdoptionReport,
+} from "../config/adoption/mcp-registry-adoption.js";
 import type { AppEnv } from "../config/env.js";
 import type { AgentRuntime } from "../core/contracts.js";
 import type {
@@ -60,6 +66,8 @@ export interface ManagedCodexDeepSeekDependencies {
   clearCodexShadowReport?: (() => Promise<void>) | undefined;
   clearCodexCutoverReport?: (() => Promise<void>) | undefined;
   recordCodexCutover?: ((report: CodexCutoverReport) => Promise<string>) | undefined;
+  clearMcpRegistryAdoptionReport?: (() => Promise<void>) | undefined;
+  recordMcpRegistryAdoption?: ((report: McpRegistryAdoptionReport) => Promise<string>) | undefined;
 }
 
 export class ManagedCodexDeepSeekRuntime implements AgentRuntime {
@@ -152,6 +160,7 @@ export class ManagedCodexDeepSeekRuntime implements AgentRuntime {
       // startup attempt. A missing or rollback report is safer than stale
       // evidence claiming that the current process activated unified config.
       await this.#clearCutoverReport(adoption.mode !== "unified");
+      await this.#clearMcpRegistryReport(adoption.mode !== "unified");
       await this.#startCodexRuntime(adoption, legacyConfig, token);
     } catch (error) {
       const runtime = this.#runtime;
@@ -183,6 +192,7 @@ export class ManagedCodexDeepSeekRuntime implements AgentRuntime {
     try {
       await runtime.start();
       if (adoption.mode === "unified") {
+        await this.#recordMcpRegistryAdoption(adoption);
         await this.#recordCutover(adoption, legacyConfig, "active", "unified", {
           fallbackUsed: false,
           reasonCode: "unified-started",
@@ -203,6 +213,7 @@ export class ManagedCodexDeepSeekRuntime implements AgentRuntime {
       process.stderr.write(
         `agent.stack.codex_config.rollback=legacy:${errorName(unifiedError)}\n`,
       );
+      await this.#clearMcpRegistryReport(true);
       try {
         if (workspace.replaceConfig) {
           await workspace.replaceConfig(adoption.fallbackConfig);
@@ -304,6 +315,33 @@ export class ManagedCodexDeepSeekRuntime implements AgentRuntime {
       ?? createCodexRuntime(this.env, codexHome, bridgeToken);
   }
 
+  async #recordMcpRegistryAdoption(
+    adoption: CodexConfigAdoptionResult,
+  ): Promise<void> {
+    if (
+      adoption.mode !== "unified"
+      || !adoption.effectiveFingerprint
+      || !adoption.mcpRegistry
+    ) {
+      throw new Error("Incomplete MCP registry adoption metadata");
+    }
+    const report = createMcpRegistryAdoptionReport({
+      effectiveFingerprint: adoption.effectiveFingerprint,
+      registry: adoption.mcpRegistry,
+      codexConfig: adoption.productionConfig,
+    });
+    const path = await (this.dependencies.recordMcpRegistryAdoption?.(report)
+      ?? writeMcpRegistryAdoptionReport(process.cwd(), report));
+    process.stderr.write(
+      `agent.stack.mcp_registry.fingerprint=${report.registryFingerprint}\n`,
+    );
+    process.stderr.write(
+      `agent.stack.mcp_registry.report_fingerprint=${report.reportFingerprint}\n`,
+    );
+    process.stderr.write(`agent.stack.mcp_registry.path=${path}\n`);
+    process.stderr.write("agent.stack.mcp_registry=active\n");
+  }
+
   async #recordCutover(
     adoption: CodexConfigAdoptionResult,
     legacyConfig: string,
@@ -346,6 +384,16 @@ export class ManagedCodexDeepSeekRuntime implements AgentRuntime {
   async #clearCutoverReport(ignoreErrors: boolean): Promise<void> {
     const operation = this.dependencies.clearCodexCutoverReport?.()
       ?? removeCodexCutoverReport(process.cwd());
+    if (ignoreErrors) {
+      await operation.catch(() => undefined);
+      return;
+    }
+    await operation;
+  }
+
+  async #clearMcpRegistryReport(ignoreErrors: boolean): Promise<void> {
+    const operation = this.dependencies.clearMcpRegistryAdoptionReport?.()
+      ?? removeMcpRegistryAdoptionReport(process.cwd());
     if (ignoreErrors) {
       await operation.catch(() => undefined);
       return;

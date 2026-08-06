@@ -473,7 +473,7 @@
     {
       "id": "mcp",
       "displayName": "Model Context Protocol client/server boundary",
-      "integrationStatus": "active-partial",
+      "integrationStatus": "active-registry",
       "versionSource": "Codex client implementation and each server package",
       "officialSources": [
         "https://modelcontextprotocol.io/specification/",
@@ -483,7 +483,7 @@
         {
           "id": "client-transport",
           "classification": "upstream-managed",
-          "coverage": "partial",
+          "coverage": "managed-search-planned-vision-macos",
           "knownKeys": [
             "stdio command and args",
             "HTTP URL",
@@ -498,7 +498,7 @@
         {
           "id": "tool-exposure",
           "classification": "locked",
-          "coverage": "partial",
+          "coverage": "managed-registry",
           "knownKeys": [
             "enabled_tools",
             "disabled_tools",
@@ -529,11 +529,11 @@
         }
       ],
       "runtimeIntrospection": [
-        "server IDs",
-        "server package or command versions",
-        "advertised tool names",
-        "effective allowlist",
-        "approval mode"
+        "canonical registry fingerprint",
+        "server IDs and integration status",
+        "effective allowlists and approval modes",
+        "Codex MCP projection fingerprint",
+        "runtime adoption report"
       ]
     },
     {
@@ -881,6 +881,22 @@
       "file": "src/config/federation/config-schema.ts",
       "needle": "mode: \"unified\"",
       "risk": "Phase 4.0E2 may activate the unified Codex renderer only after a compatible shadow report and must preserve automatic legacy rollback."
+    },
+    {
+      "id": "mcp.registry.planned-adapters-disabled",
+      "component": "mcp",
+      "classification": "locked",
+      "file": "src/config/mcp/mcp-runtime-registry.ts",
+      "needle": "Planned MCP server cannot be enabled before an active adapter exists",
+      "risk": "Vision and macOS MCPs must remain disabled until their transports and authorization boundaries are implemented."
+    },
+    {
+      "id": "mcp.registry.parent-environment-forbidden",
+      "component": "mcp",
+      "classification": "locked",
+      "file": "src/config/mcp/mcp-runtime-registry.ts",
+      "needle": "MCP parent environment inheritance is forbidden",
+      "risk": "Each MCP child receives only explicitly rendered environment entries and must not inherit unrelated credentials."
     }
   ],
   "environmentKeyPolicies": {

@@ -11,6 +11,10 @@ import {
   compareCodexShadowConfigs,
   writeCodexShadowReport,
 } from "../src/config/adoption/codex-shadow-adoption.js";
+import {
+  createMcpRegistryAdoptionReport,
+  writeMcpRegistryAdoptionReport,
+} from "../src/config/adoption/mcp-registry-adoption.js";
 import { renderCodexConfig } from "../src/config/adapters/codex-native-config.js";
 import { renderNativeConfigBundle } from "../src/config/adapters/native-config-bundle.js";
 import {
@@ -21,6 +25,7 @@ import {
 import { resolveConfigurationAuthority } from "../src/config/federation/config-authority.js";
 import { writeConfigurationDiagnostics } from "../src/config/federation/diagnostics-writer.js";
 import { writeNativeConfigBundle } from "../src/config/federation/native-config-writer.js";
+import { buildMcpRuntimeRegistry } from "../src/config/mcp/mcp-runtime-registry.js";
 
 const repositoryRoot = resolve(".");
 
@@ -265,6 +270,12 @@ describe("configuration drift diagnostics", () => {
       fallbackUsed: false,
       reasonCode: "unified-started",
     }));
+    const mcpRegistry = buildMcpRuntimeRegistry(authority.effective);
+    await writeMcpRegistryAdoptionReport(root, createMcpRegistryAdoptionReport({
+      effectiveFingerprint: authority.effectiveFingerprint,
+      registry: mcpRegistry,
+      codexConfig: unified,
+    }));
     const configPath = join(root, "data/codex-runtime/config.toml");
     await mkdir(dirname(configPath), { recursive: true });
     await writeFile(configPath, unified, "utf8");
@@ -277,6 +288,8 @@ describe("configuration drift diagnostics", () => {
     expect(report.productionInstallation.codex.status).toBe("match");
     expect(report.adoption.codexShadow.status).toBe("compatible");
     expect(report.adoption.codexCutover.status).toBe("active");
+    expect(report.adoption.mcpRegistry.status).toBe("active");
+    expect(report.cutoverGate.blockerCodes).not.toContain("mcp-registry-adoption-report-missing");
     expect(report.cutoverGate.blockerCodes).not.toContain("codex-cutover-report-missing");
     expect(report.cutoverGate.blockerCodes).not.toContain("codex-cutover-drift");
   });

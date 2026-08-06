@@ -7,6 +7,8 @@ import {
   createPersistentCodexWorkspace,
 } from "../src/agent/managed-codex-deepseek-runtime.js";
 import { compareCodexShadowConfigs } from "../src/config/adoption/codex-shadow-adoption.js";
+import { resolveConfigurationAuthority } from "../src/config/federation/config-authority.js";
+import { buildMcpRuntimeRegistry } from "../src/config/mcp/mcp-runtime-registry.js";
 import { loadEnv } from "../src/config/env.js";
 import type { AgentRuntime } from "../src/core/contracts.js";
 import type { AgentRunRequest, AgentRunResult } from "../src/core/types.js";
@@ -22,6 +24,16 @@ class FakeRuntime implements AgentRuntime {
   }
   async interrupt(): Promise<void> { this.interrupts += 1; }
   async stop(): Promise<void> { this.stops += 1; }
+}
+
+async function createEmptyMcpRegistry() {
+  const authority = await resolveConfigurationAuthority({
+    repositoryRoot: process.cwd(),
+    environment: {},
+  });
+  const config = structuredClone(authority.effective);
+  config.mcp.search.enabled = false;
+  return buildMcpRuntimeRegistry(config);
 }
 
 function setup(options: { runtimeStartError?: Error } = {}) {
@@ -63,6 +75,7 @@ function setup(options: { runtimeStartError?: Error } = {}) {
     }),
     clearCodexShadowReport: async () => undefined,
     clearCodexCutoverReport: async () => undefined,
+    clearMcpRegistryAdoptionReport: async () => undefined,
   });
   return { managed, runtime, calls };
 }
@@ -133,6 +146,7 @@ describe("ManagedCodexDeepSeekRuntime", () => {
       },
       clearCodexShadowReport: async () => undefined,
       clearCodexCutoverReport: async () => undefined,
+      clearMcpRegistryAdoptionReport: async () => undefined,
       createWorkspace: async (config) => {
         workspaceConfig = config;
         return { codexHome: "/tmp/fake-codex", cleanup: async () => undefined };
@@ -162,6 +176,7 @@ describe("ManagedCodexDeepSeekRuntime", () => {
       prepareCodexConfig: async () => { throw new Error("shadow failed"); },
       clearCodexShadowReport: async () => undefined,
       clearCodexCutoverReport: async () => undefined,
+      clearMcpRegistryAdoptionReport: async () => undefined,
       createWorkspace: async (config) => {
         workspaceConfig = config;
         return { codexHome: "/tmp/fake-codex", cleanup: async () => undefined };
@@ -213,6 +228,7 @@ describe("ManagedCodexDeepSeekRuntime", () => {
       unifiedConfig,
       effectiveFingerprint: "effective-fingerprint",
     });
+    const mcpRegistry = await createEmptyMcpRegistry();
     const runtime = new FakeRuntime();
     let workspaceConfig = "";
     let reportStatus = "";
@@ -232,6 +248,7 @@ describe("ManagedCodexDeepSeekRuntime", () => {
         effectiveFingerprint: "effective-fingerprint",
         codexConfigFingerprint: shadowReport.codexConfigFingerprint,
         shadowReport,
+        mcpRegistry,
       }),
       createWorkspace: async (config) => {
         workspaceConfig = config;
@@ -246,14 +263,78 @@ describe("ManagedCodexDeepSeekRuntime", () => {
         reportStatus = report.status;
         return "/tmp/codex-cutover.json";
       },
+      recordMcpRegistryAdoption: async () => "/tmp/mcp-registry.json",
       clearCodexShadowReport: async () => undefined,
       clearCodexCutoverReport: async () => undefined,
+      clearMcpRegistryAdoptionReport: async () => undefined,
     });
 
     await managed.start();
     expect(workspaceConfig).toBe(unifiedConfig);
     expect(reportStatus).toBe("active");
     expect(runtime.starts).toBe(1);
+    await managed.stop();
+  });
+
+  it("rolls back when the MCP registry adoption report cannot be persisted", async () => {
+    const legacyConfig = 'model = "same"\n';
+    const unifiedConfig = 'model = "same"\napproval_policy = "never"\nsandbox_mode = "read-only"\nmodel_reasoning_summary = "auto"\n';
+    const shadowReport = compareCodexShadowConfigs({
+      legacyConfig,
+      unifiedConfig,
+      effectiveFingerprint: "effective-fingerprint",
+    });
+    const mcpRegistry = await createEmptyMcpRegistry();
+    const first = new FakeRuntime();
+    const second = new FakeRuntime();
+    const runtimes = [first, second];
+    let runtimeIndex = 0;
+    let workspaceConfig = "";
+    let reportStatus = "";
+    const managed = new ManagedCodexDeepSeekRuntime(loadEnv({
+      DEEPSEEK_API_KEY: "secret",
+    }), {
+      createToken: () => "token",
+      checkSearch: async () => ({ endpoint: "http://127.0.0.1:8888", resultCount: 1 }),
+      createBridge: () => ({
+        start: async () => ({ baseUrl: "http://127.0.0.1:9999/v1" }),
+        stop: async () => undefined,
+      }),
+      prepareCodexConfig: async () => ({
+        mode: "unified",
+        productionConfig: unifiedConfig,
+        fallbackConfig: legacyConfig,
+        effectiveFingerprint: "effective-fingerprint",
+        codexConfigFingerprint: shadowReport.codexConfigFingerprint,
+        shadowReport,
+        mcpRegistry,
+      }),
+      createWorkspace: async (config) => {
+        workspaceConfig = config;
+        return {
+          codexHome: "/tmp/fake-codex",
+          replaceConfig: async (replacement) => { workspaceConfig = replacement; },
+          cleanup: async () => undefined,
+        };
+      },
+      createRuntime: () => runtimes[runtimeIndex++]!,
+      recordMcpRegistryAdoption: async () => {
+        throw new Error("report write failed");
+      },
+      recordCodexCutover: async (report) => {
+        reportStatus = report.status;
+        return "/tmp/codex-cutover.json";
+      },
+      clearCodexShadowReport: async () => undefined,
+      clearCodexCutoverReport: async () => undefined,
+      clearMcpRegistryAdoptionReport: async () => undefined,
+    });
+
+    await managed.start();
+    expect(workspaceConfig).toBe(legacyConfig);
+    expect(first.stops).toBe(1);
+    expect(second.starts).toBe(1);
+    expect(reportStatus).toBe("rolled-back");
     await managed.stop();
   });
 
@@ -265,6 +346,7 @@ describe("ManagedCodexDeepSeekRuntime", () => {
       unifiedConfig,
       effectiveFingerprint: "effective-fingerprint",
     });
+    const mcpRegistry = await createEmptyMcpRegistry();
     const first = new FakeRuntime();
     first.start = async () => { throw new Error("unified failed"); };
     const second = new FakeRuntime();
@@ -288,6 +370,7 @@ describe("ManagedCodexDeepSeekRuntime", () => {
         effectiveFingerprint: "effective-fingerprint",
         codexConfigFingerprint: shadowReport.codexConfigFingerprint,
         shadowReport,
+        mcpRegistry,
       }),
       createWorkspace: async (config) => {
         workspaceConfig = config;
@@ -302,8 +385,10 @@ describe("ManagedCodexDeepSeekRuntime", () => {
         reportStatus = report.status;
         return "/tmp/codex-cutover.json";
       },
+      recordMcpRegistryAdoption: async () => "/tmp/mcp-registry.json",
       clearCodexShadowReport: async () => undefined,
       clearCodexCutoverReport: async () => undefined,
+      clearMcpRegistryAdoptionReport: async () => undefined,
     });
 
     await managed.start();
