@@ -40,6 +40,7 @@ export type OriginalToolKind = "function" | "custom";
 export interface ToolBridgeDescriptor {
   deepSeekName: string;
   originalName: string;
+  originalNamespace?: string | undefined;
   originalKind: OriginalToolKind;
 }
 

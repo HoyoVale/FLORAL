@@ -259,7 +259,20 @@ describe("ResponsesBridgeServer", () => {
         stream: true,
       }),
     });
-    await first.text();
+    const firstEvents = parseEvents(await first.text());
+    const namespaceCall = firstEvents.find((event) =>
+      event.type === "response.output_item.done"
+      && typeof event.item === "object"
+      && event.item !== null
+      && (event.item as Record<string, unknown>).type === "function_call"
+    );
+    expect(namespaceCall?.item).toMatchObject({
+      type: "function_call",
+      call_id: "call_search",
+      namespace: "mcp__floral_search__",
+      name: "searxng_web_search",
+      arguments: "{\"query\":\"SearXNG Search API\"}",
+    });
 
     const second = await fetch(`${bridge.baseUrl}/responses`, {
       method: "POST",
@@ -273,7 +286,8 @@ describe("ResponsesBridgeServer", () => {
           {
             type: "function_call",
             call_id: "call_search",
-            name: "mcp__floral_search__searxng_web_search",
+            namespace: "mcp__floral_search__",
+            name: "searxng_web_search",
             arguments: "{\"query\":\"SearXNG Search API\"}",
           },
           {
@@ -297,7 +311,10 @@ describe("ResponsesBridgeServer", () => {
     expect(upstreamBodies[2]?.messages?.[0]).toMatchObject({
       role: "assistant",
       reasoning_content: "search before answering",
-      tool_calls: [{ id: "call_search" }],
+      tool_calls: [{
+        id: "call_search",
+        function: { name: "mcp__floral_search__searxng_web_search" },
+      }],
     });
   });
 

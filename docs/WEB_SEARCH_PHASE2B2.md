@@ -83,3 +83,7 @@ For normal thinking-mode tool chains, the bridge keeps DeepSeek `reasoning_conte
 ### Probe-scoped forced tool selection
 
 The deterministic probe now carries a private marker in its user input. The bridge does not consume the one-shot forced-tool override until a Responses request contains that marker and exposes exactly one matching search tool. This avoids Codex setup or preflight model requests consuming the override before the real probe turn. The probe logs only the selected tool name; prompts, credentials, search results, and reasoning content remain unlogged.
+
+## Namespace round trip
+
+Codex exposes MCP tools as a namespace plus child function. The DeepSeek bridge flattens that pair only for the provider request, for example `mcp__floral_search__searxng_web_search`. When returning a tool call to Codex, the bridge restores the original `namespace` and child `name`; otherwise Codex parses the item as an unrelated plain function and does not dispatch it to the MCP server.

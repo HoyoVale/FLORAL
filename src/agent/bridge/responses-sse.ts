@@ -183,7 +183,10 @@ export class ResponsesSseWriter {
         type: "custom_tool_call",
         status: "completed",
         call_id: call.id,
-        name: descriptor.originalName,
+        ...(descriptor.originalNamespace
+        ? { namespace: descriptor.originalNamespace }
+        : {}),
+      name: descriptor.originalName,
         input,
       };
       this.#send("response.output_item.added", {
@@ -219,6 +222,9 @@ export class ResponsesSseWriter {
       type: "function_call",
       status: "completed",
       call_id: call.id,
+      ...(descriptor.originalNamespace
+        ? { namespace: descriptor.originalNamespace }
+        : {}),
       name: descriptor.originalName,
       arguments: call.arguments,
     };
@@ -239,6 +245,9 @@ export class ResponsesSseWriter {
       type: "response.function_call_arguments.done",
       output_index: outputIndex,
       item_id: itemId,
+      ...(descriptor.originalNamespace
+        ? { namespace: descriptor.originalNamespace }
+        : {}),
       name: descriptor.originalName,
       arguments: call.arguments,
     });

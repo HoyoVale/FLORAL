@@ -188,7 +188,8 @@ function translateNamespaceTool(
 
     registerTool(toolMap, {
       deepSeekName: flattenedName,
-      originalName: flattenedName,
+      originalName: childName,
+      originalNamespace: namespaceName,
       originalKind: "function",
     });
 
@@ -260,9 +261,11 @@ function translateInputItem(
   if (type === "function_call" || type === "custom_tool_call") {
     const callId = readString(item.call_id) ?? readString(item.id);
     const name = readString(item.name);
+    const namespace = readString(item.namespace);
     if (!callId || !name) {
       throw badRequest(`${type} requires call_id and name`);
     }
+    const deepSeekName = namespace ? flattenNamespaceName(namespace, name) : name;
     const rawArguments = type === "function_call"
       ? stringifyArguments(item.arguments)
       : JSON.stringify({ input: stringifyContent(item.input) });
@@ -272,14 +275,15 @@ function translateInputItem(
       {
         id: callId,
         type: "function",
-        function: { name, arguments: rawArguments },
+        function: { name: deepSeekName, arguments: rawArguments },
       },
       context.reasoningByCallId?.get(callId),
     );
-    if (!toolMap.has(name)) {
-      toolMap.set(name, {
-        deepSeekName: name,
+    if (!toolMap.has(deepSeekName)) {
+      toolMap.set(deepSeekName, {
+        deepSeekName,
         originalName: name,
+        ...(namespace ? { originalNamespace: namespace } : {}),
         originalKind: type === "function_call" ? "function" : "custom",
       });
     }
