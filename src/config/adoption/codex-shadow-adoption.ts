@@ -11,7 +11,7 @@ import {
   type ResolvedConfigurationAuthority,
 } from "../federation/config-authority.js";
 
-export type CodexConfigAdoptionMode = "legacy" | "unified-shadow";
+export type CodexConfigAdoptionMode = "legacy" | "unified-shadow" | "unified";
 
 export interface CodexShadowReport {
   schemaVersion: 2;
@@ -35,6 +35,9 @@ export interface CodexShadowReport {
 export interface CodexConfigAdoptionResult {
   mode: CodexConfigAdoptionMode;
   productionConfig: string;
+  fallbackConfig?: string | undefined;
+  effectiveFingerprint?: string | undefined;
+  codexConfigFingerprint?: string | undefined;
   shadowReport?: CodexShadowReport | undefined;
   shadowReportPath?: string | undefined;
 }
@@ -72,6 +75,27 @@ export async function prepareCodexConfigAdoption(
     authority.effective,
     options.bridgeBaseUrl,
   );
+  const codexConfigFingerprint = fingerprintCodexConfigSemantics(unifiedConfig);
+
+  if (mode === "unified") {
+    const shadowReport = await readCodexShadowReport(repositoryRoot);
+    if (!shadowReport) {
+      throw new Error("Codex unified cutover requires a compatible shadow report");
+    }
+    if (assessCodexShadowReport(shadowReport, unifiedConfig) !== "compatible") {
+      throw new Error("Codex unified cutover is blocked by shadow drift");
+    }
+    return {
+      mode,
+      productionConfig: unifiedConfig,
+      fallbackConfig: options.legacyConfig,
+      effectiveFingerprint: authority.effectiveFingerprint,
+      codexConfigFingerprint,
+      shadowReport,
+      shadowReportPath: join(repositoryRoot, "data/config/adoption/codex-shadow.json"),
+    };
+  }
+
   const shadowReport = compareCodexShadowConfigs({
     legacyConfig: options.legacyConfig,
     unifiedConfig,
@@ -88,6 +112,8 @@ export async function prepareCodexConfigAdoption(
   return {
     mode,
     productionConfig: options.legacyConfig,
+    effectiveFingerprint: authority.effectiveFingerprint,
+    codexConfigFingerprint,
     shadowReport,
     shadowReportPath,
   };

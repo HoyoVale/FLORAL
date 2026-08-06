@@ -126,7 +126,7 @@ export const requestedConfigSchema = z.object({
   runtime: z.object({
     adoption: z.object({
       codex: z.object({
-        mode: z.enum(["legacy", "unified-shadow"]),
+        mode: z.enum(["legacy", "unified-shadow", "unified"]),
       }).strict(),
     }).strict(),
   }).strict(),
@@ -282,7 +282,7 @@ export interface RequestedConfig {
   runtime: {
     adoption: {
       codex: {
-        mode: "legacy" | "unified-shadow";
+        mode: "legacy" | "unified-shadow" | "unified";
       };
     };
   };
@@ -435,7 +435,7 @@ export const DEFAULT_REQUESTED_CONFIG: RequestedConfig = {
   runtime: {
     adoption: {
       codex: {
-        mode: "unified-shadow",
+        mode: "unified",
       },
     },
   },

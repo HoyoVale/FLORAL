@@ -2,6 +2,11 @@ import { createHash } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import { isAbsolute, join, resolve } from "node:path";
 import {
+  assessCodexCutoverReport,
+  readCodexCutoverReport,
+  type CodexCutoverReport,
+} from "../adoption/codex-controlled-cutover.js";
+import {
   assessCodexShadowReport,
   fingerprintCodexConfigSemantics,
   readCodexShadowReport,
@@ -111,6 +116,16 @@ export interface CodexShadowObservation {
   codexConfigFingerprint?: string | undefined;
 }
 
+export interface CodexCutoverObservation {
+  path: string;
+  status: "active" | "rolled-back" | "failed" | "drift" | "missing" | "invalid" | "disabled";
+  reportFingerprint?: string | undefined;
+  targetCodexConfigFingerprint?: string | undefined;
+  activeCodexConfigFingerprint?: string | undefined;
+  fallbackUsed?: boolean | undefined;
+  reasonCode?: string | undefined;
+}
+
 export interface ConfigurationCutoverGate {
   status: "ready" | "blocked";
   blockerCodes: string[];
@@ -143,6 +158,7 @@ export interface ConfigurationDiagnosticsReport {
   };
   adoption: {
     codexShadow: CodexShadowObservation;
+    codexCutover: CodexCutoverObservation;
   };
   findings: ConfigDiagnosticFinding[];
   cutoverGate: ConfigurationCutoverGate;
@@ -191,6 +207,7 @@ export async function buildConfigurationDiagnostics(
     inventory,
     searxngRuntime,
     codexShadow,
+    codexCutover,
   ] = await Promise.all([
     observeNativeInstallation(repositoryRoot, bundle),
     observeCodexInstallation(repositoryRoot, options.authority, bundle),
@@ -211,6 +228,7 @@ export async function buildConfigurationDiagnostics(
         )
       : Promise.resolve(skippedSearxngRuntime(options.authority.effective.search.service_url)),
     observeCodexShadowAdoption(repositoryRoot, options.authority),
+    observeCodexControlledCutover(repositoryRoot, options.authority),
   ]);
 
   const qqSdk = observeQqSdkInstallation(options.authority, inventory.runtime.qqSdk);
@@ -233,6 +251,7 @@ export async function buildConfigurationDiagnostics(
     codexRuntime,
     searxngRuntime,
     codexShadow,
+    codexCutover,
   });
   const blockerCodes = findings
     .filter((finding) => finding.blocksCutover)
@@ -269,6 +288,7 @@ export async function buildConfigurationDiagnostics(
     },
     adoption: {
       codexShadow,
+      codexCutover,
     },
     findings: findings.sort(compareFindings),
     cutoverGate: {
@@ -306,6 +326,9 @@ export function renderConfigurationDiagnostics(report: ConfigurationDiagnosticsR
     `config.diagnostics.searxng_plugins=${String(report.runtime.searxng.plugins.length)}`,
     `config.diagnostics.codex_shadow=${report.adoption.codexShadow.status}`,
     `config.diagnostics.codex_shadow_config_fingerprint=${report.adoption.codexShadow.codexConfigFingerprint ?? "unavailable"}`,
+    `config.diagnostics.codex_cutover=${report.adoption.codexCutover.status}`,
+    `config.diagnostics.codex_cutover_target_fingerprint=${report.adoption.codexCutover.targetCodexConfigFingerprint ?? "unavailable"}`,
+    `config.diagnostics.codex_cutover_fallback=${String(report.adoption.codexCutover.fallbackUsed ?? false)}`,
     `config.diagnostics.findings=${String(report.findings.length)}`,
     `config.cutover.status=${report.cutoverGate.status}`,
     `config.cutover.blockers=${String(report.cutoverGate.blockerCodes.length)}`,
@@ -585,6 +608,7 @@ function buildFindings(input: {
   codexRuntime: CodexRuntimeObservation;
   searxngRuntime: SearxngRuntimeObservation;
   codexShadow: CodexShadowObservation;
+  codexCutover: CodexCutoverObservation;
 }): ConfigDiagnosticFinding[] {
   const findings: ConfigDiagnosticFinding[] = [];
   if (input.nativeInstallation.manifestStatus !== "match") {
@@ -615,7 +639,7 @@ function buildFindings(input: {
 
   if (
     input.authority.effective.codex.mode === "real"
-    && input.authority.effective.runtime.adoption.codex.mode === "unified-shadow"
+    && input.authority.effective.runtime.adoption.codex.mode !== "legacy"
   ) {
     if (input.codexShadow.status === "missing") {
       findings.push(finding(
@@ -624,7 +648,7 @@ function buildFindings(input: {
         "observed",
         "warning",
         true,
-        "Codex unified-shadow mode is enabled but no runtime comparison report exists; restart the FLORAL service",
+        "Codex unified configuration adoption is enabled but no runtime comparison report exists; restart the FLORAL service",
         input.codexShadow.path,
       ));
     } else if (input.codexShadow.status !== "compatible") {
@@ -642,14 +666,48 @@ function buildFindings(input: {
     }
   }
 
+  if (
+    input.authority.effective.codex.mode === "real"
+    && input.authority.effective.runtime.adoption.codex.mode === "unified"
+  ) {
+    if (input.codexCutover.status === "missing") {
+      findings.push(finding(
+        "codex-cutover-report-missing",
+        "codex",
+        "observed",
+        "warning",
+        true,
+        "Codex unified mode is requested but no controlled cutover report exists; restart the FLORAL service",
+        input.codexCutover.path,
+      ));
+    } else if (input.codexCutover.status !== "active") {
+      findings.push(finding(
+        `codex-cutover-${input.codexCutover.status}`,
+        "codex",
+        "observed",
+        "warning",
+        true,
+        input.codexCutover.status === "rolled-back"
+          ? "Unified Codex startup failed and the runtime recovered with the saved legacy configuration"
+          : "Codex controlled cutover is not active for the current unified configuration",
+        input.codexCutover.path,
+        fingerprintCodexConfigSemantics(renderCodexConfig(input.authority.effective)),
+        input.codexCutover.targetCodexConfigFingerprint,
+      ));
+    }
+  }
+
   if (input.codexInstallation.status === "drift") {
+    const unifiedMode = input.authority.effective.runtime.adoption.codex.mode === "unified";
     findings.push(finding(
-      "codex-managed-config-legacy-drift",
+      unifiedMode ? "codex-managed-config-unified-drift" : "codex-managed-config-legacy-drift",
       "codex",
       "installed",
       "warning",
       true,
-      "Managed Codex config.toml does not match the unified renderer; production still uses the legacy generator",
+      unifiedMode
+        ? "Managed Codex config.toml does not match the unified renderer while unified mode is requested"
+        : "Managed Codex config.toml does not match the unified renderer; production still uses the legacy generator",
       input.codexInstallation.path,
       input.codexInstallation.expectedSha256,
       input.codexInstallation.actualSha256,
@@ -795,6 +853,37 @@ async function observeCodexShadowAdoption(
       reportFingerprint: report.reportFingerprint,
       effectiveFingerprint: report.effectiveFingerprint,
       codexConfigFingerprint: report.codexConfigFingerprint,
+    };
+  } catch {
+    return { path, status: "invalid" };
+  }
+}
+
+async function observeCodexControlledCutover(
+  repositoryRoot: string,
+  authority: ResolvedConfigurationAuthority,
+): Promise<CodexCutoverObservation> {
+  const path = join(repositoryRoot, "data/config/adoption/codex-cutover.json");
+  if (authority.effective.runtime.adoption.codex.mode !== "unified") {
+    return { path, status: "disabled" };
+  }
+  try {
+    const report: CodexCutoverReport | undefined = await readCodexCutoverReport(repositoryRoot);
+    if (!report) return { path, status: "missing" };
+    const status = assessCodexCutoverReport(
+      report,
+      renderCodexConfig(authority.effective),
+    );
+    return {
+      path,
+      status,
+      reportFingerprint: report.reportFingerprint,
+      targetCodexConfigFingerprint: report.targetCodexConfigFingerprint,
+      ...(report.activeCodexConfigFingerprint
+        ? { activeCodexConfigFingerprint: report.activeCodexConfigFingerprint }
+        : {}),
+      fallbackUsed: report.fallbackUsed,
+      reasonCode: report.reasonCode,
     };
   } catch {
     return { path, status: "invalid" };

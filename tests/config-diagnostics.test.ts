@@ -4,6 +4,10 @@ import { dirname, join, resolve } from "node:path";
 import { describe, expect, it } from "vitest";
 import { buildCodexDeepSeekConfig } from "../src/agent/codex-deepseek-config.js";
 import {
+  createCodexCutoverReport,
+  writeCodexCutoverReport,
+} from "../src/config/adoption/codex-controlled-cutover.js";
+import {
   compareCodexShadowConfigs,
   writeCodexShadowReport,
 } from "../src/config/adoption/codex-shadow-adoption.js";
@@ -138,7 +142,7 @@ describe("configuration drift diagnostics", () => {
       includeRuntimeProbes: false,
     });
     expect(report.productionInstallation.codex.status).toBe("drift");
-    expect(report.cutoverGate.blockerCodes).toContain("codex-managed-config-legacy-drift");
+    expect(report.cutoverGate.blockerCodes).toContain("codex-managed-config-unified-drift");
     const serialized = JSON.stringify(report);
     expect(serialized).not.toContain("deepseek-api-key-sensitive");
     expect(serialized).not.toContain("qq-app-secret-sensitive");
@@ -222,6 +226,59 @@ describe("configuration drift diagnostics", () => {
     });
     expect(report.adoption.codexShadow.status).toBe("compatible");
     expect(report.cutoverGate.blockerCodes).not.toContain("codex-shadow-drift");
+  });
+
+
+  it("recognizes an active controlled Codex cutover for the current unified config", async () => {
+    const root = await createRepositoryFixture();
+    const authority = await resolveConfigurationAuthority({
+      repositoryRoot: root,
+      environment: productionEnvironment(root),
+    });
+    await writeNativeConfigBundle(root, renderNativeConfigBundle(authority));
+    const bridgeBaseUrl = "http://127.0.0.1:49321/v1";
+    const legacy = buildCodexDeepSeekConfig({
+      model: authority.effective.deepseek.model,
+      bridgeBaseUrl,
+      streamIdleTimeoutMs: authority.effective.deepseek.request_timeout_ms,
+      searchMcp: {
+        searxngUrl: authority.effective.search.service_url,
+        packageSpec: authority.effective.mcp.search.package,
+        startupTimeoutSec: authority.effective.mcp.search.startup_timeout_sec,
+        toolTimeoutSec: authority.effective.mcp.search.tool_timeout_sec,
+      },
+    });
+    const unified = renderCodexConfig(authority.effective, bridgeBaseUrl);
+    const shadow = compareCodexShadowConfigs({
+      legacyConfig: legacy,
+      unifiedConfig: unified,
+      effectiveFingerprint: authority.effectiveFingerprint,
+    });
+    await writeCodexShadowReport(root, shadow);
+    await writeCodexCutoverReport(root, createCodexCutoverReport({
+      status: "active",
+      activeConfig: "unified",
+      effectiveFingerprint: authority.effectiveFingerprint,
+      legacyConfig: legacy,
+      unifiedConfig: unified,
+      shadowReport: shadow,
+      fallbackUsed: false,
+      reasonCode: "unified-started",
+    }));
+    const configPath = join(root, "data/codex-runtime/config.toml");
+    await mkdir(dirname(configPath), { recursive: true });
+    await writeFile(configPath, unified, "utf8");
+
+    const report = await buildConfigurationDiagnostics({
+      repositoryRoot: root,
+      authority,
+      includeRuntimeProbes: false,
+    });
+    expect(report.productionInstallation.codex.status).toBe("match");
+    expect(report.adoption.codexShadow.status).toBe("compatible");
+    expect(report.adoption.codexCutover.status).toBe("active");
+    expect(report.cutoverGate.blockerCodes).not.toContain("codex-cutover-report-missing");
+    expect(report.cutoverGate.blockerCodes).not.toContain("codex-cutover-drift");
   });
 
   it("captures a bounded SearXNG effective configuration observation", async () => {

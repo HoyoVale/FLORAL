@@ -6,6 +6,7 @@ import {
   ManagedCodexDeepSeekRuntime,
   createPersistentCodexWorkspace,
 } from "../src/agent/managed-codex-deepseek-runtime.js";
+import { compareCodexShadowConfigs } from "../src/config/adoption/codex-shadow-adoption.js";
 import { loadEnv } from "../src/config/env.js";
 import type { AgentRuntime } from "../src/core/contracts.js";
 import type { AgentRunRequest, AgentRunResult } from "../src/core/types.js";
@@ -61,6 +62,7 @@ function setup(options: { runtimeStartError?: Error } = {}) {
       productionConfig: legacyConfig,
     }),
     clearCodexShadowReport: async () => undefined,
+    clearCodexCutoverReport: async () => undefined,
   });
   return { managed, runtime, calls };
 }
@@ -130,6 +132,7 @@ describe("ManagedCodexDeepSeekRuntime", () => {
         };
       },
       clearCodexShadowReport: async () => undefined,
+      clearCodexCutoverReport: async () => undefined,
       createWorkspace: async (config) => {
         workspaceConfig = config;
         return { codexHome: "/tmp/fake-codex", cleanup: async () => undefined };
@@ -158,6 +161,7 @@ describe("ManagedCodexDeepSeekRuntime", () => {
       }),
       prepareCodexConfig: async () => { throw new Error("shadow failed"); },
       clearCodexShadowReport: async () => undefined,
+      clearCodexCutoverReport: async () => undefined,
       createWorkspace: async (config) => {
         workspaceConfig = config;
         return { codexHome: "/tmp/fake-codex", cleanup: async () => undefined };
@@ -174,15 +178,22 @@ describe("ManagedCodexDeepSeekRuntime", () => {
     const root = await mkdtemp(join(tmpdir(), "floral-managed-codex-test-"));
     const codexHome = join(root, "codex-home");
     try {
-      const first = await createPersistentCodexWorkspace(codexHome, "first-config");
+      const first = await createPersistentCodexWorkspace(codexHome, "first-config", {
+        fallbackConfig: "legacy-fallback",
+      });
       const threadDir = join(codexHome, "sessions");
       const threadFile = join(threadDir, "thread-state.json");
       await mkdir(threadDir, { recursive: true });
       await writeFile(threadFile, "persisted", "utf8");
       expect(await readFile(join(codexHome, "config.toml"), "utf8")).toBe("first-config");
+      expect(await readFile(join(codexHome, "config.legacy-fallback.toml"), "utf8"))
+        .toBe("legacy-fallback");
+      await first.replaceConfig?.("replacement-config");
+      expect(await readFile(join(codexHome, "config.toml"), "utf8")).toBe("replacement-config");
 
       await first.cleanup();
       await expect(stat(join(codexHome, "config.toml"))).rejects.toThrow();
+      await expect(stat(join(codexHome, "config.legacy-fallback.toml"))).rejects.toThrow();
       expect(await readFile(threadFile, "utf8")).toBe("persisted");
 
       const second = await createPersistentCodexWorkspace(codexHome, "second-config");
@@ -193,4 +204,114 @@ describe("ManagedCodexDeepSeekRuntime", () => {
       await rm(root, { recursive: true, force: true });
     }
   });
+
+  it("activates the unified config and records a successful controlled cutover", async () => {
+    const legacyConfig = 'model = "same"\n';
+    const unifiedConfig = 'model = "same"\napproval_policy = "never"\nsandbox_mode = "read-only"\nmodel_reasoning_summary = "auto"\n';
+    const shadowReport = compareCodexShadowConfigs({
+      legacyConfig,
+      unifiedConfig,
+      effectiveFingerprint: "effective-fingerprint",
+    });
+    const runtime = new FakeRuntime();
+    let workspaceConfig = "";
+    let reportStatus = "";
+    const managed = new ManagedCodexDeepSeekRuntime(loadEnv({
+      DEEPSEEK_API_KEY: "secret",
+    }), {
+      createToken: () => "token",
+      checkSearch: async () => ({ endpoint: "http://127.0.0.1:8888", resultCount: 1 }),
+      createBridge: () => ({
+        start: async () => ({ baseUrl: "http://127.0.0.1:9999/v1" }),
+        stop: async () => undefined,
+      }),
+      prepareCodexConfig: async () => ({
+        mode: "unified",
+        productionConfig: unifiedConfig,
+        fallbackConfig: legacyConfig,
+        effectiveFingerprint: "effective-fingerprint",
+        codexConfigFingerprint: shadowReport.codexConfigFingerprint,
+        shadowReport,
+      }),
+      createWorkspace: async (config) => {
+        workspaceConfig = config;
+        return {
+          codexHome: "/tmp/fake-codex",
+          replaceConfig: async (replacement) => { workspaceConfig = replacement; },
+          cleanup: async () => undefined,
+        };
+      },
+      createRuntime: () => runtime,
+      recordCodexCutover: async (report) => {
+        reportStatus = report.status;
+        return "/tmp/codex-cutover.json";
+      },
+      clearCodexShadowReport: async () => undefined,
+      clearCodexCutoverReport: async () => undefined,
+    });
+
+    await managed.start();
+    expect(workspaceConfig).toBe(unifiedConfig);
+    expect(reportStatus).toBe("active");
+    expect(runtime.starts).toBe(1);
+    await managed.stop();
+  });
+
+  it("retries once with the saved legacy config when unified startup fails", async () => {
+    const legacyConfig = 'model = "same"\n';
+    const unifiedConfig = 'model = "same"\napproval_policy = "never"\nsandbox_mode = "read-only"\nmodel_reasoning_summary = "auto"\n';
+    const shadowReport = compareCodexShadowConfigs({
+      legacyConfig,
+      unifiedConfig,
+      effectiveFingerprint: "effective-fingerprint",
+    });
+    const first = new FakeRuntime();
+    first.start = async () => { throw new Error("unified failed"); };
+    const second = new FakeRuntime();
+    const runtimes = [first, second];
+    let runtimeIndex = 0;
+    let workspaceConfig = "";
+    let reportStatus = "";
+    const managed = new ManagedCodexDeepSeekRuntime(loadEnv({
+      DEEPSEEK_API_KEY: "secret",
+    }), {
+      createToken: () => "token",
+      checkSearch: async () => ({ endpoint: "http://127.0.0.1:8888", resultCount: 1 }),
+      createBridge: () => ({
+        start: async () => ({ baseUrl: "http://127.0.0.1:9999/v1" }),
+        stop: async () => undefined,
+      }),
+      prepareCodexConfig: async () => ({
+        mode: "unified",
+        productionConfig: unifiedConfig,
+        fallbackConfig: legacyConfig,
+        effectiveFingerprint: "effective-fingerprint",
+        codexConfigFingerprint: shadowReport.codexConfigFingerprint,
+        shadowReport,
+      }),
+      createWorkspace: async (config) => {
+        workspaceConfig = config;
+        return {
+          codexHome: "/tmp/fake-codex",
+          replaceConfig: async (replacement) => { workspaceConfig = replacement; },
+          cleanup: async () => undefined,
+        };
+      },
+      createRuntime: () => runtimes[runtimeIndex++]!,
+      recordCodexCutover: async (report) => {
+        reportStatus = report.status;
+        return "/tmp/codex-cutover.json";
+      },
+      clearCodexShadowReport: async () => undefined,
+      clearCodexCutoverReport: async () => undefined,
+    });
+
+    await managed.start();
+    expect(workspaceConfig).toBe(legacyConfig);
+    expect(first.stops).toBe(1);
+    expect(second.starts).toBe(1);
+    expect(reportStatus).toBe("rolled-back");
+    await managed.stop();
+  });
+
 });

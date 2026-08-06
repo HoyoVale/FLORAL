@@ -90,3 +90,9 @@ mode = "legacy"
 
 and restart the service. This disables shadow rendering while retaining the
 same production generator used before Phase 4.0E1.
+
+## Successor phase
+
+Phase 4.0E2 is documented in `PHASE4_CODEX_CONTROLLED_CUTOVER.md`. It adds the
+explicit `unified` mode, atomic installation, a short-lived legacy rollback
+copy, and the cutover result gate.

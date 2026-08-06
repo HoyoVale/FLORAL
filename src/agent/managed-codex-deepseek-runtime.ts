@@ -1,6 +1,12 @@
 import { randomBytes } from "node:crypto";
-import { chmod, mkdir, rm, writeFile } from "node:fs/promises";
-import { join, resolve } from "node:path";
+import { chmod, mkdir, open, rename, rm } from "node:fs/promises";
+import { dirname, join, resolve } from "node:path";
+import {
+  createCodexCutoverReport,
+  removeCodexCutoverReport,
+  writeCodexCutoverReport,
+  type CodexCutoverReport,
+} from "../config/adoption/codex-controlled-cutover.js";
 import {
   prepareCodexConfigAdoption,
   removeCodexShadowReport,
@@ -25,6 +31,7 @@ interface ManagedBridge {
 
 export interface ManagedWorkspace {
   codexHome: string;
+  replaceConfig?(config: string): Promise<void>;
   cleanup(): Promise<void>;
 }
 
@@ -37,7 +44,11 @@ export interface ManagedCodexDeepSeekDependencies {
   createToken?: (() => string) | undefined;
   checkSearch?: (() => Promise<SearchEndpoint>) | undefined;
   createBridge?: ((token: string) => ManagedBridge) | undefined;
-  createWorkspace?: ((config: string, codexHome: string) => Promise<ManagedWorkspace>) | undefined;
+  createWorkspace?: ((
+    config: string,
+    codexHome: string,
+    options?: { fallbackConfig?: string | undefined },
+  ) => Promise<ManagedWorkspace>) | undefined;
   createRuntime?: ((options: {
     codexHome: string;
     bridgeToken: string;
@@ -47,6 +58,8 @@ export interface ManagedCodexDeepSeekDependencies {
     bridgeBaseUrl: string;
   }) => Promise<CodexConfigAdoptionResult>) | undefined;
   clearCodexShadowReport?: (() => Promise<void>) | undefined;
+  clearCodexCutoverReport?: (() => Promise<void>) | undefined;
+  recordCodexCutover?: ((report: CodexCutoverReport) => Promise<string>) | undefined;
 }
 
 export class ManagedCodexDeepSeekRuntime implements AgentRuntime {
@@ -135,21 +148,11 @@ export class ManagedCodexDeepSeekRuntime implements AgentRuntime {
         },
       });
       const adoption = await this.#prepareCodexConfig(legacyConfig, address.baseUrl);
-      const managedCodexHome = resolve(this.env.CODEX_MANAGED_HOME);
-      const workspace = await (this.dependencies.createWorkspace?.(
-        adoption.productionConfig,
-        managedCodexHome,
-      ) ?? createPersistentCodexWorkspace(managedCodexHome, adoption.productionConfig));
-      this.#workspace = workspace;
-      process.stderr.write("agent.stack.codex_home=persistent\n");
-
-      const runtime = this.dependencies.createRuntime?.({
-        codexHome: workspace.codexHome,
-        bridgeToken: token,
-      }) ?? createCodexRuntime(this.env, workspace.codexHome, token);
-      this.#runtime = runtime;
-      await runtime.start();
-      process.stderr.write("agent.stack.codex=ok\n");
+      // Never let a previous successful report survive into a new unified
+      // startup attempt. A missing or rollback report is safer than stale
+      // evidence claiming that the current process activated unified config.
+      await this.#clearCutoverReport(adoption.mode !== "unified");
+      await this.#startCodexRuntime(adoption, legacyConfig, token);
     } catch (error) {
       const runtime = this.#runtime;
       const workspace = this.#workspace;
@@ -160,6 +163,86 @@ export class ManagedCodexDeepSeekRuntime implements AgentRuntime {
       await bridge.stop().catch(() => undefined);
       await workspace?.cleanup().catch(() => undefined);
       throw error;
+    }
+  }
+
+  async #startCodexRuntime(
+    adoption: CodexConfigAdoptionResult,
+    legacyConfig: string,
+    token: string,
+  ): Promise<void> {
+    const managedCodexHome = resolve(this.env.CODEX_MANAGED_HOME);
+    let workspace = await this.#createWorkspace(
+      adoption.productionConfig,
+      managedCodexHome,
+      adoption.fallbackConfig,
+    );
+    process.stderr.write("agent.stack.codex_home=persistent\n");
+    let runtime = this.#createRuntime(workspace.codexHome, token);
+
+    try {
+      await runtime.start();
+      if (adoption.mode === "unified") {
+        await this.#recordCutover(adoption, legacyConfig, "active", "unified", {
+          fallbackUsed: false,
+          reasonCode: "unified-started",
+        });
+        process.stderr.write("agent.stack.codex_config.cutover=active\n");
+      }
+      this.#workspace = workspace;
+      this.#runtime = runtime;
+      process.stderr.write("agent.stack.codex=ok\n");
+      return;
+    } catch (unifiedError) {
+      await runtime.stop().catch(() => undefined);
+      if (adoption.mode !== "unified" || !adoption.fallbackConfig) {
+        await workspace.cleanup().catch(() => undefined);
+        throw unifiedError;
+      }
+
+      process.stderr.write(
+        `agent.stack.codex_config.rollback=legacy:${errorName(unifiedError)}\n`,
+      );
+      try {
+        if (workspace.replaceConfig) {
+          await workspace.replaceConfig(adoption.fallbackConfig);
+        } else {
+          await workspace.cleanup();
+          workspace = await this.#createWorkspace(
+            adoption.fallbackConfig,
+            managedCodexHome,
+          );
+        }
+        runtime = this.#createRuntime(workspace.codexHome, token);
+        await runtime.start();
+        await this.#recordCutover(adoption, legacyConfig, "rolled-back", "legacy", {
+          fallbackUsed: true,
+          reasonCode: "unified-start-failed-legacy-recovered",
+          startupError: unifiedError,
+        }).catch((reportError) => {
+          process.stderr.write(
+            `agent.stack.codex_config.cutover_report=error:${errorName(reportError)}\n`,
+          );
+        });
+        this.#workspace = workspace;
+        this.#runtime = runtime;
+        process.stderr.write("agent.stack.codex_config.cutover=rolled-back\n");
+        process.stderr.write("agent.stack.codex=ok\n");
+        return;
+      } catch (fallbackError) {
+        await runtime.stop().catch(() => undefined);
+        await workspace.cleanup().catch(() => undefined);
+        await this.#recordCutover(adoption, legacyConfig, "failed", "none", {
+          fallbackUsed: true,
+          reasonCode: "unified-and-legacy-start-failed",
+          startupError: unifiedError,
+          fallbackError,
+        }).catch(() => undefined);
+        throw new AggregateError(
+          [unifiedError, fallbackError],
+          "Codex unified startup and legacy rollback both failed",
+        );
+      }
     }
   }
 
@@ -193,11 +276,81 @@ export class ManagedCodexDeepSeekRuntime implements AgentRuntime {
       process.stderr.write(
         `agent.stack.codex_config.shadow=error:${errorName(error)}\n`,
       );
-      // Shadow adoption is deliberately fail-open to the established legacy
-      // generator. Phase 4.0E1 must not turn a diagnostic failure into a
-      // production outage.
+      // Configuration adoption remains fail-open to the established legacy
+      // generator. Diagnostics keep the cutover blocked until a unified
+      // startup record proves that the controlled switch succeeded.
       return { mode: "legacy", productionConfig: legacyConfig };
     }
+  }
+
+  async #createWorkspace(
+    config: string,
+    codexHome: string,
+    fallbackConfig?: string,
+  ): Promise<ManagedWorkspace> {
+    return await (this.dependencies.createWorkspace?.(
+      config,
+      codexHome,
+      fallbackConfig ? { fallbackConfig } : undefined,
+    ) ?? createPersistentCodexWorkspace(
+      codexHome,
+      config,
+      fallbackConfig ? { fallbackConfig } : undefined,
+    ));
+  }
+
+  #createRuntime(codexHome: string, bridgeToken: string): AgentRuntime {
+    return this.dependencies.createRuntime?.({ codexHome, bridgeToken })
+      ?? createCodexRuntime(this.env, codexHome, bridgeToken);
+  }
+
+  async #recordCutover(
+    adoption: CodexConfigAdoptionResult,
+    legacyConfig: string,
+    status: CodexCutoverReport["status"],
+    activeConfig: CodexCutoverReport["activeConfig"],
+    details: Pick<
+      Parameters<typeof createCodexCutoverReport>[0],
+      "fallbackUsed" | "reasonCode" | "startupError" | "fallbackError"
+    >,
+  ): Promise<void> {
+    if (
+      adoption.mode !== "unified"
+      || !adoption.fallbackConfig
+      || !adoption.shadowReport
+      || !adoption.effectiveFingerprint
+      || !adoption.codexConfigFingerprint
+    ) {
+      throw new Error("Incomplete Codex unified cutover metadata");
+    }
+    const report = createCodexCutoverReport({
+      status,
+      activeConfig,
+      effectiveFingerprint: adoption.effectiveFingerprint,
+      legacyConfig,
+      unifiedConfig: adoption.productionConfig,
+      shadowReport: adoption.shadowReport,
+      ...details,
+    });
+    if (report.targetCodexConfigFingerprint !== adoption.codexConfigFingerprint) {
+      throw new Error("Codex unified cutover fingerprint changed after adoption preparation");
+    }
+    const path = await (this.dependencies.recordCodexCutover?.(report)
+      ?? writeCodexCutoverReport(process.cwd(), report));
+    process.stderr.write(
+      `agent.stack.codex_config.cutover_fingerprint=${report.reportFingerprint}\n`,
+    );
+    process.stderr.write(`agent.stack.codex_config.cutover_path=${path}\n`);
+  }
+
+  async #clearCutoverReport(ignoreErrors: boolean): Promise<void> {
+    const operation = this.dependencies.clearCodexCutoverReport?.()
+      ?? removeCodexCutoverReport(process.cwd());
+    if (ignoreErrors) {
+      await operation.catch(() => undefined);
+      return;
+    }
+    await operation;
   }
 
   #requireRuntime(): AgentRuntime {
@@ -211,26 +364,72 @@ export class ManagedCodexDeepSeekRuntime implements AgentRuntime {
 export async function createPersistentCodexWorkspace(
   codexHome: string,
   config: string,
+  options: { fallbackConfig?: string | undefined } = {},
 ): Promise<ManagedWorkspace> {
   const resolvedHome = resolve(codexHome);
   const configPath = join(resolvedHome, "config.toml");
+  const fallbackPath = join(resolvedHome, "config.legacy-fallback.toml");
 
   await mkdir(resolvedHome, { recursive: true, mode: 0o700 });
   await chmod(resolvedHome, 0o700).catch(() => undefined);
-  await writeFile(configPath, config, {
-    encoding: "utf8",
-    mode: 0o600,
-  });
-  await chmod(configPath, 0o600).catch(() => undefined);
+  if (options.fallbackConfig) {
+    await writeAtomicPrivateText(fallbackPath, options.fallbackConfig);
+  } else {
+    await rm(fallbackPath, { force: true });
+  }
+  await writeAtomicPrivateText(configPath, config);
 
   return {
     codexHome: resolvedHome,
+    replaceConfig: async (replacement) => {
+      await writeAtomicPrivateText(configPath, replacement);
+    },
     cleanup: async () => {
       // Keep Codex thread/session state across FLORAL restarts, but remove the
-      // short-lived bridge URL/token configuration once this process stops.
-      await rm(configPath, { force: true });
+      // short-lived bridge URL/token configuration and rollback copy once this
+      // process stops.
+      await Promise.all([
+        rm(configPath, { force: true }),
+        rm(fallbackPath, { force: true }),
+      ]);
     },
   };
+}
+
+async function writeAtomicPrivateText(path: string, content: string): Promise<void> {
+  const directory = dirname(path);
+  await mkdir(directory, { recursive: true, mode: 0o700 });
+  await chmod(directory, 0o700).catch(() => undefined);
+  const temporary = `${path}.tmp-${String(process.pid)}-${Date.now().toString(36)}`;
+  const handle = await open(temporary, "wx", 0o600);
+  try {
+    await handle.writeFile(content, { encoding: "utf8" });
+    await handle.sync();
+  } finally {
+    await handle.close();
+  }
+  try {
+    await chmod(temporary, 0o600).catch(() => undefined);
+    await rename(temporary, path);
+    await chmod(path, 0o600).catch(() => undefined);
+    await syncDirectory(directory);
+  } finally {
+    await rm(temporary, { force: true });
+  }
+}
+
+async function syncDirectory(path: string): Promise<void> {
+  try {
+    const handle = await open(path, "r");
+    try {
+      await handle.sync();
+    } finally {
+      await handle.close();
+    }
+  } catch {
+    // Directory fsync is not portable to every Windows filesystem. The file
+    // itself has already been synced before the atomic rename.
+  }
 }
 
 function errorName(error: unknown): string {

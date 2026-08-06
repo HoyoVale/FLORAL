@@ -8,6 +8,7 @@ import {
   fingerprintCodexConfigSemantics,
   prepareCodexConfigAdoption,
   readCodexShadowReport,
+  writeCodexShadowReport,
 } from "../src/config/adoption/codex-shadow-adoption.js";
 import { renderCodexConfig } from "../src/config/adapters/codex-native-config.js";
 import { resolveConfigurationAuthority } from "../src/config/federation/config-authority.js";
@@ -85,13 +86,15 @@ describe("Codex unified shadow adoption", () => {
     try {
       await writeFile(join(root, "config.toml"), "", "utf8");
       const resolved = await authority();
+      const shadowAuthority = structuredClone(resolved);
+      shadowAuthority.effective.runtime.adoption.codex.mode = "unified-shadow";
       const legacy = legacyConfig();
       const result = await prepareCodexConfigAdoption({
         repositoryRoot: root,
         environment: {},
         legacyConfig: legacy,
         bridgeBaseUrl: "http://127.0.0.1:9999/v1",
-        authority: resolved,
+        authority: shadowAuthority,
       });
 
       expect(result.mode).toBe("unified-shadow");
@@ -130,4 +133,53 @@ describe("Codex unified shadow adoption", () => {
       await rm(root, { recursive: true, force: true });
     }
   });
+
+  it("activates unified output only when a current compatible shadow report exists", async () => {
+    const root = await mkdtemp(join(tmpdir(), "floral-codex-unified-"));
+    try {
+      const resolved = await authority();
+      const legacy = legacyConfig();
+      const unified = renderCodexConfig(
+        resolved.effective,
+        "http://127.0.0.1:9999/v1",
+      );
+      const shadow = compareCodexShadowConfigs({
+        legacyConfig: legacy,
+        unifiedConfig: unified,
+        effectiveFingerprint: resolved.effectiveFingerprint,
+      });
+      await writeCodexShadowReport(root, shadow);
+
+      const result = await prepareCodexConfigAdoption({
+        repositoryRoot: root,
+        environment: {},
+        legacyConfig: legacy,
+        bridgeBaseUrl: "http://127.0.0.1:9999/v1",
+        authority: resolved,
+      });
+      expect(result.mode).toBe("unified");
+      expect(result.productionConfig).toContain("approval_policy");
+      expect(result.fallbackConfig).toBe(legacy);
+      expect(result.shadowReport?.status).toBe("compatible");
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it("blocks unified output when the compatible shadow evidence is missing", async () => {
+    const root = await mkdtemp(join(tmpdir(), "floral-codex-unified-missing-"));
+    try {
+      const resolved = await authority();
+      await expect(prepareCodexConfigAdoption({
+        repositoryRoot: root,
+        environment: {},
+        legacyConfig: legacyConfig(),
+        bridgeBaseUrl: "http://127.0.0.1:9999/v1",
+        authority: resolved,
+      })).rejects.toThrow(/compatible shadow report/u);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
 });

@@ -875,12 +875,12 @@
       "risk": "Contention behavior is implicit and should become an effective-config observation."
     },
     {
-      "id": "codex.runtime-adoption.unified-shadow",
+      "id": "codex.runtime-adoption.unified",
       "component": "floral",
       "classification": "floral-owned",
       "file": "src/config/federation/config-schema.ts",
-      "needle": "mode: \"unified-shadow\"",
-      "risk": "Phase 4.0E1 must preserve the legacy production generator while collecting a deterministic unified shadow comparison."
+      "needle": "mode: \"unified\"",
+      "risk": "Phase 4.0E2 may activate the unified Codex renderer only after a compatible shadow report and must preserve automatic legacy rollback."
     }
   ],
   "environmentKeyPolicies": {

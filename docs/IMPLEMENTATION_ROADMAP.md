@@ -174,6 +174,16 @@
 - fail open to the legacy generator if shadow diagnostics fail;
 - keep the global cutover gate blocked until Phase 4.0E2 explicitly adopts unified output.
 
+### Phase 4.0E2 — Codex unified controlled cutover
+
+- require a current compatible Codex-scoped shadow report before activation;
+- install unified `config.toml` with file sync, atomic rename, and private permissions;
+- save the generated legacy config as a short-lived rollback copy;
+- retry Codex exactly once with the legacy config after unified startup failure;
+- persist a tamper-evident, redacted cutover result;
+- expose dedicated cutover status and check commands;
+- require installed, shadow, runtime, and cutover observations to agree before the global gate becomes ready.
+
 ## Phase 4 — macOS GUI
 
 - Peekaboo MCP health and required-tool checks
