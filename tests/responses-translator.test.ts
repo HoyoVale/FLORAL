@@ -91,7 +91,8 @@ describe("Responses request translation", () => {
     });
     expect(translated.toolMap.get("mcp__peekaboo__screenshot")).toEqual({
       deepSeekName: "mcp__peekaboo__screenshot",
-      originalName: "mcp__peekaboo__screenshot",
+      originalName: "screenshot",
+      originalNamespace: "mcp__peekaboo__",
       originalKind: "function",
     });
   });
