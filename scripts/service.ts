@@ -20,8 +20,13 @@ import {
   FLORAL_LAUNCH_AGENT_LABEL,
   renderLaunchAgentPlist,
   resolveExecutable,
+  summarizeLaunchctlPrint,
 } from "../src/service/launchagent-config.js";
 import { checkSearxng } from "../src/search/searxng.js";
+import {
+  prepareLaunchAgentUserPaths,
+  resolveLaunchAgentUserPaths,
+} from "../src/service/launchagent-paths.js";
 
 const repositoryRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const launchAgentPath = join(
@@ -39,15 +44,16 @@ if (process.platform !== "darwin") {
 
 loadProjectEnv(join(repositoryRoot, ".env"));
 const env = loadEnv(process.env);
+const launchAgentUserPaths = resolveLaunchAgentUserPaths(homedir());
 const paths = {
   lock: resolve(repositoryRoot, env.FLORAL_INSTANCE_LOCK_PATH),
   state: resolve(repositoryRoot, env.FLORAL_SERVICE_STATE_PATH),
   runner: join(repositoryRoot, "dist", "src", "service", "launchagent-runner.js"),
   entry: join(repositoryRoot, "dist", "src", "main.js"),
-  stdout: join(repositoryRoot, "logs", "service.out.log"),
-  stderr: join(repositoryRoot, "logs", "service.err.log"),
-  supervisorStdout: join(repositoryRoot, "logs", "launchagent.supervisor.out.log"),
-  supervisorStderr: join(repositoryRoot, "logs", "launchagent.supervisor.err.log"),
+  stdout: launchAgentUserPaths.stdout,
+  stderr: launchAgentUserPaths.stderr,
+  supervisorStdout: launchAgentUserPaths.supervisorStdout,
+  supervisorStderr: launchAgentUserPaths.supervisorStderr,
 };
 
 switch (command) {
@@ -101,13 +107,15 @@ async function doctor(): Promise<void> {
   console.log(`service.doctor.codex=${codex}`);
   console.log(`service.doctor.npx=${npx}`);
   console.log(`service.doctor.searxng_results=${search.resultCount}`);
+  console.log(`service.doctor.runtime_dir=${launchAgentUserPaths.runtimeDir}`);
+  console.log(`service.doctor.log_dir=${launchAgentUserPaths.logDir}`);
   console.log("service.doctor=ok");
 }
 
 async function install(): Promise<void> {
   await doctor();
   await mkdir(dirname(launchAgentPath), { recursive: true, mode: 0o700 });
-  await mkdir(join(repositoryRoot, "logs"), { recursive: true, mode: 0o700 });
+  await prepareLaunchAgentUserPaths(launchAgentUserPaths);
   await mkdir(join(repositoryRoot, "data"), { recursive: true, mode: 0o700 });
 
   const servicePath = await buildServicePath([
@@ -117,6 +125,7 @@ async function install(): Promise<void> {
   ]);
   const plist = renderLaunchAgentPlist({
     projectDir: repositoryRoot,
+    workingDirectory: launchAgentUserPaths.runtimeDir,
     nodePath: process.execPath,
     runnerPath: paths.runner,
     entryPath: paths.entry,
@@ -143,12 +152,15 @@ async function install(): Promise<void> {
   await runLaunchctl(["bootstrap", domainTarget(), launchAgentPath]);
   await waitForReady(previous?.pid, 120_000);
   console.log(`service.plist=${launchAgentPath}`);
+  console.log(`service.runtime_dir=${launchAgentUserPaths.runtimeDir}`);
+  console.log(`service.log_dir=${launchAgentUserPaths.logDir}`);
   console.log("service.install=ok");
 }
 
 async function start(): Promise<void> {
   await ensureBuild();
   await ensurePrivateEnv();
+  await prepareLaunchAgentUserPaths(launchAgentUserPaths);
   if (!(await fileExists(launchAgentPath))) {
     throw new Error("LaunchAgent plist is not installed; run service:install");
   }
@@ -188,6 +200,13 @@ async function stop(): Promise<void> {
 }
 
 async function logs(): Promise<void> {
+  console.log(`service.logs.directory=${launchAgentUserPaths.logDir}`);
+  console.log("service.logs.supervisor_stdout.begin");
+  console.log(await tailFile(paths.supervisorStdout, 64 * 1024));
+  console.log("service.logs.supervisor_stdout.end");
+  console.log("service.logs.supervisor_stderr.begin");
+  console.log(await tailFile(paths.supervisorStderr, 64 * 1024));
+  console.log("service.logs.supervisor_stderr.end");
   console.log("service.logs.stdout.begin");
   console.log(await tailFile(paths.stdout, 64 * 1024));
   console.log("service.logs.stdout.end");
@@ -279,7 +298,58 @@ async function waitForReady(
     }
     await delay(1_000);
   }
+  await reportReadyTimeout(previousPid);
   throw new Error("FLORAL service did not become ready before timeout");
+}
+
+async function reportReadyTimeout(
+  previousPid: number | undefined,
+): Promise<void> {
+  const state = await readServiceState(paths.state);
+  console.error("service.ready_timeout=true");
+  console.error(`service.ready_timeout.target=${serviceTarget}`);
+  console.error(`service.ready_timeout.previous_pid=${previousPid ?? "none"}`);
+  console.error(`service.ready_timeout.state=${state?.phase ?? "unknown"}`);
+  console.error(`service.ready_timeout.pid=${state?.pid ?? "none"}`);
+  console.error(
+    `service.ready_timeout.pid_alive=${state ? isProcessAlive(state.pid) : false}`,
+  );
+  console.error(
+    `service.ready_timeout.runtime_dir=${launchAgentUserPaths.runtimeDir}`,
+  );
+  console.error(
+    `service.ready_timeout.log_dir=${launchAgentUserPaths.logDir}`,
+  );
+
+  const launchctl = await runCapture(
+    "/bin/launchctl",
+    ["print", serviceTarget],
+    true,
+  ).catch((error: unknown) => ({
+    code: 1,
+    stdout: "",
+    stderr: error instanceof Error ? error.message : String(error),
+  }));
+  console.error("service.ready_timeout.launchctl.begin");
+  console.error(summarizeLaunchctlPrint(launchctl.stdout || launchctl.stderr));
+  console.error("service.ready_timeout.launchctl.end");
+
+  await printTimeoutLog("supervisor_stderr", paths.supervisorStderr);
+  await printTimeoutLog("supervisor_stdout", paths.supervisorStdout);
+  await printTimeoutLog("service_stderr", paths.stderr);
+}
+
+async function printTimeoutLog(name: string, path: string): Promise<void> {
+  console.error(`service.ready_timeout.${name}.path=${path}`);
+  console.error(`service.ready_timeout.${name}.begin`);
+  try {
+    console.error(await tailFile(path, 16 * 1024));
+  } catch (error) {
+    console.error(
+      `(unable to read log: ${error instanceof Error ? error.message : String(error)})`,
+    );
+  }
+  console.error(`service.ready_timeout.${name}.end`);
 }
 
 async function waitForStopped(timeoutMs: number): Promise<void> {

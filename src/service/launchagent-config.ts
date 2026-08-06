@@ -5,6 +5,7 @@ export const FLORAL_LAUNCH_AGENT_LABEL = "com.hoyo.mac-agent";
 
 export interface LaunchAgentPlistOptions {
   projectDir: string;
+  workingDirectory: string;
   nodePath: string;
   runnerPath: string;
   entryPath: string;
@@ -48,7 +49,7 @@ export function renderLaunchAgentPlist(options: LaunchAgentPlistOptions): string
     ...argumentsList.map((value) => `    <string>${xmlEscape(value)}</string>`),
     `  </array>`,
     `  <key>WorkingDirectory</key>`,
-    `  <string>${xmlEscape(options.projectDir)}</string>`,
+    `  <string>${xmlEscape(options.workingDirectory)}</string>`,
     `  <key>EnvironmentVariables</key>`,
     `  <dict>`,
     envEntry("NODE_ENV", "production"),
@@ -124,6 +125,17 @@ export async function resolveExecutable(
     }
   }
   throw new Error(`Required executable not found: ${command}`);
+}
+
+export function summarizeLaunchctlPrint(value: string): string {
+  if (!value.trim()) return "(no launchctl output)";
+  const relevant = value
+    .split(/\r?\n/u)
+    .filter((line) =>
+      /state =|pid =|runs =|last exit code|reason =|program =|working directory|stdout path|stderr path/iu
+        .test(line),
+    );
+  return relevant.length > 0 ? relevant.join("\n") : value.slice(-16 * 1024);
 }
 
 function envEntry(key: string, value: string): string {

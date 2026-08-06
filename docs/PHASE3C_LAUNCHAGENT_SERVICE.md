@@ -8,7 +8,8 @@ automation permissions.
 
 The generated plist contains paths and non-secret runtime settings only.
 QQ, DeepSeek, pairing, and future administration secrets remain in the local
-repository `.env`.
+repository `.env`. The project may live on an external volume, but launchd-owned
+working and log paths are always created on the internal user volume.
 
 ## Security prerequisites
 
@@ -93,13 +94,20 @@ It contains only:
 It does not contain prompts, replies, OpenIDs, credentials, pairing codes,
 thread IDs, tool results, or reasoning.
 
-## Logs
+## Internal runtime and logs
 
-The runner captures the application streams and rotates:
+The LaunchAgent does not use the repository as its own working directory. The
+installer creates an owner-only internal runtime directory:
 
 ```text
-logs/service.out.log
-logs/service.err.log
+~/Library/Application Support/FLORAL/runtime
+```
+
+The runner captures the application streams and rotates them under:
+
+```text
+~/Library/Logs/FLORAL/service.out.log
+~/Library/Logs/FLORAL/service.err.log
 ```
 
 Defaults:
@@ -108,8 +116,16 @@ Defaults:
 - five backups;
 - owner-only files.
 
-Launchd itself writes only the supervisor's small lifecycle stream to separate
-supervisor logs.
+Launchd itself writes only the supervisor's small lifecycle stream to:
+
+```text
+~/Library/Logs/FLORAL/launchagent.supervisor.out.log
+~/Library/Logs/FLORAL/launchagent.supervisor.err.log
+```
+
+The installer creates these directories and files before `launchctl bootstrap`,
+with `0700` directories and `0600` logs. This avoids macOS `EX_CONFIG` failures
+when the repository is located on `/Volumes/...`.
 
 ## Crash recovery acceptance
 
@@ -166,4 +182,6 @@ corepack pnpm service:install
 corepack pnpm service:status
 ```
 
-A failed build or doctor check blocks restart.
+A failed build or doctor check blocks restart. If readiness still times out, the
+service command prints the current service state, a bounded launchctl summary
+(including `last exit code`), and bounded supervisor/application stderr tails.
