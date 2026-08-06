@@ -1,7 +1,8 @@
-import { join, resolve } from "node:path";
+import { resolve } from "node:path";
 import { ManagedCodexDeepSeekRuntime } from "./agent/managed-codex-deepseek-runtime.js";
 import { MockAgentRuntime } from "./agent/mock-agent.js";
 import { loadEnv } from "./config/env.js";
+import { resolveConfigurationAuthority } from "./config/federation/config-authority.js";
 import { loadProjectEnv } from "./config/load-project-env.js";
 import type { AgentRuntime, ChatTransport } from "./core/contracts.js";
 import { acquireProcessLock } from "./runtime/process-lock.js";
@@ -9,10 +10,15 @@ import { createServiceStateWriter } from "./runtime/service-state.js";
 import { GatewayService } from "./service/gateway.js";
 import { SqliteGatewayStore } from "./storage/sqlite.js";
 import { MockQqTransport } from "./transport/qq/mock-qq-transport.js";
-import { QqTransport } from "./transport/qq/qq-transport.js";
+import { QqRuntimeAdoptionTransport } from "./transport/qq/qq-runtime-adoption-transport.js";
 
 loadProjectEnv();
 const env = loadEnv();
+const repositoryRoot = process.cwd();
+const authority = await resolveConfigurationAuthority({
+  repositoryRoot,
+  environment: process.env,
+});
 const lock = await acquireProcessLock(resolve(env.FLORAL_INSTANCE_LOCK_PATH));
 const serviceState = env.FLORAL_SERVICE_MODE === "launchagent"
   ? createServiceStateWriter(resolve(env.FLORAL_SERVICE_STATE_PATH), {
@@ -24,17 +30,12 @@ const serviceState = env.FLORAL_SERVICE_MODE === "launchagent"
 await serviceState?.write("starting");
 
 const transport: ChatTransport = env.QQ_MODE === "real"
-  ? new QqTransport({
-      appId: env.QQBOT_APP_ID!,
-      appSecret: env.QQBOT_APP_SECRET!,
-      dataDir: resolve(env.QQBOT_SESSION_DIR ?? join(env.DATA_DIR, "qq-session")),
-      startupTimeoutMs: env.QQBOT_STARTUP_TIMEOUT_MS,
-      replyTargetTtlMs: env.QQBOT_REPLY_TARGET_TTL_MS,
-      replyTargetCacheEntries: env.QQBOT_REPLY_TARGET_CACHE_ENTRIES,
-      textChunkCharacters: env.QQBOT_TEXT_CHUNK_CHARACTERS,
-      maxReplyChunks: env.QQBOT_MAX_REPLY_CHUNKS,
-      outboundTimeoutMs: env.QQBOT_OUTBOUND_TIMEOUT_MS,
-    })
+  ? new QqRuntimeAdoptionTransport(
+      repositoryRoot,
+      authority,
+      env,
+      process.env,
+    )
   : new MockQqTransport();
 
 const agent: AgentRuntime = env.CODEX_MODE === "real"

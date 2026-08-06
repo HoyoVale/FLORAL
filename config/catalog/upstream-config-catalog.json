@@ -69,11 +69,11 @@
           "classification": "floral-owned",
           "coverage": "typed",
           "knownKeys": [
-            "runtime.adoption.codex.mode"
+            "runtime.adoption.codex.mode",
+            "runtime.adoption.qq_sdk.mode"
           ],
           "futureKeys": [
             "runtime.adoption.mcp.mode",
-            "runtime.adoption.qq_sdk.mode",
             "runtime.adoption.searxng.mode"
           ]
         }
@@ -897,6 +897,14 @@
       "file": "src/config/mcp/mcp-runtime-registry.ts",
       "needle": "MCP parent environment inheritance is forbidden",
       "risk": "Each MCP child receives only explicitly rendered environment entries and must not inherit unrelated credentials."
+    },
+    {
+      "id": "qq.sdk.runtime-adoption-mode",
+      "component": "qq-sdk",
+      "classification": "floral-owned",
+      "file": "config/floral.toml",
+      "needle": "[runtime.adoption.qq_sdk]",
+      "risk": "QQ runtime options adoption must remain observable and support explicit emergency rollback."
     }
   ],
   "environmentKeyPolicies": {

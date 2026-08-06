@@ -40,6 +40,13 @@ export interface QqTransportDiagnostics {
   lastErrorType?: string | undefined;
 }
 
+export interface QqSdkRuntimePolicy {
+  accountIdStrategy: "sha256-app-id";
+  sessionPersistence: "file";
+  tokenPrefetch: "sync" | "async";
+  logger: "redacted";
+}
+
 export interface QqTransportOptions {
   appId: string;
   appSecret: string;
@@ -50,6 +57,7 @@ export interface QqTransportOptions {
   textChunkCharacters: number;
   maxReplyChunks: number;
   outboundTimeoutMs: number;
+  sdk: QqSdkRuntimePolicy;
   createBot?: (() => QqBotClient | Promise<QqBotClient>) | undefined;
   now?: (() => number) | undefined;
 }
@@ -336,6 +344,7 @@ export class QqTransport implements ChatTransport {
   async #createBot(): Promise<QqBotClient> {
     if (this.options.createBot) return await this.options.createBot();
 
+    validateSdkRuntimePolicy(this.options.sdk);
     const accountId = accountFingerprint(this.options.appId);
     const sessionDir = resolve(this.options.dataDir, "qq", accountId);
     await mkdir(sessionDir, { recursive: true });
@@ -351,9 +360,24 @@ export class QqTransport implements ChatTransport {
         }),
         accountId,
       }),
-      tokenPrefetch: "sync",
+      tokenPrefetch: this.options.sdk.tokenPrefetch,
       logger: createRedactedLogger(),
     });
+  }
+}
+
+function validateSdkRuntimePolicy(policy: QqSdkRuntimePolicy): void {
+  if (policy.accountIdStrategy !== "sha256-app-id") {
+    throw new Error("Unsupported QQ account ID strategy");
+  }
+  if (policy.sessionPersistence !== "file") {
+    throw new Error("Unsupported QQ session persistence mode");
+  }
+  if (!new Set(["sync", "async"]).has(policy.tokenPrefetch)) {
+    throw new Error("Unsupported QQ token prefetch mode");
+  }
+  if (policy.logger !== "redacted") {
+    throw new Error("QQ SDK logger must remain redacted");
   }
 }
 

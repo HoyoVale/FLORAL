@@ -1,7 +1,8 @@
 # FLORAL requested configuration authority.
 # Secrets remain in .env or the inherited process environment.
 # Phase 4.0E2 adopts the unified Codex renderer in production. Phase 4.0E3
-# projects MCP registration from the canonical typed registry.
+# projects MCP registration from the canonical typed registry, and Phase 4.0E4
+# adopts QQ SDK constructor, session, and delivery options.
 
 schema_version = 1
 profile = "production"
@@ -135,6 +136,11 @@ email_password_enabled = false
 # the saved legacy config if unified startup or adoption recording fails.
 # Set to "unified-shadow" to return to observation-only mode, or "legacy" for
 # emergency rollback to the established generator.
+mode = "unified"
+
+[runtime.adoption.qq_sdk]
+# Phase 4.0E4 builds QQ SDK constructor, session persistence, and delivery
+# options from the unified authority. "legacy" remains an emergency fallback.
 mode = "unified"
 
 [macos]

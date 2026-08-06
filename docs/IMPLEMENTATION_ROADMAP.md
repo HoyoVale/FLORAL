@@ -194,6 +194,17 @@
 - fold MCP registry status into the global configuration cutover gate;
 - retain the legacy Codex generator only for emergency rollback.
 
+### Phase 4.0E4 — QQ SDK runtime options adoption
+
+- build one secret-free runtime contract for SDK constructor, session, and delivery options;
+- resolve AppID/AppSecret only from environment SecretRefs at transport creation;
+- inject reviewed token prefetch, file persistence, account ID, and redacted logger policy;
+- use the same unified options builder in production and exclusive QQ probes;
+- verify the installed SDK version before unified startup;
+- persist a private tamper-evident QQ adoption report;
+- retry exactly once with established legacy options after unified startup/report failure;
+- fold QQ runtime adoption into the global configuration cutover gate.
+
 ## Phase 4 — macOS GUI
 
 - Peekaboo MCP health and required-tool checks

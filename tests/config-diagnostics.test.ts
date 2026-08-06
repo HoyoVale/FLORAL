@@ -15,6 +15,10 @@ import {
   createMcpRegistryAdoptionReport,
   writeMcpRegistryAdoptionReport,
 } from "../src/config/adoption/mcp-registry-adoption.js";
+import {
+  createQqRuntimeAdoptionReport,
+  writeQqRuntimeAdoptionReport,
+} from "../src/config/adoption/qq-runtime-options-adoption.js";
 import { renderCodexConfig } from "../src/config/adapters/codex-native-config.js";
 import { renderNativeConfigBundle } from "../src/config/adapters/native-config-bundle.js";
 import {
@@ -26,6 +30,8 @@ import { resolveConfigurationAuthority } from "../src/config/federation/config-a
 import { writeConfigurationDiagnostics } from "../src/config/federation/diagnostics-writer.js";
 import { writeNativeConfigBundle } from "../src/config/federation/native-config-writer.js";
 import { buildMcpRuntimeRegistry } from "../src/config/mcp/mcp-runtime-registry.js";
+import { buildLegacyQqRuntimeOptionsContract, buildQqRuntimeOptionsContract } from "../src/config/qq/qq-runtime-options.js";
+import { loadEnv } from "../src/config/env.js";
 
 const repositoryRoot = resolve(".");
 
@@ -276,6 +282,17 @@ describe("configuration drift diagnostics", () => {
       registry: mcpRegistry,
       codexConfig: unified,
     }));
+    const unifiedQq = buildQqRuntimeOptionsContract(authority.effective);
+    await writeQqRuntimeAdoptionReport(root, createQqRuntimeAdoptionReport({
+      status: "active",
+      activeOptions: "unified",
+      effectiveFingerprint: authority.effectiveFingerprint,
+      unified: unifiedQq,
+      legacy: buildLegacyQqRuntimeOptionsContract(loadEnv(productionEnvironment(root))),
+      installedSdkVersion: "1.0.4",
+      fallbackUsed: false,
+      reasonCode: "unified-ready",
+    }));
     const configPath = join(root, "data/codex-runtime/config.toml");
     await mkdir(dirname(configPath), { recursive: true });
     await writeFile(configPath, unified, "utf8");
@@ -289,6 +306,7 @@ describe("configuration drift diagnostics", () => {
     expect(report.adoption.codexShadow.status).toBe("compatible");
     expect(report.adoption.codexCutover.status).toBe("active");
     expect(report.adoption.mcpRegistry.status).toBe("active");
+    expect(report.adoption.qqRuntime.status).toBe("active");
     expect(report.cutoverGate.blockerCodes).not.toContain("mcp-registry-adoption-report-missing");
     expect(report.cutoverGate.blockerCodes).not.toContain("codex-cutover-report-missing");
     expect(report.cutoverGate.blockerCodes).not.toContain("codex-cutover-drift");

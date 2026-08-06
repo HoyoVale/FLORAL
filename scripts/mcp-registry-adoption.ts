@@ -3,16 +3,20 @@ import {
   readMcpRegistryAdoptionReport,
   renderMcpRegistryAdoptionReport,
 } from "../src/config/adoption/mcp-registry-adoption.js";
+import { dirname, join, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 import { renderCodexConfig } from "../src/config/adapters/codex-native-config.js";
 import { resolveConfigurationAuthority } from "../src/config/federation/config-authority.js";
 import { buildMcpRuntimeRegistry } from "../src/config/mcp/mcp-runtime-registry.js";
+import { loadProjectEnv } from "../src/config/load-project-env.js";
 
+const repositoryRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
+loadProjectEnv(join(repositoryRoot, ".env"));
 const command = process.argv[2] ?? "show";
 if (!["show", "json", "check"].includes(command)) {
   throw new Error(`Unsupported MCP registry adoption command: ${command}`);
 }
 
-const repositoryRoot = process.cwd();
 const authority = await resolveConfigurationAuthority({
   repositoryRoot,
   environment: process.env,

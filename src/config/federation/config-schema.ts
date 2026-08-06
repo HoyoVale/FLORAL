@@ -128,6 +128,9 @@ export const requestedConfigSchema = z.object({
       codex: z.object({
         mode: z.enum(["legacy", "unified-shadow", "unified"]),
       }).strict(),
+      qq_sdk: z.object({
+        mode: z.enum(["legacy", "unified"]),
+      }).strict(),
     }).strict(),
   }).strict(),
   macos: z.object({
@@ -284,6 +287,9 @@ export interface RequestedConfig {
       codex: {
         mode: "legacy" | "unified-shadow" | "unified";
       };
+      qq_sdk: {
+        mode: "legacy" | "unified";
+      };
     };
   };
   macos: { mode: "mock" | "real"; peekaboo_command: string };
@@ -435,6 +441,9 @@ export const DEFAULT_REQUESTED_CONFIG: RequestedConfig = {
   runtime: {
     adoption: {
       codex: {
+        mode: "unified",
+      },
+      qq_sdk: {
         mode: "unified",
       },
     },

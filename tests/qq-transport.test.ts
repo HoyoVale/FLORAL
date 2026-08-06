@@ -265,6 +265,12 @@ function createTransport(
     textChunkCharacters: 1_800,
     maxReplyChunks: 4,
     outboundTimeoutMs: 1_000,
+    sdk: {
+      accountIdStrategy: "sha256-app-id",
+      sessionPersistence: "file",
+      tokenPrefetch: "sync",
+      logger: "redacted",
+    },
     createBot: () => fake as never,
     ...overrides,
   });

@@ -1,13 +1,14 @@
-import { join, resolve } from "node:path";
+import { resolve } from "node:path";
 import type { AppEnv } from "../src/config/env.js";
 import { loadEnv } from "../src/config/env.js";
+import { resolveConfigurationAuthority } from "../src/config/federation/config-authority.js";
 import { loadProjectEnv } from "../src/config/load-project-env.js";
 import {
   acquireProbeStackGuard,
   ProbeStackBusyError,
   type ProbeStackGuard,
 } from "../src/service/probe-stack-guard.js";
-import { QqTransport } from "../src/transport/qq/qq-transport.js";
+import { createUnifiedQqTransportForProbe } from "../src/transport/qq/qq-runtime-adoption-transport.js";
 
 loadProjectEnv();
 const env = loadEnv();
@@ -42,16 +43,13 @@ async function runProbe(env: AppEnv): Promise<void> {
 }
 
 async function runExclusiveProbe(env: AppEnv): Promise<void> {
-  const transport = new QqTransport({
-    appId: env.QQBOT_APP_ID!,
-    appSecret: env.QQBOT_APP_SECRET!,
-    dataDir: resolve(env.QQBOT_SESSION_DIR ?? join(env.DATA_DIR, "qq-session")),
-    startupTimeoutMs: env.QQBOT_STARTUP_TIMEOUT_MS,
-    replyTargetTtlMs: env.QQBOT_REPLY_TARGET_TTL_MS,
-    replyTargetCacheEntries: env.QQBOT_REPLY_TARGET_CACHE_ENTRIES,
-    textChunkCharacters: env.QQBOT_TEXT_CHUNK_CHARACTERS,
-    maxReplyChunks: env.QQBOT_MAX_REPLY_CHUNKS,
-    outboundTimeoutMs: env.QQBOT_OUTBOUND_TIMEOUT_MS,
+  const transport = createUnifiedQqTransportForProbe({
+    repositoryRoot: process.cwd(),
+    authority: await resolveConfigurationAuthority({
+      repositoryRoot: process.cwd(),
+      environment: process.env,
+    }),
+    environment: process.env,
   });
 
   const completion = deferred<void>();

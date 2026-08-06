@@ -18,6 +18,10 @@ import {
   type McpRegistryAdoptionReport,
 } from "../adoption/mcp-registry-adoption.js";
 import {
+  assessQqRuntimeAdoptionReport,
+  readQqRuntimeAdoptionReport,
+} from "../adoption/qq-runtime-options-adoption.js";
+import {
   CODEX_BRIDGE_BASE_URL_PLACEHOLDER,
   renderCodexConfig,
 } from "../adapters/codex-native-config.js";
@@ -35,6 +39,8 @@ import type {
 } from "../federation/config-authority.js";
 import { buildConfigurationInventory } from "../inventory/config-inventory.js";
 import { buildMcpRuntimeRegistry } from "../mcp/mcp-runtime-registry.js";
+import { buildQqRuntimeOptionsContract } from "../qq/qq-runtime-options.js";
+import { resolveInstalledQqSdkVersion } from "../../transport/qq/qq-sdk-contract.js";
 import { assertLoopbackSearxngUrl } from "../../search/searxng.js";
 
 
@@ -140,6 +146,15 @@ export interface McpRegistryAdoptionObservation {
   codexMcpProjectionFingerprint?: string | undefined;
 }
 
+export interface QqRuntimeAdoptionObservation {
+  path: string;
+  status: "active" | "rolled-back" | "failed" | "drift" | "missing" | "invalid" | "disabled";
+  reportFingerprint?: string | undefined;
+  runtimeFingerprint?: string | undefined;
+  installedSdkVersion?: string | undefined;
+  fallbackUsed?: boolean | undefined;
+}
+
 export interface ConfigurationCutoverGate {
   status: "ready" | "blocked";
   blockerCodes: string[];
@@ -174,6 +189,7 @@ export interface ConfigurationDiagnosticsReport {
     codexShadow: CodexShadowObservation;
     codexCutover: CodexCutoverObservation;
     mcpRegistry: McpRegistryAdoptionObservation;
+    qqRuntime: QqRuntimeAdoptionObservation;
   };
   findings: ConfigDiagnosticFinding[];
   cutoverGate: ConfigurationCutoverGate;
@@ -224,6 +240,7 @@ export async function buildConfigurationDiagnostics(
     codexShadow,
     codexCutover,
     mcpRegistry,
+    qqRuntime,
   ] = await Promise.all([
     observeNativeInstallation(repositoryRoot, bundle),
     observeCodexInstallation(repositoryRoot, options.authority, bundle),
@@ -246,6 +263,7 @@ export async function buildConfigurationDiagnostics(
     observeCodexShadowAdoption(repositoryRoot, options.authority),
     observeCodexControlledCutover(repositoryRoot, options.authority),
     observeMcpRegistryAdoption(repositoryRoot, options.authority),
+    observeQqRuntimeAdoption(repositoryRoot, options.authority),
   ]);
 
   const qqSdk = observeQqSdkInstallation(options.authority, inventory.runtime.qqSdk);
@@ -270,6 +288,7 @@ export async function buildConfigurationDiagnostics(
     codexShadow,
     codexCutover,
     mcpRegistry,
+    qqRuntime,
   });
   const blockerCodes = findings
     .filter((finding) => finding.blocksCutover)
@@ -308,6 +327,7 @@ export async function buildConfigurationDiagnostics(
       codexShadow,
       codexCutover,
       mcpRegistry,
+      qqRuntime,
     },
     findings: findings.sort(compareFindings),
     cutoverGate: {
@@ -350,6 +370,9 @@ export function renderConfigurationDiagnostics(report: ConfigurationDiagnosticsR
     `config.diagnostics.codex_cutover_fallback=${String(report.adoption.codexCutover.fallbackUsed ?? false)}`,
     `config.diagnostics.mcp_registry=${report.adoption.mcpRegistry.status}`,
     `config.diagnostics.mcp_registry_fingerprint=${report.adoption.mcpRegistry.registryFingerprint ?? "unavailable"}`,
+    `config.diagnostics.qq_runtime=${report.adoption.qqRuntime.status}`,
+    `config.diagnostics.qq_runtime_fingerprint=${report.adoption.qqRuntime.runtimeFingerprint ?? "unavailable"}`,
+    `config.diagnostics.qq_runtime_fallback=${String(report.adoption.qqRuntime.fallbackUsed ?? false)}`,
     `config.diagnostics.findings=${String(report.findings.length)}`,
     `config.cutover.status=${report.cutoverGate.status}`,
     `config.cutover.blockers=${String(report.cutoverGate.blockerCodes.length)}`,
@@ -631,6 +654,7 @@ function buildFindings(input: {
   codexShadow: CodexShadowObservation;
   codexCutover: CodexCutoverObservation;
   mcpRegistry: McpRegistryAdoptionObservation;
+  qqRuntime: QqRuntimeAdoptionObservation;
 }): ConfigDiagnosticFinding[] {
   const findings: ConfigDiagnosticFinding[] = [];
   if (input.nativeInstallation.manifestStatus !== "match") {
@@ -744,6 +768,37 @@ function buildFindings(input: {
         input.mcpRegistry.path,
         buildMcpRuntimeRegistry(input.authority.effective).registryFingerprint,
         input.mcpRegistry.registryFingerprint,
+      ));
+    }
+  }
+
+  if (
+    input.authority.effective.qq.mode === "real"
+    && input.authority.effective.runtime.adoption.qq_sdk.mode === "unified"
+  ) {
+    if (input.qqRuntime.status === "missing") {
+      findings.push(finding(
+        "qq-runtime-adoption-report-missing",
+        "qq-sdk",
+        "observed",
+        "warning",
+        true,
+        "Unified QQ runtime options are requested but no adoption report exists; restart the FLORAL service",
+        input.qqRuntime.path,
+      ));
+    } else if (input.qqRuntime.status !== "active") {
+      findings.push(finding(
+        `qq-runtime-adoption-${input.qqRuntime.status}`,
+        "qq-sdk",
+        "observed",
+        "warning",
+        true,
+        input.qqRuntime.status === "rolled-back"
+          ? "Unified QQ runtime options failed and the transport recovered with legacy options"
+          : "QQ SDK runtime options do not match the unified configuration authority",
+        input.qqRuntime.path,
+        buildQqRuntimeOptionsContract(input.authority.effective).runtimeFingerprint,
+        input.qqRuntime.runtimeFingerprint,
       ));
     }
   }
@@ -969,6 +1024,45 @@ async function observeMcpRegistryAdoption(
       reportFingerprint: report.reportFingerprint,
       registryFingerprint: report.registryFingerprint,
       codexMcpProjectionFingerprint: report.codexMcpProjectionFingerprint,
+    };
+  } catch {
+    return { path, status: "invalid" };
+  }
+}
+
+async function observeQqRuntimeAdoption(
+  repositoryRoot: string,
+  authority: ResolvedConfigurationAuthority,
+): Promise<QqRuntimeAdoptionObservation> {
+  const path = join(repositoryRoot, "data/config/adoption/qq-runtime-options.json");
+  if (
+    authority.effective.qq.mode !== "real"
+    || authority.effective.runtime.adoption.qq_sdk.mode !== "unified"
+  ) {
+    return { path, status: "disabled" };
+  }
+  try {
+    const report = await readQqRuntimeAdoptionReport(repositoryRoot);
+    if (!report) return { path, status: "missing" };
+    const contract = buildQqRuntimeOptionsContract(authority.effective);
+    let installedSdkVersion = "unavailable";
+    try {
+      installedSdkVersion = await resolveInstalledQqSdkVersion();
+    } catch {
+      // The package installation observation reports the detailed failure.
+    }
+    const status = assessQqRuntimeAdoptionReport(
+      report,
+      contract,
+      installedSdkVersion,
+    );
+    return {
+      path,
+      status,
+      reportFingerprint: report.reportFingerprint,
+      runtimeFingerprint: report.targetRuntimeFingerprint,
+      installedSdkVersion,
+      fallbackUsed: report.fallbackUsed,
     };
   } catch {
     return { path, status: "invalid" };
