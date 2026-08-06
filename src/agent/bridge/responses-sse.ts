@@ -304,12 +304,9 @@ export class ResponsesSseWriter {
 function customInputFromArguments(argumentsText: string): string {
   try {
     const parsed = JSON.parse(argumentsText) as unknown;
-    if (
-      typeof parsed === "object"
-      && parsed !== null
-      && typeof (parsed as Record<string, unknown>).input === "string"
-    ) {
-      return (parsed as Record<string, string>).input;
+    if (typeof parsed === "object" && parsed !== null) {
+      const input = (parsed as Record<string, unknown>).input;
+      if (typeof input === "string") return input;
     }
   } catch {
     // Keep the raw argument string.
