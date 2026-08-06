@@ -179,6 +179,51 @@ describe("configuration drift diagnostics", () => {
     expect(report.cutoverGate.blockerCodes).not.toContain("codex-shadow-drift");
   });
 
+  it("keeps a compatible shadow report valid across unrelated service-only environment differences", async () => {
+    const root = await createRepositoryFixture();
+    const shellAuthority = await resolveConfigurationAuthority({
+      repositoryRoot: root,
+      environment: productionEnvironment(root),
+    });
+    const launchAgentAuthority = await resolveConfigurationAuthority({
+      repositoryRoot: root,
+      environment: {
+        ...productionEnvironment(root),
+        FLORAL_SERVICE_MODE: "launchagent",
+        FLORAL_SERVICE_STATE_PATH: join(root, "data/service-state-launchagent.json"),
+        FLORAL_INSTANCE_LOCK_PATH: join(root, "data/floral-launchagent.lock"),
+      },
+    });
+    expect(launchAgentAuthority.effectiveFingerprint).not.toBe(shellAuthority.effectiveFingerprint);
+
+    await writeNativeConfigBundle(root, renderNativeConfigBundle(shellAuthority));
+    const bridgeBaseUrl = "http://127.0.0.1:49321/v1";
+    const legacy = buildCodexDeepSeekConfig({
+      model: launchAgentAuthority.effective.deepseek.model,
+      bridgeBaseUrl,
+      streamIdleTimeoutMs: launchAgentAuthority.effective.deepseek.request_timeout_ms,
+      searchMcp: {
+        searxngUrl: launchAgentAuthority.effective.search.service_url,
+        packageSpec: launchAgentAuthority.effective.mcp.search.package,
+        startupTimeoutSec: launchAgentAuthority.effective.mcp.search.startup_timeout_sec,
+        toolTimeoutSec: launchAgentAuthority.effective.mcp.search.tool_timeout_sec,
+      },
+    });
+    await writeCodexShadowReport(root, compareCodexShadowConfigs({
+      legacyConfig: legacy,
+      unifiedConfig: renderCodexConfig(launchAgentAuthority.effective, bridgeBaseUrl),
+      effectiveFingerprint: launchAgentAuthority.effectiveFingerprint,
+    }));
+
+    const report = await buildConfigurationDiagnostics({
+      repositoryRoot: root,
+      authority: shellAuthority,
+      includeRuntimeProbes: false,
+    });
+    expect(report.adoption.codexShadow.status).toBe("compatible");
+    expect(report.cutoverGate.blockerCodes).not.toContain("codex-shadow-drift");
+  });
+
   it("captures a bounded SearXNG effective configuration observation", async () => {
     const root = await createRepositoryFixture();
     const authority = await resolveConfigurationAuthority({

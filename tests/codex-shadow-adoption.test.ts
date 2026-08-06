@@ -5,6 +5,7 @@ import { describe, expect, it } from "vitest";
 import { buildCodexDeepSeekConfig } from "../src/agent/codex-deepseek-config.js";
 import {
   compareCodexShadowConfigs,
+  fingerprintCodexConfigSemantics,
   prepareCodexConfigAdoption,
   readCodexShadowReport,
 } from "../src/config/adoption/codex-shadow-adoption.js";
@@ -54,6 +55,13 @@ describe("Codex unified shadow adoption", () => {
       "sandbox_mode",
     ]);
     expect(comparison.differingAssignments).toEqual([]);
+    expect(fingerprintCodexConfigSemantics(renderCodexConfig(
+      resolved.effective,
+      "http://127.0.0.1:9999/v1",
+    ))).toBe(fingerprintCodexConfigSemantics(renderCodexConfig(
+      resolved.effective,
+      "http://127.0.0.1:49152/v1",
+    )));
   });
 
   it("detects a real reasoning-effort difference without exposing values", async () => {

@@ -34,6 +34,14 @@ Any missing legacy assignment, unexpected unified assignment, or differing
 shared assignment makes the report `drift`. Values are not persisted in the
 report; only assignment paths and SHA-256 fingerprints are recorded.
 
+The report also stores a Codex-scoped semantic fingerprint. Diagnostics compare
+that fingerprint rather than the complete FLORAL effective fingerprint, because
+LaunchAgent-only paths and service lifecycle settings can differ from an
+interactive shell without changing the rendered Codex configuration. Dynamic
+Bridge ports are normalized before the scoped fingerprint is calculated. Both
+`config:codex-shadow:check` and the global diagnostics gate recompute this
+scoped fingerprint from the current authority before accepting the report.
+
 The report is written atomically to:
 
 ```text

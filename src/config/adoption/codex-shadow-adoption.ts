@@ -1,7 +1,10 @@
 import { createHash } from "node:crypto";
 import { chmod, mkdir, readFile, rename, rm, writeFile } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
-import { renderCodexConfig } from "../adapters/codex-native-config.js";
+import {
+  CODEX_BRIDGE_BASE_URL_PLACEHOLDER,
+  renderCodexConfig,
+} from "../adapters/codex-native-config.js";
 import { normalizeNativeConfigText } from "../adapters/native-config-types.js";
 import {
   resolveConfigurationAuthority,
@@ -11,12 +14,13 @@ import {
 export type CodexConfigAdoptionMode = "legacy" | "unified-shadow";
 
 export interface CodexShadowReport {
-  schemaVersion: 1;
+  schemaVersion: 2;
   phase: "4.0E1";
   generatedAt: string;
   mode: "unified-shadow";
   status: "compatible" | "drift";
   effectiveFingerprint: string;
+  codexConfigFingerprint: string;
   legacyConfigSha256: string;
   unifiedConfigSha256: string;
   sharedAssignments: number;
@@ -127,12 +131,13 @@ export function compareCodexShadowConfigs(input: {
   ) ? "compatible" : "drift";
 
   const reportWithoutFingerprint = {
-    schemaVersion: 1 as const,
+    schemaVersion: 2 as const,
     phase: "4.0E1" as const,
     generatedAt: (input.now ?? new Date()).toISOString(),
     mode: "unified-shadow" as const,
     status,
     effectiveFingerprint: input.effectiveFingerprint,
+    codexConfigFingerprint: fingerprintCodexConfigSemantics(input.unifiedConfig),
     legacyConfigSha256: sha256(normalizeNativeConfigText(input.legacyConfig)),
     unifiedConfigSha256: sha256(normalizeNativeConfigText(input.unifiedConfig)),
     sharedAssignments: shared.length,
@@ -150,6 +155,32 @@ export function compareCodexShadowConfigs(input: {
       generatedAt: "<generated-at>",
     })),
   };
+}
+
+export function assessCodexShadowReport(
+  report: CodexShadowReport,
+  currentUnifiedConfig: string,
+): "compatible" | "drift" {
+  return report.status === "compatible"
+    && report.codexConfigFingerprint === fingerprintCodexConfigSemantics(currentUnifiedConfig)
+    ? "compatible"
+    : "drift";
+}
+
+export function fingerprintCodexConfigSemantics(value: string): string {
+  const assignments = [...parseTomlAssignments(value).entries()]
+    .map(([path, assignment]) => [
+      path,
+      isDynamicBridgeBaseUrlAssignment(path)
+        ? JSON.stringify(CODEX_BRIDGE_BASE_URL_PLACEHOLDER)
+        : assignment,
+    ] as const)
+    .sort(([left], [right]) => left.localeCompare(right));
+  return sha256(stableStringify(assignments));
+}
+
+function isDynamicBridgeBaseUrlAssignment(path: string): boolean {
+  return /^model_providers\..+\.base_url$/u.test(path);
 }
 
 export async function writeCodexShadowReport(
@@ -179,13 +210,19 @@ export async function readCodexShadowReport(
 ): Promise<CodexShadowReport | undefined> {
   const path = join(resolve(repositoryRoot), "data/config/adoption/codex-shadow.json");
   try {
-    const parsed = JSON.parse(await readFile(path, "utf8")) as CodexShadowReport;
+    const raw = JSON.parse(await readFile(path, "utf8")) as Record<string, unknown>;
+    // Schema 1 reports used the entire FLORAL effective fingerprint as their
+    // freshness gate. Treat them as stale so a service restart can replace
+    // them with the Codex-scoped schema 2 report.
+    if (raw.schemaVersion === 1) return undefined;
+    const parsed = raw as unknown as CodexShadowReport;
     if (
-      parsed.schemaVersion !== 1
+      parsed.schemaVersion !== 2
       || parsed.phase !== "4.0E1"
       || parsed.mode !== "unified-shadow"
       || !["compatible", "drift"].includes(parsed.status)
       || typeof parsed.reportFingerprint !== "string"
+      || typeof parsed.codexConfigFingerprint !== "string"
       || !Array.isArray(parsed.expectedUnifiedOnlyAssignments)
       || !Array.isArray(parsed.missingExpectedUnifiedOnlyAssignments)
       || !Array.isArray(parsed.unexpectedUnifiedOnlyAssignments)
@@ -223,6 +260,7 @@ export function renderCodexShadowReport(report: CodexShadowReport): string {
     `config.codex_shadow.mode=${report.mode}`,
     `config.codex_shadow.status=${report.status}`,
     `config.codex_shadow.effective_fingerprint=${report.effectiveFingerprint}`,
+    `config.codex_shadow.codex_config_fingerprint=${report.codexConfigFingerprint}`,
     `config.codex_shadow.legacy_sha256=${report.legacyConfigSha256}`,
     `config.codex_shadow.unified_sha256=${report.unifiedConfigSha256}`,
     `config.codex_shadow.shared_assignments=${String(report.sharedAssignments)}`,

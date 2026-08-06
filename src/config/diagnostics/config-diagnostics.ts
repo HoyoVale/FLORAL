@@ -2,11 +2,14 @@ import { createHash } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import { isAbsolute, join, resolve } from "node:path";
 import {
+  assessCodexShadowReport,
+  fingerprintCodexConfigSemantics,
   readCodexShadowReport,
   type CodexShadowReport,
 } from "../adoption/codex-shadow-adoption.js";
 import {
   CODEX_BRIDGE_BASE_URL_PLACEHOLDER,
+  renderCodexConfig,
 } from "../adapters/codex-native-config.js";
 import {
   renderNativeConfigBundle,
@@ -105,6 +108,7 @@ export interface CodexShadowObservation {
   status: "compatible" | "drift" | "missing" | "invalid" | "disabled";
   reportFingerprint?: string | undefined;
   effectiveFingerprint?: string | undefined;
+  codexConfigFingerprint?: string | undefined;
 }
 
 export interface ConfigurationCutoverGate {
@@ -301,6 +305,7 @@ export function renderConfigurationDiagnostics(report: ConfigurationDiagnosticsR
     `config.diagnostics.searxng_engines=${String(report.runtime.searxng.engines.length)}`,
     `config.diagnostics.searxng_plugins=${String(report.runtime.searxng.plugins.length)}`,
     `config.diagnostics.codex_shadow=${report.adoption.codexShadow.status}`,
+    `config.diagnostics.codex_shadow_config_fingerprint=${report.adoption.codexShadow.codexConfigFingerprint ?? "unavailable"}`,
     `config.diagnostics.findings=${String(report.findings.length)}`,
     `config.cutover.status=${report.cutoverGate.status}`,
     `config.cutover.blockers=${String(report.cutoverGate.blockerCodes.length)}`,
@@ -631,8 +636,8 @@ function buildFindings(input: {
         true,
         "Codex legacy and unified configurations are not shadow-compatible for the current effective configuration",
         input.codexShadow.path,
-        input.authority.effectiveFingerprint,
-        input.codexShadow.effectiveFingerprint,
+        fingerprintCodexConfigSemantics(renderCodexConfig(input.authority.effective)),
+        input.codexShadow.codexConfigFingerprint,
       ));
     }
   }
@@ -781,15 +786,15 @@ async function observeCodexShadowAdoption(
   try {
     const report: CodexShadowReport | undefined = await readCodexShadowReport(repositoryRoot);
     if (!report) return { path, status: "missing" };
-    const status = report.status === "compatible"
-      && report.effectiveFingerprint === authority.effectiveFingerprint
-      ? "compatible"
-      : "drift";
+    const currentUnifiedConfig = renderCodexConfig(authority.effective);
+    const currentCodexConfigFingerprint = fingerprintCodexConfigSemantics(currentUnifiedConfig);
+    const status = assessCodexShadowReport(report, currentUnifiedConfig);
     return {
       path,
       status,
       reportFingerprint: report.reportFingerprint,
       effectiveFingerprint: report.effectiveFingerprint,
+      codexConfigFingerprint: report.codexConfigFingerprint,
     };
   } catch {
     return { path, status: "invalid" };

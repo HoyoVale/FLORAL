@@ -1,9 +1,13 @@
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import {
+  assessCodexShadowReport,
+  fingerprintCodexConfigSemantics,
   readCodexShadowReport,
   renderCodexShadowReport,
 } from "../src/config/adoption/codex-shadow-adoption.js";
+import { renderCodexConfig } from "../src/config/adapters/codex-native-config.js";
+import { resolveConfigurationAuthority } from "../src/config/federation/config-authority.js";
 
 const repositoryRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const mode = process.argv[2] ?? "show";
@@ -20,6 +24,15 @@ if (!report) {
 } else if (mode === "json") {
   process.stdout.write(`${JSON.stringify(report, null, 2)}\n`);
 } else {
+  const authority = await resolveConfigurationAuthority({
+    repositoryRoot,
+    environment: process.env,
+  });
+  const currentUnifiedConfig = renderCodexConfig(authority.effective);
+  const currentCodexConfigFingerprint = fingerprintCodexConfigSemantics(currentUnifiedConfig);
+  const currentStatus = assessCodexShadowReport(report, currentUnifiedConfig);
   process.stdout.write(renderCodexShadowReport(report));
-  if (mode === "check" && report.status !== "compatible") process.exitCode = 2;
+  console.log(`config.codex_shadow.current_codex_config_fingerprint=${currentCodexConfigFingerprint}`);
+  console.log(`config.codex_shadow.current_status=${currentStatus}`);
+  if (mode === "check" && currentStatus !== "compatible") process.exitCode = 2;
 }
