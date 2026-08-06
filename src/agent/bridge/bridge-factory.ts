@@ -4,6 +4,8 @@ import type { AppEnv } from "../../config/env.js";
 export interface ResponsesBridgeOverrides {
   thinking?: "enabled" | "disabled" | undefined;
   forceToolNameOnce?: string | undefined;
+  forceToolWhenInputContains?: string | undefined;
+  onForcedToolSelected?: ((name: string) => void) | undefined;
 }
 
 export function createResponsesBridge(
@@ -29,6 +31,12 @@ export function createResponsesBridge(
       reasoningEffort: env.DEEPSEEK_REASONING_EFFORT,
       ...(overrides.forceToolNameOnce
         ? { forceToolNameOnce: overrides.forceToolNameOnce }
+        : {}),
+      ...(overrides.forceToolWhenInputContains
+        ? { forceToolWhenInputContains: overrides.forceToolWhenInputContains }
+        : {}),
+      ...(overrides.onForcedToolSelected
+        ? { onForcedToolSelected: overrides.onForcedToolSelected }
         : {}),
     },
   });

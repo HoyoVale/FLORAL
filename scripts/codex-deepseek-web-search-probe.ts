@@ -19,9 +19,16 @@ const health = await checkSearxng(
 
 const token = randomBytes(32).toString("hex");
 const forcedToolName = "mcp__floral_search__searxng_web_search";
+const forceMarker = "FLORAL_FORCE_SEARCH_TOOL_PROBE_V1";
+let selectedForcedTool: string | undefined;
 const bridge = createResponsesBridge(env, token, 0, {
   thinking: "disabled",
   forceToolNameOnce: forcedToolName,
+  forceToolWhenInputContains: forceMarker,
+  onForcedToolSelected: (name) => {
+    selectedForcedTool = name;
+    console.log(`probe.bridge.forced_tool_selected=${name}`);
+  },
 });
 const address = await bridge.start();
 const codexHome = await mkdtemp(join(tmpdir(), "floral-codex-search-"));
@@ -76,6 +83,7 @@ try {
       cwd: env.CODEX_CWD,
       model: env.DEEPSEEK_MODEL,
       text: [
+        forceMarker,
         "You must use the MCP tool mcp__floral_search__searxng_web_search exactly once.",
         'Search for: site:docs.searxng.org "Search API" SearXNG',
         "After the tool returns, reply with exactly FLORAL_WEB_SEARCH_OK.",
@@ -102,7 +110,10 @@ try {
   const finalText = result.finalText.trim();
   console.log(`probe.final=${JSON.stringify(finalText)}`);
 
-  if (observedTools.get(expectedTool) !== "completed") {
+  if (!selectedForcedTool) {
+    console.log("probe.result=forced-tool-not-selected");
+    process.exitCode = 1;
+  } else if (observedTools.get(expectedTool) !== "completed") {
     console.log("probe.result=search-tool-not-completed");
     process.exitCode = 1;
   } else if (finalText !== "FLORAL_WEB_SEARCH_OK") {

@@ -79,3 +79,7 @@ corepack pnpm searxng:down
 The real web-search probe disables DeepSeek thinking for its first provider request and forces the exact flattened MCP function once. This prevents a marker-only answer from passing without a tool call. The override is probe-local; normal FLORAL bridge traffic keeps the configured thinking mode and automatic tool selection.
 
 For normal thinking-mode tool chains, the bridge keeps DeepSeek `reasoning_content` in a bounded in-memory call-id cache and restores it only when Codex returns the corresponding tool output. The reasoning text is not logged or persisted.
+
+### Probe-scoped forced tool selection
+
+The deterministic probe now carries a private marker in its user input. The bridge does not consume the one-shot forced-tool override until a Responses request contains that marker and exposes exactly one matching search tool. This avoids Codex setup or preflight model requests consuming the override before the real probe turn. The probe logs only the selected tool name; prompts, credentials, search results, and reasoning content remain unlogged.

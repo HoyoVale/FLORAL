@@ -28,6 +28,8 @@ export interface ResponsesBridgeServerOptions {
     thinking: "enabled" | "disabled";
     reasoningEffort: "high" | "max";
     forceToolNameOnce?: string | undefined;
+    forceToolWhenInputContains?: string | undefined;
+    onForcedToolSelected?: ((name: string) => void) | undefined;
     fetchImpl?: typeof fetch | undefined;
   };
 }
@@ -101,11 +103,24 @@ export class ResponsesBridgeServer {
     });
   }
 
-  #selectForcedTool(toolMap: ReadonlyMap<string, unknown>): string | undefined {
-    const name = this.#pendingForcedToolName;
-    if (!name || !toolMap.has(name)) return undefined;
+  #selectForcedTool(
+    responsesRequest: ReturnType<typeof parseResponsesRequest>,
+    toolMap: ReadonlyMap<string, unknown>,
+  ): string | undefined {
+    const requestedName = this.#pendingForcedToolName;
+    if (!requestedName) return undefined;
+
+    const marker = this.#options.deepSeek.forceToolWhenInputContains;
+    if (marker && !responsesRequestContains(responsesRequest, marker)) {
+      return undefined;
+    }
+
+    const resolvedName = resolveAvailableToolName(requestedName, toolMap);
+    if (!resolvedName) return undefined;
+
     this.#pendingForcedToolName = undefined;
-    return name;
+    this.#options.deepSeek.onForcedToolSelected?.(resolvedName);
+    return resolvedName;
   }
 
   #rememberReasoning(callId: string, reasoning: string): void {
@@ -151,7 +166,10 @@ export class ResponsesBridgeServer {
         this.#options.deepSeek.model,
         { reasoningByCallId: this.#reasoningByCallId },
       );
-      const forcedToolName = this.#selectForcedTool(translated.toolMap);
+      const forcedToolName = this.#selectForcedTool(
+        responsesRequest,
+        translated.toolMap,
+      );
 
       response.statusCode = 200;
       response.setHeader("content-type", "text/event-stream; charset=utf-8");
@@ -227,6 +245,40 @@ export class ResponsesBridgeServer {
       });
     }
   }
+}
+
+function responsesRequestContains(
+  request: ReturnType<typeof parseResponsesRequest>,
+  marker: string,
+): boolean {
+  if (request.instructions?.includes(marker)) return true;
+  return unknownValueContains(request.input, marker);
+}
+
+function unknownValueContains(value: unknown, marker: string): boolean {
+  if (typeof value === "string") return value.includes(marker);
+  if (Array.isArray(value)) {
+    return value.some((entry) => unknownValueContains(entry, marker));
+  }
+  if (typeof value === "object" && value !== null) {
+    return Object.values(value).some((entry) => unknownValueContains(entry, marker));
+  }
+  return false;
+}
+
+function resolveAvailableToolName(
+  requestedName: string,
+  toolMap: ReadonlyMap<string, unknown>,
+): string | undefined {
+  if (toolMap.has(requestedName)) return requestedName;
+
+  const leafName = requestedName.split("__").filter(Boolean).at(-1);
+  if (!leafName) return undefined;
+
+  const candidates = [...toolMap.keys()].filter((name) =>
+    name === leafName || name.endsWith(`__${leafName}`)
+  );
+  return candidates.length === 1 ? candidates[0] : undefined;
 }
 
 function assertLoopbackHost(host: string): void {

@@ -126,7 +126,7 @@ describe("ResponsesBridgeServer", () => {
     expect(response.status).toBe(401);
   });
 
-  it("forces one named tool once and restores thinking context for the tool result", async () => {
+  it("forces the named probe tool only after its marker and restores thinking context", async () => {
     const upstreamBodies: Record<string, any>[] = [];
     let requestCount = 0;
     const fetchImpl: typeof fetch = async (_input, init) => {
@@ -134,6 +134,24 @@ describe("ResponsesBridgeServer", () => {
       requestCount += 1;
 
       if (requestCount === 1) {
+        return new Response([
+          `data: ${JSON.stringify({
+            id: "chat_preflight",
+            model: "deepseek-v4-flash",
+            choices: [{
+              delta: { content: "PRECHECK" },
+              finish_reason: "stop",
+            }],
+          })}`,
+          "data: [DONE]",
+          "",
+        ].join("\n\n"), {
+          status: 200,
+          headers: { "content-type": "text/event-stream" },
+        });
+      }
+
+      if (requestCount === 2) {
         return new Response([
           `data: ${JSON.stringify({
             id: "chat_tool_1",
@@ -192,6 +210,7 @@ describe("ResponsesBridgeServer", () => {
         thinking: "disabled",
         reasoningEffort: "high",
         forceToolNameOnce: "mcp__floral_search__searxng_web_search",
+        forceToolWhenInputContains: "FLORAL_FORCE_SEARCH_TOOL_PROBE_V1",
         fetchImpl,
       },
     });
@@ -212,7 +231,7 @@ describe("ResponsesBridgeServer", () => {
       }],
     }];
 
-    const first = await fetch(`${bridge.baseUrl}/v1/responses`, {
+    const preflight = await fetch(`${bridge.baseUrl}/responses`, {
       method: "POST",
       headers: {
         authorization: "Bearer bridge-test-token",
@@ -220,14 +239,29 @@ describe("ResponsesBridgeServer", () => {
       },
       body: JSON.stringify({
         model: "deepseek-v4-flash",
-        input: "search",
+        input: "preflight without marker",
+        tools,
+        stream: true,
+      }),
+    });
+    await preflight.text();
+
+    const first = await fetch(`${bridge.baseUrl}/responses`, {
+      method: "POST",
+      headers: {
+        authorization: "Bearer bridge-test-token",
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({
+        model: "deepseek-v4-flash",
+        input: "FLORAL_FORCE_SEARCH_TOOL_PROBE_V1\nsearch",
         tools,
         stream: true,
       }),
     });
     await first.text();
 
-    const second = await fetch(`${bridge.baseUrl}/v1/responses`, {
+    const second = await fetch(`${bridge.baseUrl}/responses`, {
       method: "POST",
       headers: {
         authorization: "Bearer bridge-test-token",
@@ -254,12 +288,13 @@ describe("ResponsesBridgeServer", () => {
     });
     await second.text();
 
-    expect(upstreamBodies[0]?.tool_choice).toEqual({
+    expect(upstreamBodies[0]?.tool_choice).toBe("auto");
+    expect(upstreamBodies[1]?.tool_choice).toEqual({
       type: "function",
       function: { name: "mcp__floral_search__searxng_web_search" },
     });
-    expect(upstreamBodies[1]?.tool_choice).toBe("auto");
-    expect(upstreamBodies[1]?.messages?.[0]).toMatchObject({
+    expect(upstreamBodies[2]?.tool_choice).toBe("auto");
+    expect(upstreamBodies[2]?.messages?.[0]).toMatchObject({
       role: "assistant",
       reasoning_content: "search before answering",
       tool_calls: [{ id: "call_search" }],
