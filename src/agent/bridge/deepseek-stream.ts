@@ -25,11 +25,17 @@ export async function* streamDeepSeekChat(
   signal?: AbortSignal,
 ): AsyncGenerator<DeepSeekStreamChunk> {
   const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), options.requestTimeoutMs);
-  const onAbort = () => controller.abort();
+  let timedOut = false;
+  let completed = false;
+  const timeout = setTimeout(() => {
+    timedOut = true;
+    controller.abort(new Error("provider request timeout"));
+  }, options.requestTimeoutMs);
+  const onAbort = () => controller.abort(signal?.reason);
   signal?.addEventListener("abort", onAbort, { once: true });
 
   try {
+    throwIfCancelled(signal);
     const fetchImpl = options.fetchImpl ?? fetch;
     const response = await fetchImpl(
       `${options.baseUrl.replace(/\/+$/, "")}/chat/completions`,
@@ -71,6 +77,7 @@ export async function* streamDeepSeekChat(
         response.status,
         redactSecrets(providerMessage, [options.apiKey]),
         data,
+        parseRetryAfterMs(response.headers.get("retry-after")),
       );
     }
 
@@ -82,12 +89,23 @@ export async function* streamDeepSeekChat(
       });
     }
 
+    let sawDone = false;
     for await (const data of readSseData(response.body)) {
-      if (data === "[DONE]") return;
+      if (data === "[DONE]") {
+        sawDone = true;
+        completed = true;
+        return;
+      }
 
       const parsed = parseJson(data);
       const record = asRecord(parsed);
-      if (!record) continue;
+      if (!record) {
+        throw new ModelProviderError({
+          kind: "protocol",
+          message: "DeepSeek streaming response contained invalid JSON",
+          retryable: false,
+        });
+      }
 
       const choices = Array.isArray(record.choices) ? record.choices : [];
       const first = asRecord(choices[0]);
@@ -110,9 +128,25 @@ export async function* streamDeepSeekChat(
         ...(usage ? { usage } : {}),
       };
     }
+
+    if (!sawDone) {
+      throw new ModelProviderError({
+        kind: "protocol",
+        message: "DeepSeek streaming response ended before [DONE]",
+        retryable: false,
+      });
+    }
   } catch (error) {
     if (error instanceof ModelProviderError) throw error;
-    if (controller.signal.aborted) {
+    if (signal?.aborted) {
+      throw new ModelProviderError({
+        kind: "cancelled",
+        message: "DeepSeek streaming request was cancelled",
+        retryable: false,
+        cause: error,
+      });
+    }
+    if (timedOut) {
       throw new ModelProviderError({
         kind: "timeout",
         message: `DeepSeek streaming request timed out after ${options.requestTimeoutMs}ms`,
@@ -131,6 +165,9 @@ export async function* streamDeepSeekChat(
   } finally {
     clearTimeout(timeout);
     signal?.removeEventListener("abort", onAbort);
+    if (!completed && !controller.signal.aborted) {
+      controller.abort(new Error("provider stream closed before completion"));
+    }
   }
 }
 
@@ -138,37 +175,48 @@ async function* readSseData(stream: ReadableStream<Uint8Array>): AsyncGenerator<
   const reader = stream.getReader();
   const decoder = new TextDecoder();
   let buffer = "";
+  let reachedEof = false;
 
   try {
     while (true) {
       const { value, done } = await reader.read();
-      if (done) break;
+      if (done) {
+        reachedEof = true;
+        break;
+      }
       buffer += decoder.decode(value, { stream: true }).replace(/\r\n/g, "\n");
 
       let boundary = buffer.indexOf("\n\n");
       while (boundary >= 0) {
         const frame = buffer.slice(0, boundary);
         buffer = buffer.slice(boundary + 2);
-        const data = frame
-          .split("\n")
-          .filter((line) => line.startsWith("data:"))
-          .map((line) => line.slice(5).trimStart())
-          .join("\n");
+        const data = frameData(frame);
         if (data) yield data;
         boundary = buffer.indexOf("\n\n");
       }
     }
 
     buffer += decoder.decode();
-    const data = buffer
-      .split("\n")
-      .filter((line) => line.startsWith("data:"))
-      .map((line) => line.slice(5).trimStart())
-      .join("\n");
-    if (data) yield data;
+    const trailing = frameData(buffer);
+    if (trailing) yield trailing;
   } finally {
+    if (!reachedEof) {
+      try {
+        await reader.cancel();
+      } catch {
+        // The parent abort may already have closed the reader.
+      }
+    }
     reader.releaseLock();
   }
+}
+
+function frameData(frame: string): string {
+  return frame
+    .split("\n")
+    .filter((line) => line.startsWith("data:"))
+    .map((line) => line.slice(5).trimStart())
+    .join("\n");
 }
 
 function parseToolCallDeltas(value: unknown): DeepSeekStreamToolCallDelta[] {
@@ -220,6 +268,27 @@ function readErrorMessage(value: unknown): string | undefined {
   const record = asRecord(value);
   const error = asRecord(record?.error);
   return typeof error?.message === "string" ? error.message : undefined;
+}
+
+function parseRetryAfterMs(value: string | null): number | undefined {
+  if (!value) return undefined;
+  const seconds = Number(value);
+  if (Number.isFinite(seconds) && seconds >= 0) {
+    return Math.round(seconds * 1_000);
+  }
+  const date = Date.parse(value);
+  if (!Number.isFinite(date)) return undefined;
+  return Math.max(0, date - Date.now());
+}
+
+function throwIfCancelled(signal?: AbortSignal): void {
+  if (!signal?.aborted) return;
+  throw new ModelProviderError({
+    kind: "cancelled",
+    message: "DeepSeek streaming request was cancelled",
+    retryable: false,
+    cause: signal.reason,
+  });
 }
 
 function asRecord(value: unknown): Record<string, unknown> | undefined {

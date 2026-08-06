@@ -7,13 +7,15 @@ export type ProviderErrorKind =
   | "timeout"
   | "network"
   | "upstream"
-  | "protocol";
+  | "protocol"
+  | "cancelled";
 
 export interface ModelProviderErrorOptions {
   kind: ProviderErrorKind;
   message: string;
   retryable: boolean;
   status?: number | undefined;
+  retryAfterMs?: number | undefined;
   data?: unknown;
   cause?: unknown;
 }
@@ -22,6 +24,7 @@ export class ModelProviderError extends Error {
   readonly kind: ProviderErrorKind;
   readonly retryable: boolean;
   readonly status: number | undefined;
+  readonly retryAfterMs: number | undefined;
   readonly data: unknown;
 
   constructor(options: ModelProviderErrorOptions) {
@@ -30,6 +33,7 @@ export class ModelProviderError extends Error {
     this.kind = options.kind;
     this.retryable = options.retryable;
     this.status = options.status;
+    this.retryAfterMs = options.retryAfterMs;
     this.data = options.data;
   }
 }
@@ -38,6 +42,7 @@ export function classifyProviderHttpError(
   status: number,
   message: string,
   data?: unknown,
+  retryAfterMs?: number,
 ): ModelProviderError {
   if (status === 401 || status === 403) {
     return new ModelProviderError({
@@ -63,6 +68,7 @@ export function classifyProviderHttpError(
       message,
       retryable: true,
       status,
+      ...(retryAfterMs !== undefined ? { retryAfterMs } : {}),
       data,
     });
   }
@@ -75,11 +81,14 @@ export function classifyProviderHttpError(
       data,
     });
   }
+
+  const retryable = [500, 502, 503, 504].includes(status);
   return new ModelProviderError({
     kind: "upstream",
     message,
-    retryable: true,
+    retryable,
     status,
+    ...(retryAfterMs !== undefined ? { retryAfterMs } : {}),
     data,
   });
 }

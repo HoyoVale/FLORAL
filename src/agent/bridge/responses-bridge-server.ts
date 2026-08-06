@@ -12,7 +12,12 @@ import {
   BridgeCapacityError,
   BridgeConcurrencyGate,
 } from "./concurrency-gate.js";
+import type { DeepSeekStreamChunk } from "./bridge-types.js";
 import { streamDeepSeekChat } from "./deepseek-stream.js";
+import {
+  type PreStreamRetryEvent,
+  streamWithPreStreamRetry,
+} from "./retry-policy.js";
 import { ResponsesSseWriter } from "./responses-sse.js";
 import {
   captureCodexResponsesRequest,
@@ -44,6 +49,14 @@ export interface ResponsesBridgeServerOptions {
     requestTimeoutMs: number;
     thinking: "enabled" | "disabled";
     reasoningEffort: "high" | "max";
+    retry?: {
+      maxAttempts: number;
+      baseDelayMs: number;
+      maxDelayMs: number;
+      jitterRatio?: number | undefined;
+      random?: (() => number) | undefined;
+      onRetry?: ((event: PreStreamRetryEvent) => void) | undefined;
+    } | undefined;
     forceToolNameOnce?: string | undefined;
     forceToolWhenInputContains?: string | undefined;
     onForcedToolSelected?: ((name: string) => void) | undefined;
@@ -61,8 +74,11 @@ export class ResponsesBridgeServer {
   readonly #options: ResponsesBridgeServerOptions;
   readonly #capacity: BridgeConcurrencyGate;
   readonly #reasoningByCallId = new Map<string, string>();
+  readonly #requestControllers = new Set<AbortController>();
   #pendingForcedToolName: string | undefined;
   #server: Server | undefined;
+  #stopping = false;
+  #retryCount = 0;
 
   constructor(options: ResponsesBridgeServerOptions) {
     assertLoopbackHost(options.host);
@@ -96,6 +112,7 @@ export class ResponsesBridgeServer {
 
   async start(): Promise<ResponsesBridgeAddress> {
     if (this.#server) return this.address();
+    if (this.#stopping) throw new Error("Responses bridge cannot restart after stop");
 
     const server = createServer((request, response) => {
       void this.#handle(request, response);
@@ -122,6 +139,13 @@ export class ResponsesBridgeServer {
   }
 
   async stop(): Promise<void> {
+    if (this.#stopping) return;
+    this.#stopping = true;
+    this.#capacity.close();
+    for (const controller of this.#requestControllers) {
+      controller.abort(new Error("Responses bridge is stopping"));
+    }
+
     const server = this.#server;
     this.#server = undefined;
     if (!server) return;
@@ -174,10 +198,14 @@ export class ResponsesBridgeServer {
 
     if (request.method === "GET" && request.url === "/health") {
       writeJson(response, 200, {
-        ok: true,
+        ok: !this.#stopping,
         service: "floral-responses-bridge",
         provider: "deepseek",
         capacity: this.#capacity.snapshot(),
+        retry: {
+          maxAttempts: this.#retryOptions().maxAttempts,
+          totalRetries: this.#retryCount,
+        },
       });
       return;
     }
@@ -196,46 +224,56 @@ export class ResponsesBridgeServer {
       return;
     }
 
-    let releaseCapacity: () => void;
-    try {
-      releaseCapacity = await this.#capacity.acquire();
-    } catch (error) {
-      const capacityError = error instanceof BridgeCapacityError
-        ? error
-        : new BridgeCapacityError(
-            "queue_full",
-            this.#capacity.snapshot().queueTimeoutMs,
-          );
-      response.setHeader(
-        "retry-after",
-        String(Math.max(1, Math.ceil(capacityError.retryAfterMs / 1_000))),
-      );
-      writeJson(response, 429, {
-        error: {
-          type: "capacity",
-          kind: capacityError.kind,
-          message: capacityError.message,
-        },
-      });
-      return;
-    }
-
-    let capacityReleased = false;
-    const releaseCapacityOnce = () => {
-      if (capacityReleased) return;
-      capacityReleased = true;
-      releaseCapacity();
+    const requestController = new AbortController();
+    this.#requestControllers.add(requestController);
+    const abortFromRequest = () => {
+      if (!requestController.signal.aborted) {
+        requestController.abort(new Error("Codex request disconnected"));
+      }
     };
-    response.once("finish", releaseCapacityOnce);
-    response.once("close", releaseCapacityOnce);
-    if (request.destroyed || response.destroyed) {
-      releaseCapacityOnce();
-      return;
-    }
+    const abortFromResponse = () => {
+      if (!response.writableEnded) abortFromRequest();
+    };
+    request.once("aborted", abortFromRequest);
+    response.once("close", abortFromResponse);
 
-    let body: unknown;
+    let releaseCapacity: (() => void) | undefined;
     try {
-      body = JSON.parse(await readBody(request, this.#options.maxBodyBytes)) as unknown;
+      try {
+        releaseCapacity = await this.#capacity.acquire(requestController.signal);
+      } catch (error) {
+        const capacityError = error instanceof BridgeCapacityError
+          ? error
+          : new BridgeCapacityError(
+              "queue_full",
+              this.#capacity.snapshot().queueTimeoutMs,
+            );
+        if (
+          requestController.signal.aborted
+          || capacityError.kind === "queue_cancelled"
+          || capacityError.kind === "gate_closed"
+          || this.#stopping
+        ) return;
+
+        response.setHeader(
+          "retry-after",
+          String(Math.max(1, Math.ceil(capacityError.retryAfterMs / 1_000))),
+        );
+        writeJson(response, 429, {
+          error: {
+            type: "capacity",
+            kind: capacityError.kind,
+            message: capacityError.message,
+          },
+        });
+        return;
+      }
+
+      if (requestController.signal.aborted || this.#stopping) return;
+
+      const body = JSON.parse(
+        await readBody(request, this.#options.maxBodyBytes, requestController.signal),
+      ) as unknown;
       this.#captureCompatibilityRequest(body);
       const responsesRequest = parseResponsesRequest(body);
       const translated = translateResponsesRequest(
@@ -248,13 +286,48 @@ export class ResponsesBridgeServer {
         translated.toolMap,
       );
 
-      response.statusCode = 200;
-      response.setHeader("content-type", "text/event-stream; charset=utf-8");
-      response.setHeader("cache-control", "no-cache, no-transform");
-      response.setHeader("connection", "keep-alive");
-      response.setHeader("x-accel-buffering", "no");
-      response.flushHeaders();
+      const retryOptions = this.#retryOptions();
+      const stream = streamWithPreStreamRetry(
+        () => streamDeepSeekChat(
+          translated,
+          {
+            apiKey: this.#options.deepSeek.apiKey,
+            baseUrl: this.#options.deepSeek.baseUrl,
+            requestTimeoutMs: this.#options.deepSeek.requestTimeoutMs,
+            thinking: this.#options.deepSeek.thinking,
+            reasoningEffort: this.#options.deepSeek.reasoningEffort,
+            ...(forcedToolName ? { forcedToolName } : {}),
+            fetchImpl: this.#options.deepSeek.fetchImpl,
+          },
+          requestController.signal,
+        ),
+        {
+          ...retryOptions,
+          onRetry: (event) => {
+            this.#retryCount += 1;
+            this.#options.deepSeek.retry?.onRetry?.(event);
+          },
+        },
+        requestController.signal,
+      );
+      const iterator = stream[Symbol.asyncIterator]();
 
+      let first: IteratorResult<DeepSeekStreamChunk>;
+      try {
+        first = await iterator.next();
+      } catch (error) {
+        const providerError = normalizeProviderError(error);
+        if (providerError.kind === "cancelled" || requestController.signal.aborted) return;
+        writeProviderJsonError(response, providerError);
+        return;
+      }
+
+      if (requestController.signal.aborted || response.destroyed) {
+        await iterator.return?.(undefined);
+        return;
+      }
+
+      startSseResponse(response);
       const writer = new ResponsesSseWriter(
         response,
         this.#options.deepSeek.model,
@@ -267,41 +340,31 @@ export class ResponsesBridgeServer {
       );
       writer.start();
 
-      const abortController = new AbortController();
-      request.once("aborted", () => abortController.abort());
-      response.once("close", () => {
-        if (!response.writableEnded) abortController.abort();
-      });
-
       try {
-        for await (const chunk of streamDeepSeekChat(
-          translated,
-          {
-            apiKey: this.#options.deepSeek.apiKey,
-            baseUrl: this.#options.deepSeek.baseUrl,
-            requestTimeoutMs: this.#options.deepSeek.requestTimeoutMs,
-            thinking: this.#options.deepSeek.thinking,
-            reasoningEffort: this.#options.deepSeek.reasoningEffort,
-            ...(forcedToolName ? { forcedToolName } : {}),
-            fetchImpl: this.#options.deepSeek.fetchImpl,
-          },
-          abortController.signal,
-        )) {
-          writer.consume(chunk);
+        if (!first.done) writer.consume(first.value);
+        while (!first.done) {
+          const next = await iterator.next();
+          if (next.done) break;
+          writer.consume(next.value);
         }
-        writer.complete();
+        if (!requestController.signal.aborted && !response.destroyed) {
+          writer.complete();
+        }
       } catch (error) {
-        const providerError = error instanceof ModelProviderError
-          ? error
-          : new ModelProviderError({
-              kind: "upstream",
-              message: error instanceof Error ? error.message : String(error),
-              retryable: true,
-              cause: error,
-            });
-        writer.fail(providerError.kind, providerError.message);
+        const providerError = normalizeProviderError(error);
+        if (
+          providerError.kind !== "cancelled"
+          && !requestController.signal.aborted
+          && !response.destroyed
+          && !response.writableEnded
+        ) {
+          writer.fail(providerError.kind, providerError.message);
+        }
+      } finally {
+        await iterator.return?.(undefined);
       }
     } catch (error) {
+      if (requestController.signal.aborted || response.destroyed) return;
       if (response.headersSent) {
         if (!response.writableEnded) response.end();
         return;
@@ -320,7 +383,89 @@ export class ResponsesBridgeServer {
           message: bridgeError.message,
         },
       });
+    } finally {
+      releaseCapacity?.();
+      this.#requestControllers.delete(requestController);
+      request.removeListener("aborted", abortFromRequest);
+      response.removeListener("close", abortFromResponse);
     }
+  }
+
+  #retryOptions(): {
+    maxAttempts: number;
+    baseDelayMs: number;
+    maxDelayMs: number;
+    jitterRatio?: number | undefined;
+    random?: (() => number) | undefined;
+  } {
+    const retry = this.#options.deepSeek.retry;
+    return {
+      maxAttempts: retry?.maxAttempts ?? 2,
+      baseDelayMs: retry?.baseDelayMs ?? 250,
+      maxDelayMs: retry?.maxDelayMs ?? 2_000,
+      ...(retry?.jitterRatio !== undefined ? { jitterRatio: retry.jitterRatio } : {}),
+      ...(retry?.random ? { random: retry.random } : {}),
+    };
+  }
+}
+
+function normalizeProviderError(error: unknown): ModelProviderError {
+  if (error instanceof ModelProviderError) return error;
+  return new ModelProviderError({
+    kind: "upstream",
+    message: error instanceof Error ? error.message : String(error),
+    retryable: false,
+    cause: error,
+  });
+}
+
+function startSseResponse(response: ServerResponse): void {
+  response.statusCode = 200;
+  response.setHeader("content-type", "text/event-stream; charset=utf-8");
+  response.setHeader("cache-control", "no-cache, no-transform");
+  response.setHeader("connection", "keep-alive");
+  response.setHeader("x-accel-buffering", "no");
+  response.flushHeaders();
+}
+
+function writeProviderJsonError(
+  response: ServerResponse,
+  error: ModelProviderError,
+): void {
+  const status = providerHttpStatus(error);
+  if (error.retryAfterMs !== undefined) {
+    response.setHeader(
+      "retry-after",
+      String(Math.max(1, Math.ceil(error.retryAfterMs / 1_000))),
+    );
+  }
+  writeJson(response, status, {
+    error: {
+      type: "provider_error",
+      kind: error.kind,
+      message: error.message,
+      retryable: error.retryable,
+    },
+  });
+}
+
+function providerHttpStatus(error: ModelProviderError): number {
+  switch (error.kind) {
+    case "rate_limit":
+      return 429;
+    case "timeout":
+      return 504;
+    case "bad_request":
+      return 400;
+    case "authentication":
+    case "payment_required":
+    case "network":
+    case "upstream":
+    case "protocol":
+    case "configuration":
+      return 502;
+    case "cancelled":
+      return 499;
   }
 }
 
@@ -377,10 +522,15 @@ function authorized(value: string | undefined, token: string): boolean {
   return supplied.length === expected.length && timingSafeEqual(supplied, expected);
 }
 
-async function readBody(request: IncomingMessage, maxBytes: number): Promise<string> {
+async function readBody(
+  request: IncomingMessage,
+  maxBytes: number,
+  signal: AbortSignal,
+): Promise<string> {
   const chunks: Buffer[] = [];
   let size = 0;
   for await (const value of request) {
+    if (signal.aborted) throw signal.reason;
     const chunk = Buffer.isBuffer(value) ? value : Buffer.from(value);
     size += chunk.length;
     if (size > maxBytes) {
@@ -392,6 +542,7 @@ async function readBody(request: IncomingMessage, maxBytes: number): Promise<str
     }
     chunks.push(chunk);
   }
+  if (signal.aborted) throw signal.reason;
   const text = Buffer.concat(chunks).toString("utf8");
   if (!text.trim()) {
     throw new ResponsesBridgeError({

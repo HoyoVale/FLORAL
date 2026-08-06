@@ -29,6 +29,9 @@ const envSchema = z.object({
   DEEPSEEK_REQUEST_TIMEOUT_MS: z.coerce.number().int().positive().default(120_000),
   DEEPSEEK_THINKING: z.enum(["enabled", "disabled"]).default("enabled"),
   DEEPSEEK_REASONING_EFFORT: z.enum(["high", "max"]).default("high"),
+  DEEPSEEK_PRESTREAM_MAX_ATTEMPTS: z.coerce.number().int().min(1).max(4).default(2),
+  DEEPSEEK_RETRY_BASE_DELAY_MS: z.coerce.number().int().min(0).max(30_000).default(250),
+  DEEPSEEK_RETRY_MAX_DELAY_MS: z.coerce.number().int().min(0).max(60_000).default(2_000),
   FLORAL_BRIDGE_HOST: z.string().trim().min(1).default("127.0.0.1"),
   FLORAL_BRIDGE_PORT: z.coerce.number().int().min(0).max(65535).default(8790),
   FLORAL_BRIDGE_TOKEN: optionalNonEmptyString,
@@ -56,6 +59,15 @@ export function loadEnv(source: NodeJS.ProcessEnv = process.env): AppEnv {
       .map((issue: { path: PropertyKey[]; message: string }) => `${issue.path.join(".") || "environment"}: ${issue.message}`)
       .join("\n");
     throw new Error(`Invalid environment configuration:\n${details}`);
+  }
+
+  if (
+    parsed.data.DEEPSEEK_RETRY_MAX_DELAY_MS
+    < parsed.data.DEEPSEEK_RETRY_BASE_DELAY_MS
+  ) {
+    throw new Error(
+      "DEEPSEEK_RETRY_MAX_DELAY_MS must be greater than or equal to DEEPSEEK_RETRY_BASE_DELAY_MS",
+    );
   }
 
   if (parsed.data.QQ_MODE === "real") {

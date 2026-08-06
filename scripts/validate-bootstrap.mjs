@@ -6,7 +6,8 @@ const required = [
   "src/agent/bridge/responses-bridge-server.ts",
   "src/transport/qq/qq-transport.ts", "docs/ENVIRONMENT_SETUP.md",
   "docs/MODEL_PROVIDER_PHASE2A.md", "docs/MODEL_PROVIDER_PHASE2B.md",
-  "docs/WEB_SEARCH_PHASE2B2.md", "infra/searxng/compose.yaml",
+  "docs/WEB_SEARCH_PHASE2B2.md", "docs/BRIDGE_RETRY_AND_CANCELLATION.md",
+  "infra/searxng/compose.yaml",
   "infra/searxng/settings.template.yml", "src/search/searxng.ts",
   "scripts/bootstrap-macos.sh", "scripts/test-mac.ps1",
   "launchd/com.hoyo.mac-agent.plist.template"
@@ -22,6 +23,7 @@ for (const script of [
   "bridge:probe",
   "codex:deepseek:probe",
   "codex:deepseek:web-search:probe",
+  "bridge:faults:check",
   "searxng:up",
   "searxng:health",
 ]) {

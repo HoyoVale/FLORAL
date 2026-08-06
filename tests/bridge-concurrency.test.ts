@@ -42,4 +42,28 @@ describe("BridgeConcurrencyGate", () => {
     expect(gate.snapshot()).toMatchObject({ active: 1, queued: 0 });
     release();
   });
+
+  it("removes a queued request when its client cancels", async () => {
+    const gate = new BridgeConcurrencyGate(1, 1, 100);
+    const release = await gate.acquire();
+    const controller = new AbortController();
+    const queued = gate.acquire(controller.signal);
+    expect(gate.snapshot()).toMatchObject({ active: 1, queued: 1 });
+    controller.abort();
+    await expect(queued).rejects.toMatchObject({ kind: "queue_cancelled" });
+    expect(gate.snapshot()).toMatchObject({ active: 1, queued: 0 });
+    release();
+  });
+
+  it("rejects queued and future requests after close", async () => {
+    const gate = new BridgeConcurrencyGate(1, 1, 100);
+    const release = await gate.acquire();
+    const queued = gate.acquire();
+    gate.close();
+    await expect(queued).rejects.toMatchObject({ kind: "gate_closed" });
+    await expect(gate.acquire()).rejects.toMatchObject({ kind: "gate_closed" });
+    expect(gate.snapshot()).toMatchObject({ active: 1, queued: 0, closed: true });
+    release();
+  });
+
 });

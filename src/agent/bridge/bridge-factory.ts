@@ -49,6 +49,11 @@ export function createResponsesBridge(
       requestTimeoutMs: env.DEEPSEEK_REQUEST_TIMEOUT_MS,
       thinking: overrides.thinking ?? env.DEEPSEEK_THINKING,
       reasoningEffort: env.DEEPSEEK_REASONING_EFFORT,
+      retry: {
+        maxAttempts: env.DEEPSEEK_PRESTREAM_MAX_ATTEMPTS,
+        baseDelayMs: env.DEEPSEEK_RETRY_BASE_DELAY_MS,
+        maxDelayMs: env.DEEPSEEK_RETRY_MAX_DELAY_MS,
+      },
       ...(overrides.forceToolNameOnce
         ? { forceToolNameOnce: overrides.forceToolNameOnce }
         : {}),

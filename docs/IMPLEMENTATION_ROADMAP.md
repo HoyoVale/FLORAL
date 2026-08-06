@@ -66,10 +66,16 @@
 
 ##### Phase 2B.2-B2.2 — pre-stream retry and fault injection
 
-- bounded retry before streamed output begins
-- cancellation and failure-injection E2E coverage
-- no retry after SSE output or tool execution begins
-- SSRF-safe URL reading only after explicit policy work
+- bounded network/408/429/selected-5xx retry before the first provider stream chunk
+- cancellation propagation through queued, active, and shutdown paths
+- strict malformed-SSE and missing-`[DONE]` classification
+- failure-injection coverage for recovery and no-replay boundaries
+- no retry after text, reasoning, or tool stream activity begins
+
+##### Deferred URL reading policy
+
+- keep `web_url_read` disabled
+- add SSRF-safe URL reading only after explicit network policy work
 
 ## Phase 3 — real QQ + persistent identity
 
