@@ -28,6 +28,20 @@ Run `corepack pnpm codex:schema` on the target Mac after installing/updating Cod
 
 Create an official QQ bot, record AppID/AppSecret, and keep mock mode until the bot can receive and send a private test message. Configure `QQ_MODE=real` only on the Mac or a secured integration environment.
 
+Validate the pinned SDK locally before opening a network connection:
+
+```bash
+corepack pnpm qq:sdk:check
+```
+
+The first network validation is a private C2C passive-reply probe:
+
+```bash
+corepack pnpm qq:private:probe
+```
+
+The SDK WebSocket resume state is stored under `QQBOT_SESSION_DIR` and must remain outside Git and support bundles.
+
 Before real mode, generate a random owner pairing code with at least 12 characters and store it only in `.env`:
 
 ```dotenv

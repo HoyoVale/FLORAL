@@ -1,4 +1,4 @@
-import { resolve } from "node:path";
+import { join, resolve } from "node:path";
 import { CodexAppServerRuntime } from "./agent/codex-app-server.js";
 import { MockAgentRuntime } from "./agent/mock-agent.js";
 import { loadEnv } from "./config/env.js";
@@ -16,6 +16,13 @@ const transport: ChatTransport = env.QQ_MODE === "real"
   ? new QqTransport({
       appId: env.QQBOT_APP_ID!,
       appSecret: env.QQBOT_APP_SECRET!,
+      dataDir: resolve(env.QQBOT_SESSION_DIR ?? join(env.DATA_DIR, "qq-session")),
+      startupTimeoutMs: env.QQBOT_STARTUP_TIMEOUT_MS,
+      replyTargetTtlMs: env.QQBOT_REPLY_TARGET_TTL_MS,
+      replyTargetCacheEntries: env.QQBOT_REPLY_TARGET_CACHE_ENTRIES,
+      textChunkCharacters: env.QQBOT_TEXT_CHUNK_CHARACTERS,
+      maxReplyChunks: env.QQBOT_MAX_REPLY_CHUNKS,
+      outboundTimeoutMs: env.QQBOT_OUTBOUND_TIMEOUT_MS,
     })
   : new MockQqTransport();
 

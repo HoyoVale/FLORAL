@@ -90,11 +90,21 @@
 
 ### Phase 3B — verified QQ private-chat transport
 
-- validate the exact current official QQ SDK runtime contract on the Mac
-- C2C private-message receive and passive reply smoke test
-- message length/chunking, reply-target lifetime, reconnect, and delivery-error handling
-- OpenID and conversation mapping evidence without logging identifiers
-- end-to-end QQ → FLORAL → Codex → DeepSeek → QQ probe
+#### Phase 3B.1 — exact SDK contract and bounded C2C adapter
+
+- exact `@tencent-connect/qqbot-nodejs@1.0.4` event and reply contract
+- C2C-only inbound mapping; group and channel events fail closed
+- persisted WebSocket resume state with ready/resumed/error lifecycle
+- bounded passive-reply target cache, text chunking, timeout, and no-duplicate retry policy
+- offline SDK contract check and deterministic private passive-reply probe
+- delivery-failure audit without rerunning a completed agent turn
+
+#### Phase 3B.2 — real full-chain acceptance
+
+- owner pairing from the intended QQ account
+- QQ → SQLite → Codex → DeepSeek → QQ foreground smoke test
+- reconnect/resume evidence after process and network restart
+- LaunchAgent remains blocked until the foreground chain passes
 
 ## Phase 4 — macOS GUI
 

@@ -34,4 +34,25 @@ describe("Phase 3 environment configuration", () => {
     expect(env.QQ_MODE).toBe("real");
     expect(env.MOCK_TRUST_OWNER).toBe(false);
   });
+
+  it("uses bounded QQ transport defaults", () => {
+    const env = loadEnv({});
+    expect(env.QQBOT_STARTUP_TIMEOUT_MS).toBe(30_000);
+    expect(env.QQBOT_REPLY_TARGET_TTL_MS).toBe(240_000);
+    expect(env.QQBOT_REPLY_TARGET_CACHE_ENTRIES).toBe(256);
+    expect(env.QQBOT_TEXT_CHUNK_CHARACTERS).toBe(1_800);
+    expect(env.QQBOT_MAX_REPLY_CHUNKS).toBe(4);
+    expect(env.QQBOT_OUTBOUND_TIMEOUT_MS).toBe(30_000);
+    expect(env.QQBOT_PROBE_TIMEOUT_MS).toBe(120_000);
+  });
+
+  it("rejects unsafe QQ reply and timeout bounds", () => {
+    expect(() => loadEnv({
+      QQBOT_REPLY_TARGET_TTL_MS: "9999",
+    })).toThrow("QQBOT_REPLY_TARGET_TTL_MS");
+    expect(() => loadEnv({
+      QQBOT_MAX_REPLY_CHUNKS: "6",
+    })).toThrow("QQBOT_MAX_REPLY_CHUNKS");
+  });
+
 });

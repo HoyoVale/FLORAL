@@ -16,6 +16,7 @@ corepack pnpm bootstrap:validate
 corepack pnpm typecheck
 corepack pnpm test
 corepack pnpm build
+corepack pnpm qq:sdk:check
 corepack pnpm storage:probe
 mkdir -p artifacts
 corepack pnpm doctor > artifacts/doctor.txt 2>&1 || true

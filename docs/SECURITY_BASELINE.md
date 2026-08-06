@@ -30,5 +30,9 @@ QQ AppSecret, DeepSeek API key, Better Auth secret, and any future OAuth tokens 
 - The owner pairing code must be random, at least 12 characters, and stored only outside Git.
 - Pairing attempts are rate-limited and the code is never persisted.
 - Duplicate transport message IDs are rejected before authorization and execution.
+- Phase 3B accepts only verified C2C events; group and channel events fail closed.
+- Passive reply targets are short-lived, bounded, and never reconstructed from guessed identifiers.
+- Uncertain QQ delivery failures are not retried automatically, preventing duplicate replies.
+- QQ SDK session-resume files remain local and are treated as credential-adjacent state.
 - SQLite audit records store bounded event metadata only, never prompts, responses, credentials, reasoning, tool arguments, or tool result bodies.
 - `/status` must not reveal OpenIDs, internal IDs, or Codex thread IDs.

@@ -340,7 +340,12 @@ export class GatewayService {
         eventType: "agent.run_completed",
         payload: { responseCharacterCount: result.finalText.length },
       });
-      await this.#send(message.identity.conversationId, result.finalText);
+      await this.#deliverWithAudit(
+        message.identity.conversationId,
+        result.finalText,
+        resolved,
+        "agent_reply",
+      );
     } catch (error) {
       await this.store.appendAudit({
         userId: resolved.userId,
@@ -351,11 +356,13 @@ export class GatewayService {
           stopRequested: active.stopRequested,
         },
       });
-      await this.#send(
+      await this.#deliverWithAudit(
         message.identity.conversationId,
         active.stopRequested
           ? "当前任务已停止。"
           : "任务执行失败，请在 Mac 本地查看服务日志。",
+        resolved,
+        "agent_failure",
       );
     } finally {
       if (this.#activeRuns.get(resolved.conversationId) === active) {
@@ -416,6 +423,28 @@ export class GatewayService {
         conversationId: resolved.conversationId,
         eventType: "agent.interrupt_failed",
         payload: {
+          errorType: error instanceof Error ? error.name : "unknown",
+        },
+      });
+    }
+  }
+
+  async #deliverWithAudit(
+    conversationId: string,
+    text: string,
+    resolved: ResolvedGatewayIdentity,
+    kind: "agent_reply" | "agent_failure",
+  ): Promise<void> {
+    try {
+      await this.#send(conversationId, text);
+    } catch (error) {
+      await this.store.appendAudit({
+        userId: resolved.userId,
+        conversationId: resolved.conversationId,
+        eventType: "transport.delivery_failed",
+        payload: {
+          transport: this.transport.name,
+          kind,
           errorType: error instanceof Error ? error.name : "unknown",
         },
       });

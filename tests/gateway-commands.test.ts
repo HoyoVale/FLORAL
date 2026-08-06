@@ -61,6 +61,14 @@ class TestAgent implements AgentRuntime {
   async stop(): Promise<void> {}
 }
 
+
+
+class FailingTransport extends TestTransport {
+  override async send(_message: OutgoingMessage): Promise<void> {
+    throw new Error("delivery unavailable");
+  }
+}
+
 class DeferredAgent implements AgentRuntime {
   readonly name = "deferred-agent";
   readonly interrupts: string[] = [];
@@ -271,6 +279,30 @@ describe("GatewayService identity and commands", () => {
     expect(transport.sent.some((entry) => entry.text === "当前任务已停止。")).toBe(true);
     await gateway.stop();
   });
+
+  it("audits final delivery failures without rerunning the agent", async () => {
+    const transport = new FailingTransport();
+    const agent = new TestAgent();
+    const store = new MemoryThreadStore();
+    const gateway = new GatewayService(transport, agent, store, {
+      cwd: ".",
+      trustMockOwner: true,
+    });
+    await gateway.start();
+
+    await transport.receive(incoming({
+      id: "delivery-failure",
+      transport: "mock",
+      text: "hello",
+    }));
+
+    expect(agent.requests).toHaveLength(1);
+    expect(store.auditEvents().some((event) =>
+      event.eventType === "transport.delivery_failed"
+    )).toBe(true);
+    await gateway.stop();
+  });
+
 });
 
 function incoming(options: {

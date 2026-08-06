@@ -36,7 +36,9 @@
     "searxng:health": "tsx scripts/searxng.ts health",
     "searxng:doctor": "tsx scripts/searxng-doctor.ts",
     "mac:smoke": "bash scripts/mac-smoke.sh",
-    "dev:watch": "tsx watch src/main.ts"
+    "dev:watch": "tsx watch src/main.ts",
+    "qq:sdk:check": "tsx scripts/qq-sdk-check.ts",
+    "qq:private:probe": "tsx scripts/qq-private-probe.ts"
   },
   "dependencies": {
     "@tencent-connect/qqbot-nodejs": "1.0.4",

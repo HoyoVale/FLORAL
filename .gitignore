@@ -3,6 +3,7 @@ dist/
 .env
 data/*.sqlite
 data/*.sqlite-*
+data/qq-session/
 logs/
 artifacts/
 .codex-schemas/
