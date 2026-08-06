@@ -5,6 +5,9 @@ data/*.sqlite
 data/*.sqlite-*
 data/qq-session/
 data/codex-runtime/
+data/floral.lock
+data/service-state.json
+data/service-state.json.tmp-*
 logs/
 artifacts/
 .codex-schemas/

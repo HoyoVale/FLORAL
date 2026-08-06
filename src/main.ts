@@ -4,6 +4,8 @@ import { MockAgentRuntime } from "./agent/mock-agent.js";
 import { loadEnv } from "./config/env.js";
 import { loadProjectEnv } from "./config/load-project-env.js";
 import type { AgentRuntime, ChatTransport } from "./core/contracts.js";
+import { acquireProcessLock } from "./runtime/process-lock.js";
+import { createServiceStateWriter } from "./runtime/service-state.js";
 import { GatewayService } from "./service/gateway.js";
 import { SqliteGatewayStore } from "./storage/sqlite.js";
 import { MockQqTransport } from "./transport/qq/mock-qq-transport.js";
@@ -11,6 +13,15 @@ import { QqTransport } from "./transport/qq/qq-transport.js";
 
 loadProjectEnv();
 const env = loadEnv();
+const lock = await acquireProcessLock(resolve(env.FLORAL_INSTANCE_LOCK_PATH));
+const serviceState = env.FLORAL_SERVICE_MODE === "launchagent"
+  ? createServiceStateWriter(resolve(env.FLORAL_SERVICE_STATE_PATH), {
+      pid: process.pid,
+      instanceId: lock.instanceId,
+    })
+  : undefined;
+
+await serviceState?.write("starting");
 
 const transport: ChatTransport = env.QQ_MODE === "real"
   ? new QqTransport({
@@ -45,13 +56,44 @@ const gateway = new GatewayService(
   },
 );
 
-const shutdown = async (signal: string) => {
-  process.stderr.write(`\n${signal}: stopping gateway...\n`);
-  await gateway.stop();
-  process.exit(0);
+let shutdownPromise: Promise<void> | undefined;
+const shutdown = (signal: string): Promise<void> => {
+  if (shutdownPromise) return shutdownPromise;
+  shutdownPromise = (async () => {
+    process.stderr.write(`\n${signal}: stopping gateway...\n`);
+    await serviceState?.write("stopping");
+    await gateway.stop();
+    await serviceState?.write("stopped");
+    await lock.release();
+  })();
+  return shutdownPromise;
 };
 
-process.on("SIGINT", () => void shutdown("SIGINT"));
-process.on("SIGTERM", () => void shutdown("SIGTERM"));
+process.once("SIGINT", () => {
+  void shutdown("SIGINT").then(() => {
+    process.exitCode = 0;
+  });
+});
+process.once("SIGTERM", () => {
+  void shutdown("SIGTERM").then(() => {
+    process.exitCode = 0;
+  });
+});
+process.once("SIGHUP", () => {
+  void shutdown("SIGHUP").then(() => {
+    process.exitCode = 0;
+  });
+});
 
-await gateway.start();
+try {
+  await gateway.start();
+  await serviceState?.write("ready");
+  if (serviceState) process.stderr.write("service.gateway=ready\n");
+} catch (error) {
+  await serviceState?.write(
+    "failed",
+    error instanceof Error && error.name ? error.name : "Error",
+  );
+  await lock.release();
+  throw error;
+}

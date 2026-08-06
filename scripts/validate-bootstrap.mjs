@@ -13,8 +13,12 @@ const required = [
   "docs/WEB_SEARCH_PHASE2B2.md", "docs/BRIDGE_RETRY_AND_CANCELLATION.md",
   "docs/PHASE3A_PERSISTENT_IDENTITY.md", "docs/PHASE3B_QQ_PRIVATE_TRANSPORT.md",
   "docs/PHASE3B_FULL_CHAIN_ACCEPTANCE.md",
+  "docs/PHASE3C_LAUNCHAGENT_SERVICE.md",
   "infra/searxng/compose.yaml",
   "infra/searxng/settings.template.yml", "src/search/searxng.ts",
+  "src/runtime/process-lock.ts", "src/runtime/service-state.ts",
+  "src/service/launchagent-config.ts", "src/service/launchagent-runner.ts",
+  "src/service/rotating-log-writer.ts", "scripts/service.ts",
   "scripts/bootstrap-macos.sh", "scripts/test-mac.ps1",
   "launchd/com.hoyo.mac-agent.plist.template"
 ];
@@ -22,6 +26,9 @@ const required = [
 for (const path of required) await access(path);
 const pkg = JSON.parse(await readFile("package.json", "utf8"));
 if (pkg.type !== "module") throw new Error("package.json must use ESM");
+if (pkg.scripts?.start !== "node dist/src/main.js") {
+  throw new Error("Production start script must use dist/src/main.js");
+}
 for (const script of [
   "doctor",
   "build",
@@ -38,6 +45,11 @@ for (const script of [
   "qq:reconnect:probe",
   "searxng:up",
   "searxng:health",
+  "service:doctor",
+  "service:install",
+  "service:status",
+  "service:recovery:probe",
+  "service:uninstall",
 ]) {
   if (!pkg.scripts?.[script]) throw new Error(`Required script missing: ${script}`);
 }

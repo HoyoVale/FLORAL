@@ -7,13 +7,27 @@
   <key>ProgramArguments</key>
   <array>
     <string>__NODE_PATH__</string>
-    <string>__PROJECT_DIR__/dist/main.js</string>
+    <string>__PROJECT_DIR__/dist/src/service/launchagent-runner.js</string>
+    <string>--project</string><string>__PROJECT_DIR__</string>
+    <string>--node</string><string>__NODE_PATH__</string>
+    <string>--entry</string><string>__PROJECT_DIR__/dist/src/main.js</string>
+    <string>--stdout</string><string>__PROJECT_DIR__/logs/service.out.log</string>
+    <string>--stderr</string><string>__PROJECT_DIR__/logs/service.err.log</string>
+    <string>--max-log-bytes</string><string>5242880</string>
+    <string>--log-backups</string><string>5</string>
+    <string>--shutdown-timeout-ms</string><string>20000</string>
   </array>
   <key>WorkingDirectory</key>
   <string>__PROJECT_DIR__</string>
   <key>EnvironmentVariables</key>
   <dict>
     <key>NODE_ENV</key><string>production</string>
+    <key>FLORAL_SERVICE_MODE</key><string>launchagent</string>
+    <key>FLORAL_INSTANCE_LOCK_PATH</key><string>__PROJECT_DIR__/data/floral.lock</string>
+    <key>FLORAL_SERVICE_STATE_PATH</key><string>__PROJECT_DIR__/data/service-state.json</string>
+    <key>PATH</key><string>__SERVICE_PATH__</string>
+    <key>HOME</key><string>__HOME_DIR__</string>
+    <key>TMPDIR</key><string>__TMP_DIR__</string>
   </dict>
   <key>RunAtLoad</key>
   <true/>
@@ -21,11 +35,13 @@
   <dict>
     <key>SuccessfulExit</key><false/>
   </dict>
-  <key>ThrottleInterval</key>
-  <integer>10</integer>
+  <key>ThrottleInterval</key><integer>15</integer>
+  <key>ProcessType</key><string>Background</string>
+  <key>ExitTimeOut</key><integer>30</integer>
+  <key>Umask</key><integer>63</integer>
   <key>StandardOutPath</key>
-  <string>__PROJECT_DIR__/logs/launchagent.out.log</string>
+  <string>__PROJECT_DIR__/logs/launchagent.supervisor.out.log</string>
   <key>StandardErrorPath</key>
-  <string>__PROJECT_DIR__/logs/launchagent.err.log</string>
+  <string>__PROJECT_DIR__/logs/launchagent.supervisor.err.log</string>
 </dict>
 </plist>

@@ -10,7 +10,7 @@
   "packageManager": "pnpm@10.15.0",
   "scripts": {
     "dev": "tsx src/main.ts",
-    "start": "node dist/main.js",
+    "start": "node dist/src/main.js",
     "build": "tsc -p tsconfig.json",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test": "vitest run",
@@ -40,7 +40,16 @@
     "qq:sdk:check": "tsx scripts/qq-sdk-check.ts",
     "qq:private:probe": "tsx scripts/qq-private-probe.ts",
     "qq:full-chain:probe": "tsx scripts/qq-full-chain-probe.ts",
-    "qq:reconnect:probe": "tsx scripts/qq-reconnect-probe.ts"
+    "qq:reconnect:probe": "tsx scripts/qq-reconnect-probe.ts",
+    "service:doctor": "tsx scripts/service.ts doctor",
+    "service:install": "tsx scripts/service.ts install",
+    "service:start": "tsx scripts/service.ts start",
+    "service:status": "tsx scripts/service.ts status",
+    "service:restart": "tsx scripts/service.ts restart",
+    "service:stop": "tsx scripts/service.ts stop",
+    "service:logs": "tsx scripts/service.ts logs",
+    "service:recovery:probe": "tsx scripts/service.ts recovery-probe",
+    "service:uninstall": "tsx scripts/service.ts uninstall"
   },
   "dependencies": {
     "@tencent-connect/qqbot-nodejs": "1.0.4",

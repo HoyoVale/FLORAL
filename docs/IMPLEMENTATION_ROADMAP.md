@@ -109,6 +109,18 @@
 - reconnect/resume evidence after network restart
 - LaunchAgent remains blocked until both acceptance probes pass
 
+### Phase 3C — LaunchAgent service and crash recovery
+
+- correct compiled production entry under `dist/src`
+- generated per-user LaunchAgent with no credentials embedded in the plist
+- owner-only `.env` and plist permission checks
+- atomic single-instance lock with stale-lock recovery
+- bounded service-state file for readiness and diagnostics
+- rotating stdout/stderr logs managed outside launchd
+- graceful signal forwarding and forced-shutdown deadline
+- explicit install/start/status/restart/stop/logs/uninstall commands
+- opt-in crash-recovery probe that verifies a new ready PID
+
 ## Phase 4 — macOS GUI
 
 - Peekaboo MCP health and required-tool checks
@@ -124,10 +136,9 @@
 - approval and audit dashboard
 - passkeys/2FA for owner administration
 
-## Phase 6 — service hardening
+## Phase 6 — remaining service hardening
 
-- LaunchAgent install/uninstall/diagnostics
-- crash recovery and backoff
-- bounded queues and rate limits
-- encrypted secret handling
+- encrypted secret handling beyond owner-only local `.env`
 - backup/restore and incident lockout
+- long-run resource and log-retention soak tests
+- release/upgrade rollback procedure
