@@ -27,6 +27,7 @@ export interface ResponsesBridgeServerOptions {
     requestTimeoutMs: number;
     thinking: "enabled" | "disabled";
     reasoningEffort: "high" | "max";
+    forceToolNameOnce?: string | undefined;
     fetchImpl?: typeof fetch | undefined;
   };
 }
@@ -39,6 +40,8 @@ export interface ResponsesBridgeAddress {
 
 export class ResponsesBridgeServer {
   readonly #options: ResponsesBridgeServerOptions;
+  readonly #reasoningByCallId = new Map<string, string>();
+  #pendingForcedToolName: string | undefined;
   #server: Server | undefined;
 
   constructor(options: ResponsesBridgeServerOptions) {
@@ -58,6 +61,7 @@ export class ResponsesBridgeServer {
       });
     }
     this.#options = options;
+    this.#pendingForcedToolName = options.deepSeek.forceToolNameOnce;
   }
 
   async start(): Promise<ResponsesBridgeAddress> {
@@ -97,6 +101,21 @@ export class ResponsesBridgeServer {
     });
   }
 
+  #selectForcedTool(toolMap: ReadonlyMap<string, unknown>): string | undefined {
+    const name = this.#pendingForcedToolName;
+    if (!name || !toolMap.has(name)) return undefined;
+    this.#pendingForcedToolName = undefined;
+    return name;
+  }
+
+  #rememberReasoning(callId: string, reasoning: string): void {
+    if (this.#reasoningByCallId.size >= 128) {
+      const oldest = this.#reasoningByCallId.keys().next().value as string | undefined;
+      if (oldest) this.#reasoningByCallId.delete(oldest);
+    }
+    this.#reasoningByCallId.set(callId, reasoning);
+  }
+
   async #handle(request: IncomingMessage, response: ServerResponse): Promise<void> {
     setSecurityHeaders(response);
 
@@ -130,7 +149,9 @@ export class ResponsesBridgeServer {
       const translated = translateResponsesRequest(
         responsesRequest,
         this.#options.deepSeek.model,
+        { reasoningByCallId: this.#reasoningByCallId },
       );
+      const forcedToolName = this.#selectForcedTool(translated.toolMap);
 
       response.statusCode = 200;
       response.setHeader("content-type", "text/event-stream; charset=utf-8");
@@ -143,6 +164,11 @@ export class ResponsesBridgeServer {
         response,
         this.#options.deepSeek.model,
         translated.toolMap,
+        (call) => {
+          if (call.reasoningContent) {
+            this.#rememberReasoning(call.callId, call.reasoningContent);
+          }
+        },
       );
       writer.start();
 
@@ -161,6 +187,7 @@ export class ResponsesBridgeServer {
             requestTimeoutMs: this.#options.deepSeek.requestTimeoutMs,
             thinking: this.#options.deepSeek.thinking,
             reasoningEffort: this.#options.deepSeek.reasoningEffort,
+            ...(forcedToolName ? { forcedToolName } : {}),
             fetchImpl: this.#options.deepSeek.fetchImpl,
           },
           abortController.signal,

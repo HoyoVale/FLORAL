@@ -15,6 +15,7 @@ export interface DeepSeekStreamOptions {
   requestTimeoutMs: number;
   thinking: "enabled" | "disabled";
   reasoningEffort: "high" | "max";
+  forcedToolName?: string | undefined;
   fetchImpl?: typeof fetch | undefined;
 }
 
@@ -50,7 +51,9 @@ export async function* streamDeepSeekChat(
           ...(request.tools.length > 0
             ? {
                 tools: request.tools,
-                tool_choice: "auto",
+                tool_choice: options.forcedToolName
+                  ? { type: "function", function: { name: options.forcedToolName } }
+                  : "auto",
                 parallel_tool_calls: request.parallelToolCalls,
               }
             : {}),

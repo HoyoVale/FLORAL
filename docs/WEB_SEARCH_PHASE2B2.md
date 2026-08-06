@@ -73,3 +73,9 @@ corepack pnpm searxng:down
 - persistent MCP HTTP transport
 - production image-digest pinning
 - search-result citation rendering in QQ
+
+## Deterministic tool-call probe
+
+The real web-search probe disables DeepSeek thinking for its first provider request and forces the exact flattened MCP function once. This prevents a marker-only answer from passing without a tool call. The override is probe-local; normal FLORAL bridge traffic keeps the configured thinking mode and automatic tool selection.
+
+For normal thinking-mode tool chains, the bridge keeps DeepSeek `reasoning_content` in a bounded in-memory call-id cache and restores it only when Codex returns the corresponding tool output. The reasoning text is not logged or persisted.

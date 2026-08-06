@@ -125,6 +125,147 @@ describe("ResponsesBridgeServer", () => {
 
     expect(response.status).toBe(401);
   });
+
+  it("forces one named tool once and restores thinking context for the tool result", async () => {
+    const upstreamBodies: Record<string, any>[] = [];
+    let requestCount = 0;
+    const fetchImpl: typeof fetch = async (_input, init) => {
+      upstreamBodies.push(JSON.parse(String(init?.body)) as Record<string, any>);
+      requestCount += 1;
+
+      if (requestCount === 1) {
+        return new Response([
+          `data: ${JSON.stringify({
+            id: "chat_tool_1",
+            model: "deepseek-v4-flash",
+            choices: [{
+              delta: {
+                reasoning_content: "search before answering",
+                tool_calls: [{
+                  index: 0,
+                  id: "call_search",
+                  type: "function",
+                  function: {
+                    name: "mcp__floral_search__searxng_web_search",
+                    arguments: "{\"query\":\"SearXNG Search API\"}",
+                  },
+                }],
+              },
+              finish_reason: "tool_calls",
+            }],
+          })}`,
+          "data: [DONE]",
+          "",
+        ].join("\n\n"), {
+          status: 200,
+          headers: { "content-type": "text/event-stream" },
+        });
+      }
+
+      return new Response([
+        `data: ${JSON.stringify({
+          id: "chat_tool_2",
+          model: "deepseek-v4-flash",
+          choices: [{
+            delta: { content: "FLORAL_WEB_SEARCH_OK" },
+            finish_reason: "stop",
+          }],
+        })}`,
+        "data: [DONE]",
+        "",
+      ].join("\n\n"), {
+        status: 200,
+        headers: { "content-type": "text/event-stream" },
+      });
+    };
+
+    const bridgeServer = new ResponsesBridgeServer({
+      host: "127.0.0.1",
+      port: 0,
+      token: "bridge-test-token",
+      maxBodyBytes: 1024 * 1024,
+      deepSeek: {
+        apiKey: "deepseek-test-key",
+        baseUrl: "https://deepseek.invalid",
+        model: "deepseek-v4-flash",
+        requestTimeoutMs: 2_000,
+        thinking: "disabled",
+        reasoningEffort: "high",
+        forceToolNameOnce: "mcp__floral_search__searxng_web_search",
+        fetchImpl,
+      },
+    });
+    const bridge = await bridgeServer.start();
+    servers.push({ close: () => bridgeServer.stop() });
+
+    const tools = [{
+      type: "namespace",
+      name: "mcp__floral_search__",
+      tools: [{
+        type: "function",
+        name: "searxng_web_search",
+        parameters: {
+          type: "object",
+          properties: { query: { type: "string" } },
+          required: ["query"],
+        },
+      }],
+    }];
+
+    const first = await fetch(`${bridge.baseUrl}/v1/responses`, {
+      method: "POST",
+      headers: {
+        authorization: "Bearer bridge-test-token",
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({
+        model: "deepseek-v4-flash",
+        input: "search",
+        tools,
+        stream: true,
+      }),
+    });
+    await first.text();
+
+    const second = await fetch(`${bridge.baseUrl}/v1/responses`, {
+      method: "POST",
+      headers: {
+        authorization: "Bearer bridge-test-token",
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({
+        model: "deepseek-v4-flash",
+        input: [
+          {
+            type: "function_call",
+            call_id: "call_search",
+            name: "mcp__floral_search__searxng_web_search",
+            arguments: "{\"query\":\"SearXNG Search API\"}",
+          },
+          {
+            type: "function_call_output",
+            call_id: "call_search",
+            output: "search result",
+          },
+        ],
+        tools,
+        stream: true,
+      }),
+    });
+    await second.text();
+
+    expect(upstreamBodies[0]?.tool_choice).toEqual({
+      type: "function",
+      function: { name: "mcp__floral_search__searxng_web_search" },
+    });
+    expect(upstreamBodies[1]?.tool_choice).toBe("auto");
+    expect(upstreamBodies[1]?.messages?.[0]).toMatchObject({
+      role: "assistant",
+      reasoning_content: "search before answering",
+      tool_calls: [{ id: "call_search" }],
+    });
+  });
+
 });
 
 async function startBridge(deepSeekBaseUrl: string): Promise<{ baseUrl: string }> {

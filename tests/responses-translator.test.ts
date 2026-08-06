@@ -167,4 +167,36 @@ describe("Responses request translation", () => {
       { role: "user", content: "continue" },
     ]);
   });
+
+  it("restores cached DeepSeek reasoning for a returned tool call", () => {
+    const request = parseResponsesRequest({
+      model: "deepseek-v4-flash",
+      input: [
+        {
+          type: "function_call",
+          call_id: "call_reasoning",
+          name: "lookup",
+          arguments: "{\"id\":1}",
+        },
+        {
+          type: "function_call_output",
+          call_id: "call_reasoning",
+          output: "found",
+        },
+      ],
+    });
+
+    const translated = translateResponsesRequest(
+      request,
+      "deepseek-v4-flash",
+      { reasoningByCallId: new Map([["call_reasoning", "private reasoning"]]) },
+    );
+
+    expect(translated.messages[0]).toMatchObject({
+      role: "assistant",
+      reasoning_content: "private reasoning",
+      tool_calls: [{ id: "call_reasoning" }],
+    });
+  });
+
 });

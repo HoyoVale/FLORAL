@@ -12,17 +12,25 @@ interface AccumulatedToolCall {
   arguments: string;
 }
 
+export interface CompletedBridgeToolCall {
+  callId: string;
+  name: string;
+  reasoningContent: string | undefined;
+}
+
 export class ResponsesSseWriter {
   readonly #response: ServerResponse;
   readonly #responseId = `resp_${randomUUID().replaceAll("-", "")}`;
   readonly #model: string;
   readonly #toolMap: Map<string, ToolBridgeDescriptor>;
+  readonly #onToolCallCompleted: ((call: CompletedBridgeToolCall) => void) | undefined;
   readonly #createdAt = Math.floor(Date.now() / 1_000);
   readonly #output: Record<string, unknown>[] = [];
   readonly #toolCalls = new Map<number, AccumulatedToolCall>();
   #sequence = 0;
   #messageId: string | undefined;
   #text = "";
+  #reasoning = "";
   #usage: DeepSeekStreamChunk["usage"];
   #ended = false;
 
@@ -30,10 +38,12 @@ export class ResponsesSseWriter {
     response: ServerResponse,
     model: string,
     toolMap: Map<string, ToolBridgeDescriptor>,
+    onToolCallCompleted?: (call: CompletedBridgeToolCall) => void,
   ) {
     this.#response = response;
     this.#model = model;
     this.#toolMap = toolMap;
+    this.#onToolCallCompleted = onToolCallCompleted;
   }
 
   start(): void {
@@ -45,6 +55,10 @@ export class ResponsesSseWriter {
 
   consume(chunk: DeepSeekStreamChunk): void {
     if (chunk.usage) this.#usage = chunk.usage;
+
+    if (chunk.reasoningDelta) {
+      this.#reasoning += chunk.reasoningDelta;
+    }
 
     if (chunk.contentDelta) {
       this.#ensureMessage();
@@ -86,6 +100,11 @@ export class ResponsesSseWriter {
     const calls = [...this.#toolCalls.values()].sort((a, b) => a.index - b.index);
     for (const call of calls) {
       this.#finishToolCall(call, outputIndex);
+      this.#onToolCallCompleted?.({
+        callId: call.id,
+        name: call.name,
+        reasoningContent: this.#reasoning || undefined,
+      });
       outputIndex += 1;
     }
 

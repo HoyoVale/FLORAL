@@ -39,9 +39,14 @@ export function parseResponsesRequest(value: unknown): ResponsesBridgeRequest {
   };
 }
 
+export interface ResponsesTranslationContext {
+  reasoningByCallId?: ReadonlyMap<string, string> | undefined;
+}
+
 export function translateResponsesRequest(
   request: ResponsesBridgeRequest,
   targetModel: string,
+  context: ResponsesTranslationContext = {},
 ): TranslatedDeepSeekRequest {
   const toolMap = new Map<string, ToolBridgeDescriptor>();
   const tools = translateTools(request.tools ?? [], toolMap);
@@ -55,7 +60,7 @@ export function translateResponsesRequest(
     messages.push({ role: "user", content: request.input });
   } else if (Array.isArray(request.input)) {
     for (const item of request.input) {
-      translateInputItem(item, messages, toolMap);
+      translateInputItem(item, messages, toolMap, context);
     }
   } else {
     throw badRequest("Responses input must be a string or an array of input items");
@@ -239,6 +244,7 @@ function translateInputItem(
   value: unknown,
   messages: DeepSeekChatMessage[],
   toolMap: Map<string, ToolBridgeDescriptor>,
+  context: ResponsesTranslationContext,
 ): void {
   const item = asRecord(value);
   if (!item) throw badRequest("Responses input items must be objects");
@@ -261,11 +267,15 @@ function translateInputItem(
       ? stringifyArguments(item.arguments)
       : JSON.stringify({ input: stringifyContent(item.input) });
 
-    appendAssistantToolCall(messages, {
-      id: callId,
-      type: "function",
-      function: { name, arguments: rawArguments },
-    });
+    appendAssistantToolCall(
+      messages,
+      {
+        id: callId,
+        type: "function",
+        function: { name, arguments: rawArguments },
+      },
+      context.reasoningByCallId?.get(callId),
+    );
     if (!toolMap.has(name)) {
       toolMap.set(name, {
         deepSeekName: name,
@@ -299,15 +309,23 @@ function translateInputItem(
   });
 }
 
-function appendAssistantToolCall(messages: DeepSeekChatMessage[], call: DeepSeekToolCall): void {
+function appendAssistantToolCall(
+  messages: DeepSeekChatMessage[],
+  call: DeepSeekToolCall,
+  reasoningContent: string | undefined,
+): void {
   const previous = messages.at(-1);
   if (previous?.role === "assistant" && previous.tool_calls) {
     previous.tool_calls.push(call);
+    if (!previous.reasoning_content && reasoningContent) {
+      previous.reasoning_content = reasoningContent;
+    }
     return;
   }
   messages.push({
     role: "assistant",
     content: null,
+    ...(reasoningContent ? { reasoning_content: reasoningContent } : {}),
     tool_calls: [call],
   });
 }

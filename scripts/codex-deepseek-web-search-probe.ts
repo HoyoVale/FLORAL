@@ -18,7 +18,11 @@ const health = await checkSearxng(
 );
 
 const token = randomBytes(32).toString("hex");
-const bridge = createResponsesBridge(env, token, 0);
+const forcedToolName = "mcp__floral_search__searxng_web_search";
+const bridge = createResponsesBridge(env, token, 0, {
+  thinking: "disabled",
+  forceToolNameOnce: forcedToolName,
+});
 const address = await bridge.start();
 const codexHome = await mkdtemp(join(tmpdir(), "floral-codex-search-"));
 const observedTools = new Map<string, string>();
@@ -28,6 +32,8 @@ console.log(`probe.bridge_url=${address.baseUrl}`);
 console.log(`probe.searxng_url=${health.endpoint}`);
 console.log(`probe.searxng_results=${health.resultCount}`);
 console.log(`probe.mcp_package=${env.SEARXNG_MCP_PACKAGE}`);
+console.log("probe.deepseek_thinking=disabled");
+console.log(`probe.forced_tool=${forcedToolName}`);
 
 const config = buildCodexDeepSeekConfig({
   model: env.DEEPSEEK_MODEL,

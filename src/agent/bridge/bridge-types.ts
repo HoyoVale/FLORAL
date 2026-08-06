@@ -12,6 +12,7 @@ export interface ResponsesBridgeRequest {
 export interface DeepSeekChatMessage {
   role: "system" | "user" | "assistant" | "tool";
   content: string | null;
+  reasoning_content?: string | undefined;
   tool_call_id?: string | undefined;
   tool_calls?: DeepSeekToolCall[] | undefined;
 }
