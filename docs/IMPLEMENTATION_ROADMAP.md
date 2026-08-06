@@ -48,10 +48,18 @@
 
 ### Phase 2B.2-B — bridge and search hardening
 
+#### Phase 2B.2-B1 — operational hardening
+
+- bounded bridge concurrency, queueing, timeout, and capacity diagnostics
+- persistent Colima + Docker restart lifecycle documentation
+- container and application-level SearXNG health diagnostics
+- validated SearXNG image pinned by immutable digest
+
+#### Phase 2B.2-B2 — protocol resilience
+
 - captured Codex request compatibility fixtures
-- bounded retries, concurrency and backpressure
-- persistent bridge/search service lifecycle and diagnostics
-- pin the validated SearXNG image digest
+- bounded retry before streamed output begins
+- cancellation and failure-injection E2E coverage
 - SSRF-safe URL reading only after explicit policy work
 
 ## Phase 3 — real QQ + persistent identity

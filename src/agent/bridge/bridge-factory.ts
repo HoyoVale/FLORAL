@@ -22,6 +22,11 @@ export function createResponsesBridge(
     port,
     token,
     maxBodyBytes: env.FLORAL_BRIDGE_MAX_BODY_BYTES,
+    capacity: {
+      maxConcurrentRequests: env.FLORAL_BRIDGE_MAX_CONCURRENT_REQUESTS,
+      maxQueuedRequests: env.FLORAL_BRIDGE_MAX_QUEUED_REQUESTS,
+      queueTimeoutMs: env.FLORAL_BRIDGE_QUEUE_TIMEOUT_MS,
+    },
     deepSeek: {
       apiKey: env.DEEPSEEK_API_KEY,
       baseUrl: env.DEEPSEEK_BASE_URL,

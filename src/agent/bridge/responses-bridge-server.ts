@@ -8,6 +8,10 @@ import {
 import type { AddressInfo } from "node:net";
 import { ModelProviderError } from "../provider/provider-errors.js";
 import { ResponsesBridgeError } from "./bridge-errors.js";
+import {
+  BridgeCapacityError,
+  BridgeConcurrencyGate,
+} from "./concurrency-gate.js";
 import { streamDeepSeekChat } from "./deepseek-stream.js";
 import { ResponsesSseWriter } from "./responses-sse.js";
 import {
@@ -20,6 +24,11 @@ export interface ResponsesBridgeServerOptions {
   port: number;
   token: string;
   maxBodyBytes: number;
+  capacity?: {
+    maxConcurrentRequests: number;
+    maxQueuedRequests: number;
+    queueTimeoutMs: number;
+  } | undefined;
   deepSeek: {
     apiKey: string;
     baseUrl: string;
@@ -42,6 +51,7 @@ export interface ResponsesBridgeAddress {
 
 export class ResponsesBridgeServer {
   readonly #options: ResponsesBridgeServerOptions;
+  readonly #capacity: BridgeConcurrencyGate;
   readonly #reasoningByCallId = new Map<string, string>();
   #pendingForcedToolName: string | undefined;
   #server: Server | undefined;
@@ -63,6 +73,16 @@ export class ResponsesBridgeServer {
       });
     }
     this.#options = options;
+    const capacity = options.capacity ?? {
+      maxConcurrentRequests: 4,
+      maxQueuedRequests: 8,
+      queueTimeoutMs: 15_000,
+    };
+    this.#capacity = new BridgeConcurrencyGate(
+      capacity.maxConcurrentRequests,
+      capacity.maxQueuedRequests,
+      capacity.queueTimeoutMs,
+    );
     this.#pendingForcedToolName = options.deepSeek.forceToolNameOnce;
   }
 
@@ -139,6 +159,7 @@ export class ResponsesBridgeServer {
         ok: true,
         service: "floral-responses-bridge",
         provider: "deepseek",
+        capacity: this.#capacity.snapshot(),
       });
       return;
     }
@@ -154,6 +175,43 @@ export class ResponsesBridgeServer {
       writeJson(response, 401, {
         error: { type: "unauthorized", message: "Invalid bridge token" },
       });
+      return;
+    }
+
+    let releaseCapacity: () => void;
+    try {
+      releaseCapacity = await this.#capacity.acquire();
+    } catch (error) {
+      const capacityError = error instanceof BridgeCapacityError
+        ? error
+        : new BridgeCapacityError(
+            "queue_full",
+            this.#capacity.snapshot().queueTimeoutMs,
+          );
+      response.setHeader(
+        "retry-after",
+        String(Math.max(1, Math.ceil(capacityError.retryAfterMs / 1_000))),
+      );
+      writeJson(response, 429, {
+        error: {
+          type: "capacity",
+          kind: capacityError.kind,
+          message: capacityError.message,
+        },
+      });
+      return;
+    }
+
+    let capacityReleased = false;
+    const releaseCapacityOnce = () => {
+      if (capacityReleased) return;
+      capacityReleased = true;
+      releaseCapacity();
+    };
+    response.once("finish", releaseCapacityOnce);
+    response.once("close", releaseCapacityOnce);
+    if (request.destroyed || response.destroyed) {
+      releaseCapacityOnce();
       return;
     }
 

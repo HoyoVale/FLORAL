@@ -1,9 +1,10 @@
 services:
   searxng:
-    image: docker.io/searxng/searxng:latest
+    image: docker.io/searxng/searxng@sha256:02aa607ecc87165ebe6212476a176b8984d891c01a2d130ad03a58109d13db77
     container_name: floral-searxng
     restart: unless-stopped
     init: true
+    stop_grace_period: 20s
     ports:
       - "127.0.0.1:8888:8080"
     environment:
@@ -13,3 +14,18 @@ services:
       SEARXNG_BIND_ADDRESS: "0.0.0.0"
     volumes:
       - ./runtime/settings.yml:/etc/searxng/settings.yml:ro
+    security_opt:
+      - no-new-privileges:true
+    healthcheck:
+      test:
+        - CMD
+        - wget
+        - --quiet
+        - --tries=1
+        - --spider
+        - --proxy=off
+        - http://127.0.0.1:8080/healthz
+      interval: 30s
+      timeout: 7s
+      retries: 3
+      start_period: 20s

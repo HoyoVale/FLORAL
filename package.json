@@ -29,6 +29,7 @@
     "searxng:down": "tsx scripts/searxng.ts down",
     "searxng:status": "tsx scripts/searxng.ts status",
     "searxng:health": "tsx scripts/searxng.ts health",
+    "searxng:doctor": "tsx scripts/searxng-doctor.ts",
     "mac:smoke": "bash scripts/mac-smoke.sh",
     "dev:watch": "tsx watch src/main.ts"
   },
