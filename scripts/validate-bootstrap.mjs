@@ -1,7 +1,7 @@
 import { access, readFile } from "node:fs/promises";
 
 const required = [
-  "package.json", ".env.example", "AGENTS.md", "src/main.ts",
+  "package.json", ".env.example", "vitest.config.ts", "AGENTS.md", "src/main.ts",
   "src/agent/codex-rpc-client.ts", "src/agent/provider/deepseek-client.ts",
   "src/agent/bridge/responses-bridge-server.ts",
   "src/transport/qq/qq-transport.ts", "src/transport/qq/qq-text.ts",
@@ -28,6 +28,12 @@ const pkg = JSON.parse(await readFile("package.json", "utf8"));
 if (pkg.type !== "module") throw new Error("package.json must use ESM");
 if (pkg.scripts?.start !== "node dist/src/main.js") {
   throw new Error("Production start script must use dist/src/main.js");
+}
+if (pkg.scripts?.test !== "vitest run --config vitest.config.ts") {
+  throw new Error("Test script must use the repository-scoped Vitest config");
+}
+if (pkg.scripts?.["test:watch"] !== "vitest --config vitest.config.ts") {
+  throw new Error("Watch test script must use the repository-scoped Vitest config");
 }
 for (const script of [
   "doctor",

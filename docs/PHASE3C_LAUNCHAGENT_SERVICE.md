@@ -133,6 +133,22 @@ service.recovery.result=ok
 
 Then send a QQ message and verify the normal full chain still replies.
 
+
+## Test discovery boundary
+
+The persistent Codex home may contain downloaded plugin fixtures and third-party
+files whose names end in `.test.ts`, `.test.js`, or `.test.mjs`. They are runtime
+data, not FLORAL's test suite.
+
+`vitest.config.ts` therefore limits collection to:
+
+```text
+tests/**/*.test.ts
+```
+
+Do not delete `data/codex-runtime` to make tests pass; that directory carries
+the Codex thread/session state validated in Phase 3B.2.
+
 ## Upgrade procedure
 
 Do not edit the installed plist manually.
