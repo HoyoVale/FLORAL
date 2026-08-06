@@ -56,6 +56,11 @@ function setup(options: { runtimeStartError?: Error } = {}) {
       calls.push(`${codexHome}:${bridgeToken}`);
       return runtime;
     },
+    prepareCodexConfig: async ({ legacyConfig }) => ({
+      mode: "legacy",
+      productionConfig: legacyConfig,
+    }),
+    clearCodexShadowReport: async () => undefined,
   });
   return { managed, runtime, calls };
 }
@@ -102,6 +107,67 @@ describe("ManagedCodexDeepSeekRuntime", () => {
     await expect(managed.start()).rejects.toThrow("failed");
     expect(calls).toContain("bridge.stop");
     expect(calls).toContain("workspace.cleanup");
+  });
+
+  it("keeps the legacy config in production while shadow preparation runs", async () => {
+    let workspaceConfig = "";
+    let shadowCalls = 0;
+    const runtime = new FakeRuntime();
+    const managed = new ManagedCodexDeepSeekRuntime(loadEnv({
+      DEEPSEEK_API_KEY: "secret",
+    }), {
+      createToken: () => "token",
+      checkSearch: async () => ({ endpoint: "http://127.0.0.1:8888", resultCount: 1 }),
+      createBridge: () => ({
+        start: async () => ({ baseUrl: "http://127.0.0.1:9999/v1" }),
+        stop: async () => undefined,
+      }),
+      prepareCodexConfig: async ({ legacyConfig }) => {
+        shadowCalls += 1;
+        return {
+          mode: "unified-shadow",
+          productionConfig: legacyConfig,
+        };
+      },
+      clearCodexShadowReport: async () => undefined,
+      createWorkspace: async (config) => {
+        workspaceConfig = config;
+        return { codexHome: "/tmp/fake-codex", cleanup: async () => undefined };
+      },
+      createRuntime: () => runtime,
+    });
+
+    await managed.start();
+    expect(shadowCalls).toBe(1);
+    expect(workspaceConfig).toContain('model_provider = "floral-deepseek"');
+    expect(workspaceConfig).not.toContain("approval_policy");
+    await managed.stop();
+  });
+
+  it("falls back to the legacy generator when shadow preparation fails", async () => {
+    let workspaceConfig = "";
+    const runtime = new FakeRuntime();
+    const managed = new ManagedCodexDeepSeekRuntime(loadEnv({
+      DEEPSEEK_API_KEY: "secret",
+    }), {
+      createToken: () => "token",
+      checkSearch: async () => ({ endpoint: "http://127.0.0.1:8888", resultCount: 1 }),
+      createBridge: () => ({
+        start: async () => ({ baseUrl: "http://127.0.0.1:9999/v1" }),
+        stop: async () => undefined,
+      }),
+      prepareCodexConfig: async () => { throw new Error("shadow failed"); },
+      clearCodexShadowReport: async () => undefined,
+      createWorkspace: async (config) => {
+        workspaceConfig = config;
+        return { codexHome: "/tmp/fake-codex", cleanup: async () => undefined };
+      },
+      createRuntime: () => runtime,
+    });
+
+    await managed.start();
+    expect(workspaceConfig).toContain('model_reasoning_effort = "high"');
+    await managed.stop();
   });
 
   it("preserves Codex thread state while removing the ephemeral bridge config", async () => {

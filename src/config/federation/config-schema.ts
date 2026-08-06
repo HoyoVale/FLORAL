@@ -123,6 +123,13 @@ export const requestedConfigSchema = z.object({
     better_auth_url: z.string().url(),
     email_password_enabled: z.boolean(),
   }).strict(),
+  runtime: z.object({
+    adoption: z.object({
+      codex: z.object({
+        mode: z.enum(["legacy", "unified-shadow"]),
+      }).strict(),
+    }).strict(),
+  }).strict(),
   macos: z.object({
     mode: modeSchema,
     peekaboo_command: z.string().trim().min(1),
@@ -272,6 +279,13 @@ export interface RequestedConfig {
     better_auth_url: string;
     email_password_enabled: boolean;
   };
+  runtime: {
+    adoption: {
+      codex: {
+        mode: "legacy" | "unified-shadow";
+      };
+    };
+  };
   macos: { mode: "mock" | "real"; peekaboo_command: string };
   mcp: {
     search: {
@@ -417,6 +431,13 @@ export const DEFAULT_REQUESTED_CONFIG: RequestedConfig = {
     mode: "local",
     better_auth_url: "http://127.0.0.1:8787",
     email_password_enabled: false,
+  },
+  runtime: {
+    adoption: {
+      codex: {
+        mode: "unified-shadow",
+      },
+    },
   },
   macos: {
     mode: "mock",

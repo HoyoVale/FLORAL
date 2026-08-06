@@ -2,6 +2,11 @@ import { chmod, cp, mkdir, mkdtemp, readFile, stat, writeFile } from "node:fs/pr
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { describe, expect, it } from "vitest";
+import { buildCodexDeepSeekConfig } from "../src/agent/codex-deepseek-config.js";
+import {
+  compareCodexShadowConfigs,
+  writeCodexShadowReport,
+} from "../src/config/adoption/codex-shadow-adoption.js";
 import { renderCodexConfig } from "../src/config/adapters/codex-native-config.js";
 import { renderNativeConfigBundle } from "../src/config/adapters/native-config-bundle.js";
 import {
@@ -137,6 +142,41 @@ describe("configuration drift diagnostics", () => {
     const serialized = JSON.stringify(report);
     expect(serialized).not.toContain("deepseek-api-key-sensitive");
     expect(serialized).not.toContain("qq-app-secret-sensitive");
+  });
+
+  it("recognizes a current compatible Codex shadow report", async () => {
+    const root = await createRepositoryFixture();
+    const authority = await resolveConfigurationAuthority({
+      repositoryRoot: root,
+      environment: productionEnvironment(root),
+    });
+    await writeNativeConfigBundle(root, renderNativeConfigBundle(authority));
+    const bridgeBaseUrl = "http://127.0.0.1:49321/v1";
+    const legacy = buildCodexDeepSeekConfig({
+      model: authority.effective.deepseek.model,
+      bridgeBaseUrl,
+      streamIdleTimeoutMs: authority.effective.deepseek.request_timeout_ms,
+      searchMcp: {
+        searxngUrl: authority.effective.search.service_url,
+        packageSpec: authority.effective.mcp.search.package,
+        startupTimeoutSec: authority.effective.mcp.search.startup_timeout_sec,
+        toolTimeoutSec: authority.effective.mcp.search.tool_timeout_sec,
+      },
+    });
+    await writeCodexShadowReport(root, compareCodexShadowConfigs({
+      legacyConfig: legacy,
+      unifiedConfig: renderCodexConfig(authority.effective, bridgeBaseUrl),
+      effectiveFingerprint: authority.effectiveFingerprint,
+    }));
+
+    const report = await buildConfigurationDiagnostics({
+      repositoryRoot: root,
+      authority,
+      includeRuntimeProbes: false,
+    });
+    expect(report.adoption.codexShadow.status).toBe("compatible");
+    expect(report.cutoverGate.blockerCodes).not.toContain("codex-shadow-report-missing");
+    expect(report.cutoverGate.blockerCodes).not.toContain("codex-shadow-drift");
   });
 
   it("captures a bounded SearXNG effective configuration observation", async () => {

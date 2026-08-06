@@ -66,11 +66,14 @@ corepack pnpm config:diagnostics:check
 corepack pnpm config:diagnostics:write
 corepack pnpm config:cutover:check
 corepack pnpm config:explain -- codex.native.reasoning_effort
+corepack pnpm config:codex-shadow
+corepack pnpm config:codex-shadow:check
 ```
 
 See `docs/PHASE4_NATIVE_CONFIG_RENDERERS.md` for the Codex, SearXNG, QQ SDK,
-and MCP artifact contracts, and `docs/PHASE4_CONFIG_DRIFT_DIAGNOSTICS.md` for
-the drift report and controlled cutover gate.
+and MCP artifact contracts, `docs/PHASE4_CONFIG_DRIFT_DIAGNOSTICS.md` for
+the drift report and controlled cutover gate, and
+`docs/PHASE4_CODEX_SHADOW_ADOPTION.md` for the fail-open Codex shadow rollout.
 
 ## Prepare the Mac mini
 

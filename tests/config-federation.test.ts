@@ -49,6 +49,7 @@ describe("configuration federation authority", () => {
     expect(authority.requested.codex.mode).toBe("mock");
     expect(authority.effective.codex.mode).toBe("real");
     expect(authority.effective.deepseek.reasoning_effort).toBe("max");
+    expect(authority.effective.runtime.adoption.codex.mode).toBe("unified-shadow");
     expect(authority.effective.codex.args).toEqual(["app-server", "--flag", "two words"]);
     expect(authority.provenance["codex.mode"]).toMatchObject({
       source: "environment",
@@ -69,6 +70,7 @@ describe("configuration federation authority", () => {
       expect(output).not.toContain(secret);
     }
     expect(output).toContain("config.secret.deepseek_api_key=present");
+    expect(output).toContain("config.runtime.adoption.codex=unified-shadow");
   });
 
   it("rejects locked-field overrides and unknown keys before runtime adoption", async () => {

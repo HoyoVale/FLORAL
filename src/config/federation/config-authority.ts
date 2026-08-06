@@ -217,6 +217,7 @@ export function renderConfigurationAuthority(
     `config.codex.approval=${authority.effective.codex.approval.policy}`,
     `config.codex.native.reasoning_effort=${authority.effective.codex.native.reasoning_effort}`,
     `config.codex.native.web_search=${authority.effective.codex.native.web_search}`,
+    `config.runtime.adoption.codex=${authority.effective.runtime.adoption.codex.mode}`,
     `config.deepseek.model=${authority.effective.deepseek.model}`,
     `config.deepseek.reasoning_effort=${authority.effective.deepseek.reasoning_effort}`,
     `config.search.safe_search=${String(authority.effective.search.settings.safe_search)}`,

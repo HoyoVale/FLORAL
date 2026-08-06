@@ -164,6 +164,16 @@
 - define a strict, non-destructive controlled production cutover gate;
 - keep production runtime generation unchanged until the gate is intentionally adopted.
 
+### Phase 4.0E1 — Codex unified shadow adoption
+
+- connect the configuration authority to the real managed Codex startup path;
+- keep the legacy generator as the production `config.toml`;
+- render the unified Codex config with the same runtime bridge endpoint;
+- compare shared TOML assignments and allow only reviewed safety additions;
+- persist a private redacted shadow report and expose a dedicated check;
+- fail open to the legacy generator if shadow diagnostics fail;
+- keep the global cutover gate blocked until Phase 4.0E2 explicitly adopts unified output.
+
 ## Phase 4 — macOS GUI
 
 - Peekaboo MCP health and required-tool checks

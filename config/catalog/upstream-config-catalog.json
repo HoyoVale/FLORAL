@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "reviewedAt": "2026-08-07",
-  "purpose": "Phase 4.0A/4.0C inventory and typed native-renderer catalog for FLORAL-owned, upstream-managed, passthrough, observed-only, and locked configuration surfaces. Native artifacts are deterministic previews; production cutover remains a later phase.",
+  "purpose": "Phase 4.0A-4.0E1 inventory, federation, native-renderer, diagnostics, and shadow-adoption catalog for FLORAL-owned, upstream-managed, passthrough, observed-only, and locked configuration surfaces. Phase 4.0E1 compares unified Codex output while production remains on the legacy generator.",
   "classifications": [
     "floral-owned",
     "upstream-managed",
@@ -62,6 +62,19 @@
             "no unrestricted sudo",
             "no Keychain access",
             "model is not an authorization boundary"
+          ]
+        },
+        {
+          "id": "runtime-adoption",
+          "classification": "floral-owned",
+          "coverage": "typed",
+          "knownKeys": [
+            "runtime.adoption.codex.mode"
+          ],
+          "futureKeys": [
+            "runtime.adoption.mcp.mode",
+            "runtime.adoption.qq_sdk.mode",
+            "runtime.adoption.searxng.mode"
           ]
         }
       ],
@@ -860,6 +873,14 @@
       "file": "src/storage/sqlite.ts",
       "needle": "PRAGMA busy_timeout = 5000;",
       "risk": "Contention behavior is implicit and should become an effective-config observation."
+    },
+    {
+      "id": "codex.runtime-adoption.unified-shadow",
+      "component": "floral",
+      "classification": "floral-owned",
+      "file": "src/config/federation/config-schema.ts",
+      "needle": "mode: \"unified-shadow\"",
+      "risk": "Phase 4.0E1 must preserve the legacy production generator while collecting a deterministic unified shadow comparison."
     }
   ],
   "environmentKeyPolicies": {

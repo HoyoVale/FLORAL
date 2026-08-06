@@ -129,6 +129,12 @@ better_auth_url = "http://127.0.0.1:8787"
 # Locked until the web administration security phase.
 email_password_enabled = false
 
+[runtime.adoption.codex]
+# Phase 4.0E1 renders and compares the unified Codex config while the legacy
+# generator remains the production source. Set to "legacy" only to disable
+# shadow comparison during emergency rollback.
+mode = "unified-shadow"
+
 [macos]
 mode = "mock"
 peekaboo_command = "peekaboo"

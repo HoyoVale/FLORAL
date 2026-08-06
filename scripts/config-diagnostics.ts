@@ -17,7 +17,10 @@ import { loadProjectEnv } from "../src/config/load-project-env.js";
 const repositoryRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 loadProjectEnv(join(repositoryRoot, ".env"));
 
-const args = process.argv.slice(2);
+const rawArgs = process.argv.slice(2);
+const args = rawArgs[0] === "explain" && rawArgs[1] === "--"
+  ? [rawArgs[0], ...rawArgs.slice(2)]
+  : rawArgs;
 const mode = args[0] ?? "show";
 const supportedModes = new Set(["show", "json", "write", "check", "cutover", "explain"]);
 if (!supportedModes.has(mode)) throw new Error(`Unknown config diagnostics mode: ${mode}`);

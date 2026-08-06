@@ -2,6 +2,10 @@ import { createHash } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import { isAbsolute, join, resolve } from "node:path";
 import {
+  readCodexShadowReport,
+  type CodexShadowReport,
+} from "../adoption/codex-shadow-adoption.js";
+import {
   CODEX_BRIDGE_BASE_URL_PLACEHOLDER,
 } from "../adapters/codex-native-config.js";
 import {
@@ -96,6 +100,13 @@ export interface CodexRuntimeObservation {
   normalizedVersion?: string | undefined;
 }
 
+export interface CodexShadowObservation {
+  path: string;
+  status: "compatible" | "drift" | "missing" | "invalid" | "disabled";
+  reportFingerprint?: string | undefined;
+  effectiveFingerprint?: string | undefined;
+}
+
 export interface ConfigurationCutoverGate {
   status: "ready" | "blocked";
   blockerCodes: string[];
@@ -125,6 +136,9 @@ export interface ConfigurationDiagnosticsReport {
   runtime: {
     codex: CodexRuntimeObservation;
     searxng: SearxngRuntimeObservation;
+  };
+  adoption: {
+    codexShadow: CodexShadowObservation;
   };
   findings: ConfigDiagnosticFinding[];
   cutoverGate: ConfigurationCutoverGate;
@@ -166,7 +180,14 @@ export async function buildConfigurationDiagnostics(
   const compatibility = await loadRuntimeCompatibilityCatalog(repositoryRoot);
   const includeRuntimeProbes = options.includeRuntimeProbes ?? true;
 
-  const [nativeInstallation, codexInstallation, searxngInstallation, inventory, searxngRuntime] = await Promise.all([
+  const [
+    nativeInstallation,
+    codexInstallation,
+    searxngInstallation,
+    inventory,
+    searxngRuntime,
+    codexShadow,
+  ] = await Promise.all([
     observeNativeInstallation(repositoryRoot, bundle),
     observeCodexInstallation(repositoryRoot, options.authority, bundle),
     observeSearxngInstallation(repositoryRoot, bundle),
@@ -185,6 +206,7 @@ export async function buildConfigurationDiagnostics(
           options.fetchImpl,
         )
       : Promise.resolve(skippedSearxngRuntime(options.authority.effective.search.service_url)),
+    observeCodexShadowAdoption(repositoryRoot, options.authority),
   ]);
 
   const qqSdk = observeQqSdkInstallation(options.authority, inventory.runtime.qqSdk);
@@ -206,6 +228,7 @@ export async function buildConfigurationDiagnostics(
     qqSdk,
     codexRuntime,
     searxngRuntime,
+    codexShadow,
   });
   const blockerCodes = findings
     .filter((finding) => finding.blocksCutover)
@@ -239,6 +262,9 @@ export async function buildConfigurationDiagnostics(
     runtime: {
       codex: codexRuntime,
       searxng: searxngRuntime,
+    },
+    adoption: {
+      codexShadow,
     },
     findings: findings.sort(compareFindings),
     cutoverGate: {
@@ -274,6 +300,7 @@ export function renderConfigurationDiagnostics(report: ConfigurationDiagnosticsR
     `config.diagnostics.searxng_runtime=${report.runtime.searxng.status}`,
     `config.diagnostics.searxng_engines=${String(report.runtime.searxng.engines.length)}`,
     `config.diagnostics.searxng_plugins=${String(report.runtime.searxng.plugins.length)}`,
+    `config.diagnostics.codex_shadow=${report.adoption.codexShadow.status}`,
     `config.diagnostics.findings=${String(report.findings.length)}`,
     `config.cutover.status=${report.cutoverGate.status}`,
     `config.cutover.blockers=${String(report.cutoverGate.blockerCodes.length)}`,
@@ -552,6 +579,7 @@ function buildFindings(input: {
   qqSdk: QqSdkInstallationObservation;
   codexRuntime: CodexRuntimeObservation;
   searxngRuntime: SearxngRuntimeObservation;
+  codexShadow: CodexShadowObservation;
 }): ConfigDiagnosticFinding[] {
   const findings: ConfigDiagnosticFinding[] = [];
   if (input.nativeInstallation.manifestStatus !== "match") {
@@ -579,6 +607,36 @@ function buildFindings(input: {
       ));
     }
   }
+
+  if (
+    input.authority.effective.codex.mode === "real"
+    && input.authority.effective.runtime.adoption.codex.mode === "unified-shadow"
+  ) {
+    if (input.codexShadow.status === "missing") {
+      findings.push(finding(
+        "codex-shadow-report-missing",
+        "codex",
+        "observed",
+        "warning",
+        true,
+        "Codex unified-shadow mode is enabled but no runtime comparison report exists; restart the FLORAL service",
+        input.codexShadow.path,
+      ));
+    } else if (input.codexShadow.status !== "compatible") {
+      findings.push(finding(
+        `codex-shadow-${input.codexShadow.status}`,
+        "codex",
+        "observed",
+        "warning",
+        true,
+        "Codex legacy and unified configurations are not shadow-compatible for the current effective configuration",
+        input.codexShadow.path,
+        input.authority.effectiveFingerprint,
+        input.codexShadow.effectiveFingerprint,
+      ));
+    }
+  }
+
   if (input.codexInstallation.status === "drift") {
     findings.push(finding(
       "codex-managed-config-legacy-drift",
@@ -710,6 +768,32 @@ function buildFindings(input: {
     ));
   }
   return findings;
+}
+
+async function observeCodexShadowAdoption(
+  repositoryRoot: string,
+  authority: ResolvedConfigurationAuthority,
+): Promise<CodexShadowObservation> {
+  const path = join(repositoryRoot, "data/config/adoption/codex-shadow.json");
+  if (authority.effective.runtime.adoption.codex.mode === "legacy") {
+    return { path, status: "disabled" };
+  }
+  try {
+    const report: CodexShadowReport | undefined = await readCodexShadowReport(repositoryRoot);
+    if (!report) return { path, status: "missing" };
+    const status = report.status === "compatible"
+      && report.effectiveFingerprint === authority.effectiveFingerprint
+      ? "compatible"
+      : "drift";
+    return {
+      path,
+      status,
+      reportFingerprint: report.reportFingerprint,
+      effectiveFingerprint: report.effectiveFingerprint,
+    };
+  } catch {
+    return { path, status: "invalid" };
+  }
 }
 
 function normalizeCodexInstalledConfig(value: string): string {

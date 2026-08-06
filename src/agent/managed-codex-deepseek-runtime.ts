@@ -1,6 +1,11 @@
 import { randomBytes } from "node:crypto";
 import { chmod, mkdir, rm, writeFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
+import {
+  prepareCodexConfigAdoption,
+  removeCodexShadowReport,
+  type CodexConfigAdoptionResult,
+} from "../config/adoption/codex-shadow-adoption.js";
 import type { AppEnv } from "../config/env.js";
 import type { AgentRuntime } from "../core/contracts.js";
 import type {
@@ -37,6 +42,11 @@ export interface ManagedCodexDeepSeekDependencies {
     codexHome: string;
     bridgeToken: string;
   }) => AgentRuntime) | undefined;
+  prepareCodexConfig?: ((options: {
+    legacyConfig: string;
+    bridgeBaseUrl: string;
+  }) => Promise<CodexConfigAdoptionResult>) | undefined;
+  clearCodexShadowReport?: (() => Promise<void>) | undefined;
 }
 
 export class ManagedCodexDeepSeekRuntime implements AgentRuntime {
@@ -113,7 +123,7 @@ export class ManagedCodexDeepSeekRuntime implements AgentRuntime {
       const address = await bridge.start();
       process.stderr.write("agent.stack.bridge=ok\n");
 
-      const config = buildCodexDeepSeekConfig({
+      const legacyConfig = buildCodexDeepSeekConfig({
         model: this.env.DEEPSEEK_MODEL,
         bridgeBaseUrl: address.baseUrl,
         streamIdleTimeoutMs: this.env.DEEPSEEK_REQUEST_TIMEOUT_MS,
@@ -124,11 +134,12 @@ export class ManagedCodexDeepSeekRuntime implements AgentRuntime {
           toolTimeoutSec: this.env.SEARXNG_MCP_TOOL_TIMEOUT_SEC,
         },
       });
+      const adoption = await this.#prepareCodexConfig(legacyConfig, address.baseUrl);
       const managedCodexHome = resolve(this.env.CODEX_MANAGED_HOME);
       const workspace = await (this.dependencies.createWorkspace?.(
-        config,
+        adoption.productionConfig,
         managedCodexHome,
-      ) ?? createPersistentCodexWorkspace(managedCodexHome, config));
+      ) ?? createPersistentCodexWorkspace(managedCodexHome, adoption.productionConfig));
       this.#workspace = workspace;
       process.stderr.write("agent.stack.codex_home=persistent\n");
 
@@ -149,6 +160,43 @@ export class ManagedCodexDeepSeekRuntime implements AgentRuntime {
       await bridge.stop().catch(() => undefined);
       await workspace?.cleanup().catch(() => undefined);
       throw error;
+    }
+  }
+
+  async #prepareCodexConfig(
+    legacyConfig: string,
+    bridgeBaseUrl: string,
+  ): Promise<CodexConfigAdoptionResult> {
+    try {
+      const adoption = await (this.dependencies.prepareCodexConfig?.({
+        legacyConfig,
+        bridgeBaseUrl,
+      }) ?? prepareCodexConfigAdoption({
+        repositoryRoot: process.cwd(),
+        environment: process.env,
+        legacyConfig,
+        bridgeBaseUrl,
+      }));
+      process.stderr.write(`agent.stack.codex_config.mode=${adoption.mode}\n`);
+      if (adoption.shadowReport) {
+        process.stderr.write(
+          `agent.stack.codex_config.shadow=${adoption.shadowReport.status}\n`,
+        );
+        process.stderr.write(
+          `agent.stack.codex_config.shadow_fingerprint=${adoption.shadowReport.reportFingerprint}\n`,
+        );
+      }
+      return adoption;
+    } catch (error) {
+      await (this.dependencies.clearCodexShadowReport?.()
+        ?? removeCodexShadowReport(process.cwd())).catch(() => undefined);
+      process.stderr.write(
+        `agent.stack.codex_config.shadow=error:${errorName(error)}\n`,
+      );
+      // Shadow adoption is deliberately fail-open to the established legacy
+      // generator. Phase 4.0E1 must not turn a diagnostic failure into a
+      // production outage.
+      return { mode: "legacy", productionConfig: legacyConfig };
     }
   }
 
@@ -183,6 +231,10 @@ export async function createPersistentCodexWorkspace(
       await rm(configPath, { force: true });
     },
   };
+}
+
+function errorName(error: unknown): string {
+  return error instanceof Error && error.name ? error.name : "Error";
 }
 
 function createCodexRuntime(
