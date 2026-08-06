@@ -16,6 +16,7 @@ import {
   renderSearxngSettings,
 } from "../src/config/adapters/searxng-native-config.js";
 import { resolveConfigurationAuthority } from "../src/config/federation/config-authority.js";
+import { normalizeNativeConfigText } from "../src/config/adapters/native-config-types.js";
 import { writeNativeConfigBundle } from "../src/config/federation/native-config-writer.js";
 
 const repositoryRoot = resolve(".");
@@ -88,9 +89,18 @@ describe("native configuration adapters", () => {
       readFile(join(repositoryRoot, "infra/searxng/compose.yaml"), "utf8"),
       readFile(join(repositoryRoot, "infra/searxng/settings.template.yml"), "utf8"),
     ]);
-    expect(renderSearxngCompose(authority.effective)).toBe(compose);
-    expect(renderSearxngSettings(authority.effective)).toBe(settings);
+    expect(normalizeNativeConfigText(renderSearxngCompose(authority.effective))).toBe(
+      normalizeNativeConfigText(compose),
+    );
+    expect(normalizeNativeConfigText(renderSearxngSettings(authority.effective))).toBe(
+      normalizeNativeConfigText(settings),
+    );
     expect(settings).toContain('secret_key: "__FLORAL_SEARXNG_SECRET__"');
+  });
+
+  it("normalizes LF and CRLF checkouts before drift comparison", () => {
+    expect(normalizeNativeConfigText("alpha\r\nbeta\r\n")).toBe("alpha\nbeta\n");
+    expect(normalizeNativeConfigText("alpha\nbeta")).toBe("alpha\nbeta\n");
   });
 
   it("renders redacted QQ and MCP contracts without secret values", async () => {

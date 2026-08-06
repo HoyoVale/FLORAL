@@ -27,7 +27,7 @@ export interface NativeArtifactInput extends Omit<NativeConfigArtifact, "content
 }
 
 export function createNativeConfigArtifact(input: NativeArtifactInput): NativeConfigArtifact {
-  const content = ensureFinalNewline(input.content);
+  const content = normalizeNativeConfigText(input.content);
   return {
     ...input,
     runtimePlaceholders: [...input.runtimePlaceholders].sort(),
@@ -90,8 +90,9 @@ export function safeNativeBundleJson(bundle: NativeConfigBundle): Record<string,
   };
 }
 
-function ensureFinalNewline(value: string): string {
-  return value.endsWith("\n") ? value : `${value}\n`;
+export function normalizeNativeConfigText(value: string): string {
+  const normalized = value.replace(/\r\n?/gu, "\n");
+  return normalized.endsWith("\n") ? normalized : `${normalized}\n`;
 }
 
 function sha256(value: string): string {

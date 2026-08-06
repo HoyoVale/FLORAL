@@ -7,6 +7,7 @@ import {
   safeNativeBundleJson,
 } from "../src/config/adapters/native-config-bundle.js";
 import { resolveConfigurationAuthority } from "../src/config/federation/config-authority.js";
+import { normalizeNativeConfigText } from "../src/config/adapters/native-config-types.js";
 import { writeNativeConfigBundle } from "../src/config/federation/native-config-writer.js";
 import { loadProjectEnv } from "../src/config/load-project-env.js";
 
@@ -71,7 +72,7 @@ async function validateNativeConfigBundle(
   ] as const) {
     const rendered = requireArtifact(bundle, artifactPath).content;
     const checkedIn = await readFile(join(repositoryRoot, checkedInPath), "utf8");
-    if (rendered !== ensureFinalNewline(checkedIn)) {
+    if (normalizeNativeConfigText(rendered) !== normalizeNativeConfigText(checkedIn)) {
       throw new Error(`${checkedInPath} drifted from the unified SearXNG renderer`);
     }
   }
@@ -110,8 +111,4 @@ function requireArtifact(
   const artifact = bundle.artifacts.find((entry) => entry.relativePath === relativePath);
   if (!artifact) throw new Error(`Native artifact missing: ${relativePath}`);
   return artifact;
-}
-
-function ensureFinalNewline(value: string): string {
-  return value.endsWith("\n") ? value : `${value}\n`;
 }
