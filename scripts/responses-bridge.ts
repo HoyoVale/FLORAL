@@ -1,9 +1,11 @@
 import { createResponsesBridge } from "../src/agent/bridge/bridge-factory.js";
 import { loadEnv } from "../src/config/env.js";
 import { loadProjectEnv } from "../src/config/load-project-env.js";
+import { createProjectDeepSeekCostGuard } from "../src/runtime/cost/cost-guard-factory.js";
 
 loadProjectEnv();
 const env = loadEnv();
+const costGuard = await createProjectDeepSeekCostGuard(process.cwd(), process.env);
 
 if (!env.FLORAL_BRIDGE_TOKEN) {
   throw new Error(
@@ -11,7 +13,7 @@ if (!env.FLORAL_BRIDGE_TOKEN) {
   );
 }
 
-const bridge = createResponsesBridge(env, env.FLORAL_BRIDGE_TOKEN);
+const bridge = createResponsesBridge(env, env.FLORAL_BRIDGE_TOKEN, env.FLORAL_BRIDGE_PORT, { costGuard });
 const address = await bridge.start();
 
 console.log("bridge.service=floral-responses-bridge");

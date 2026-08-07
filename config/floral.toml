@@ -143,6 +143,30 @@ mode = "unified"
 # options from the unified authority. "legacy" remains an emergency fallback.
 mode = "unified"
 
+[runtime.cost_guard]
+# Phase 5.1 fail-closed protection against runaway provider loops. Request and
+# token limits use rolling windows. Pricing is an operator-reviewed estimate;
+# DeepSeek remains the billing authority.
+enabled = true
+state_path = "./data/cost-guard/deepseek.json"
+max_requests_per_minute = 20
+max_requests_per_hour = 120
+max_requests_per_day = 1000
+max_tokens_per_hour = 5000000
+max_tokens_per_day = 20000000
+max_cost_cny_per_hour = 2
+max_cost_cny_per_day = 10
+duplicate_window_ms = 300000
+duplicate_max_attempts = 4
+max_unknown_usage_per_hour = 8
+
+[runtime.cost_guard.pricing]
+# Reviewed against the DeepSeek V4 Flash pricing page on 2026-08-07.
+model = "deepseek-v4-flash"
+input_cache_hit_cny_per_million = 0.02
+input_cache_miss_cny_per_million = 1
+output_cny_per_million = 2
+
 [macos]
 mode = "mock"
 peekaboo_command = "peekaboo"

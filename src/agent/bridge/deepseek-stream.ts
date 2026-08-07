@@ -241,7 +241,11 @@ function parseUsage(value: unknown): DeepSeekStreamChunk["usage"] {
   const usage = asRecord(value);
   if (!usage) return undefined;
   const promptTokens = readNumber(usage.prompt_tokens);
+  const promptCacheHitTokens = readNumber(usage.prompt_cache_hit_tokens);
+  const promptCacheMissTokens = readNumber(usage.prompt_cache_miss_tokens);
   const completionTokens = readNumber(usage.completion_tokens);
+  const completionDetails = asRecord(usage.completion_tokens_details);
+  const reasoningTokens = readNumber(completionDetails?.reasoning_tokens);
   const totalTokens = readNumber(usage.total_tokens);
   if (
     promptTokens === undefined
@@ -251,7 +255,10 @@ function parseUsage(value: unknown): DeepSeekStreamChunk["usage"] {
 
   return {
     ...(promptTokens !== undefined ? { promptTokens } : {}),
+    ...(promptCacheHitTokens !== undefined ? { promptCacheHitTokens } : {}),
+    ...(promptCacheMissTokens !== undefined ? { promptCacheMissTokens } : {}),
     ...(completionTokens !== undefined ? { completionTokens } : {}),
+    ...(reasoningTokens !== undefined ? { reasoningTokens } : {}),
     ...(totalTokens !== undefined ? { totalTokens } : {}),
   };
 }

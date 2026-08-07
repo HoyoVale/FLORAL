@@ -68,7 +68,10 @@ export interface DeepSeekStreamChunk {
   finishReason?: string | undefined;
   usage?: {
     promptTokens?: number | undefined;
+    promptCacheHitTokens?: number | undefined;
+    promptCacheMissTokens?: number | undefined;
     completionTokens?: number | undefined;
+    reasoningTokens?: number | undefined;
     totalTokens?: number | undefined;
   } | undefined;
 }

@@ -219,6 +219,10 @@ export function renderConfigurationAuthority(
     `config.codex.native.web_search=${authority.effective.codex.native.web_search}`,
     `config.runtime.adoption.codex=${authority.effective.runtime.adoption.codex.mode}`,
     `config.runtime.adoption.qq_sdk=${authority.effective.runtime.adoption.qq_sdk.mode}`,
+    `config.runtime.cost_guard.enabled=${String(authority.effective.runtime.cost_guard.enabled)}`,
+    `config.runtime.cost_guard.max_requests_per_hour=${String(authority.effective.runtime.cost_guard.max_requests_per_hour)}`,
+    `config.runtime.cost_guard.max_tokens_per_day=${String(authority.effective.runtime.cost_guard.max_tokens_per_day)}`,
+    `config.runtime.cost_guard.max_cost_cny_per_day=${String(authority.effective.runtime.cost_guard.max_cost_cny_per_day)}`,
     `config.deepseek.model=${authority.effective.deepseek.model}`,
     `config.deepseek.reasoning_effort=${authority.effective.deepseek.reasoning_effort}`,
     `config.search.safe_search=${String(authority.effective.search.settings.safe_search)}`,
@@ -334,6 +338,21 @@ function validateCrossFieldRules(
 ): void {
   if (config.deepseek.retry_max_delay_ms < config.deepseek.retry_base_delay_ms) {
     throw new Error("deepseek.retry_max_delay_ms must be greater than or equal to retry_base_delay_ms");
+  }
+  if (config.runtime.cost_guard.max_requests_per_hour < config.runtime.cost_guard.max_requests_per_minute) {
+    throw new Error("runtime.cost_guard.max_requests_per_hour must be greater than or equal to max_requests_per_minute");
+  }
+  if (config.runtime.cost_guard.max_requests_per_day < config.runtime.cost_guard.max_requests_per_hour) {
+    throw new Error("runtime.cost_guard.max_requests_per_day must be greater than or equal to max_requests_per_hour");
+  }
+  if (config.runtime.cost_guard.max_tokens_per_day < config.runtime.cost_guard.max_tokens_per_hour) {
+    throw new Error("runtime.cost_guard.max_tokens_per_day must be greater than or equal to max_tokens_per_hour");
+  }
+  if (config.runtime.cost_guard.max_cost_cny_per_day < config.runtime.cost_guard.max_cost_cny_per_hour) {
+    throw new Error("runtime.cost_guard.max_cost_cny_per_day must be greater than or equal to max_cost_cny_per_hour");
+  }
+  if (config.runtime.cost_guard.pricing.model !== config.deepseek.model) {
+    throw new Error("runtime.cost_guard.pricing.model must match deepseek.model so estimated billing cannot silently use the wrong price table");
   }
   if (
     config.search.settings.outgoing_max_request_timeout_ms

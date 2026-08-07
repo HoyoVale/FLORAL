@@ -14,10 +14,12 @@ import { buildCodexDeepSeekConfig } from "../src/agent/codex-deepseek-config.js"
 import { CodexRuntimeError } from "../src/agent/codex-errors.js";
 import { loadEnv } from "../src/config/env.js";
 import { loadProjectEnv } from "../src/config/load-project-env.js";
+import { createProjectDeepSeekCostGuard } from "../src/runtime/cost/cost-guard-factory.js";
 import { checkSearxng } from "../src/search/searxng.js";
 
 loadProjectEnv();
 const env = loadEnv();
+const costGuard = await createProjectDeepSeekCostGuard(process.cwd(), process.env);
 const compatibilityCaptureEnabled = process.argv.includes("--capture-compat");
 const capturedCompatibilityRequests: CapturedCodexResponsesRequest[] = [];
 let compatibilityCaptureError: Error | undefined;
@@ -31,6 +33,7 @@ const forcedToolName = "mcp__floral_search__searxng_web_search";
 const forceMarker = "FLORAL_FORCE_SEARCH_TOOL_PROBE_V1";
 let selectedForcedTool: string | undefined;
 const bridge = createResponsesBridge(env, token, 0, {
+  costGuard,
   thinking: "disabled",
   forceToolNameOnce: forcedToolName,
   forceToolWhenInputContains: forceMarker,

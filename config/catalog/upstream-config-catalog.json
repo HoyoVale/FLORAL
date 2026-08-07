@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "reviewedAt": "2026-08-07",
-  "purpose": "Phase 4.0A-4.0E1 inventory, federation, native-renderer, diagnostics, and shadow-adoption catalog for FLORAL-owned, upstream-managed, passthrough, observed-only, and locked configuration surfaces. Phase 4.0E1 compares unified Codex output while production remains on the legacy generator.",
+  "purpose": "Phase 4 configuration federation plus Phase 5.1 runtime cost-guard inventory for FLORAL-owned, upstream-managed, passthrough, observed-only, and locked configuration surfaces.",
   "classifications": [
     "floral-owned",
     "upstream-managed",
@@ -76,6 +76,27 @@
             "runtime.adoption.mcp.mode",
             "runtime.adoption.searxng.mode"
           ]
+        },
+        {
+          "id": "provider-cost-guard",
+          "classification": "floral-owned",
+          "coverage": "typed-runtime-enforced",
+          "knownKeys": [
+            "runtime.cost_guard.enabled",
+            "runtime.cost_guard.state_path",
+            "runtime.cost_guard.max_requests_per_minute",
+            "runtime.cost_guard.max_requests_per_hour",
+            "runtime.cost_guard.max_requests_per_day",
+            "runtime.cost_guard.max_tokens_per_hour",
+            "runtime.cost_guard.max_tokens_per_day",
+            "runtime.cost_guard.max_cost_cny_per_hour",
+            "runtime.cost_guard.max_cost_cny_per_day",
+            "runtime.cost_guard.duplicate_window_ms",
+            "runtime.cost_guard.duplicate_max_attempts",
+            "runtime.cost_guard.max_unknown_usage_per_hour",
+            "runtime.cost_guard.pricing.*"
+          ],
+          "notes": "Rolling request/token/cost budgets are enforced before DeepSeek provider attempts. Cost estimates use provider-returned cache hit/miss/output usage and operator-reviewed price coefficients."
         }
       ],
       "runtimeIntrospection": [

@@ -26,6 +26,8 @@ import type {
   AgentRunResult,
 } from "../core/types.js";
 import { checkSearxng } from "../search/searxng.js";
+import { createProjectDeepSeekCostGuard } from "../runtime/cost/cost-guard-factory.js";
+import { ProviderActivityGate } from "../runtime/cost/provider-activity-gate.js";
 import { createResponsesBridge } from "./bridge/bridge-factory.js";
 import { CodexAppServerRuntime } from "./codex-app-server.js";
 import { buildCodexDeepSeekConfig } from "./codex-deepseek-config.js";
@@ -75,6 +77,7 @@ export class ManagedCodexDeepSeekRuntime implements AgentRuntime {
   #runtime: AgentRuntime | undefined;
   #bridge: ManagedBridge | undefined;
   #workspace: ManagedWorkspace | undefined;
+  readonly #providerActivityGate = new ProviderActivityGate();
   #starting: Promise<void> | undefined;
   #stopped = false;
 
@@ -103,7 +106,12 @@ export class ManagedCodexDeepSeekRuntime implements AgentRuntime {
     onEvent?: (event: AgentEvent) => void,
   ): Promise<AgentRunResult> {
     const runtime = this.#requireRuntime();
-    return await runtime.run(request, onEvent);
+    const releaseProviderActivity = this.#providerActivityGate.enterAgentRun();
+    try {
+      return await runtime.run(request, onEvent);
+    } finally {
+      releaseProviderActivity();
+    }
   }
 
   async interrupt(threadId: string, turnId?: string): Promise<void> {
@@ -137,7 +145,10 @@ export class ManagedCodexDeepSeekRuntime implements AgentRuntime {
     process.stderr.write("agent.stack.search=ok\n");
 
     const bridge = this.dependencies.createBridge?.(token)
-      ?? createResponsesBridge(this.env, token, 0);
+      ?? createResponsesBridge(this.env, token, 0, {
+        costGuard: await createProjectDeepSeekCostGuard(process.cwd(), process.env),
+        activityGate: this.#providerActivityGate,
+      });
     this.#bridge = bridge;
 
     try {

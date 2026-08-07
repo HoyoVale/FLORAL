@@ -88,6 +88,19 @@ the canonical MCP registry, runtime projection check, and adoption report. See
 `docs/PHASE4_QQ_RUNTIME_OPTIONS_ADOPTION.md` for QQ constructor/session/delivery
 adoption and one-shot legacy recovery.
 
+Phase 5.1 adds a durable fail-closed DeepSeek cost guard after the provider
+request boundary was observed to self-call under runaway agent behavior:
+
+```bash
+corepack pnpm cost:status
+corepack pnpm cost:check
+corepack pnpm cost:json
+```
+
+The guard enforces rolling request/token/estimated-cost budgets and duplicate
+request limits before another provider attempt is allowed. See
+`docs/PHASE5_AGENT_COST_GUARD.md`.
+
 ## Prepare the Mac mini
 
 Copy or clone the project onto the Mac and run:

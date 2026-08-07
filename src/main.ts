@@ -7,6 +7,7 @@ import { loadProjectEnv } from "./config/load-project-env.js";
 import type { AgentRuntime, ChatTransport } from "./core/contracts.js";
 import { acquireProcessLock } from "./runtime/process-lock.js";
 import { createServiceStateWriter } from "./runtime/service-state.js";
+import { readDeepSeekCostGuardSnapshot } from "./runtime/cost/deepseek-cost-guard.js";
 import { GatewayService } from "./service/gateway.js";
 import { SqliteGatewayStore } from "./storage/sqlite.js";
 import { MockQqTransport } from "./transport/qq/mock-qq-transport.js";
@@ -54,6 +55,18 @@ const gateway = new GatewayService(
       ? { ownerPairingCode: env.OWNER_PAIRING_CODE }
       : {}),
     trustMockOwner: env.MOCK_TRUST_OWNER,
+    runtimeStatusLines: async () => {
+      const snapshot = await readDeepSeekCostGuardSnapshot(
+        repositoryRoot,
+        authority.effective.runtime.cost_guard,
+      );
+      return [
+        `cost_guard=${snapshot.blockedReason ? `blocked:${snapshot.blockedReason}` : "ready"}`,
+        `cost_24h=¥${snapshot.estimatedCostCny.day.toFixed(3)}/${authority.effective.runtime.cost_guard.max_cost_cny_per_day.toFixed(2)}`,
+        `tokens_24h=${String(snapshot.tokens.day)}/${String(authority.effective.runtime.cost_guard.max_tokens_per_day)}`,
+        `requests_hour=${String(snapshot.requests.hour)}/${String(authority.effective.runtime.cost_guard.max_requests_per_hour)}`,
+      ];
+    },
   },
 );
 

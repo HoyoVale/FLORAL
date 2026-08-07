@@ -2,11 +2,13 @@ import { randomBytes } from "node:crypto";
 import { createResponsesBridge } from "../src/agent/bridge/bridge-factory.js";
 import { loadEnv } from "../src/config/env.js";
 import { loadProjectEnv } from "../src/config/load-project-env.js";
+import { createProjectDeepSeekCostGuard } from "../src/runtime/cost/cost-guard-factory.js";
 
 loadProjectEnv();
 const env = loadEnv();
+const costGuard = await createProjectDeepSeekCostGuard(process.cwd(), process.env);
 const token = randomBytes(32).toString("hex");
-const bridge = createResponsesBridge(env, token, 0);
+const bridge = createResponsesBridge(env, token, 0, { costGuard });
 const address = await bridge.start();
 
 console.log("probe.bridge=floral-responses-bridge");

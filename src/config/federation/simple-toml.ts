@@ -131,6 +131,14 @@ function parseTomlValue(value: string, lineNumber: number): unknown {
     return parsed;
   }
 
+  if (/^-?(?:0|[1-9][0-9]*)\.[0-9]+$/u.test(value)) {
+    const parsed = Number(value);
+    if (!Number.isFinite(parsed)) {
+      throw new Error(`FLORAL TOML float is outside the finite range at line ${String(lineNumber)}`);
+    }
+    return parsed;
+  }
+
   if (value.startsWith("[") && value.endsWith("]")) {
     const inner = value.slice(1, -1).trim();
     if (inner === "") return [];

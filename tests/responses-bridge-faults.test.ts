@@ -1,7 +1,12 @@
+import { mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { ResponsesBridgeServer } from "../src/agent/bridge/responses-bridge-server.js";
+import { DeepSeekCostGuard, type DeepSeekCostGuardPolicy } from "../src/runtime/cost/deepseek-cost-guard.js";
 
 const bridges: ResponsesBridgeServer[] = [];
+const roots: string[] = [];
 
 afterEach(async () => {
   await Promise.all(bridges.splice(0).map(async (bridge) => {
@@ -11,6 +16,7 @@ afterEach(async () => {
       // A test may already have stopped the bridge.
     }
   }));
+  await Promise.all(roots.splice(0).map((root) => rm(root, { recursive: true, force: true })));
 });
 
 describe("Responses bridge fault injection", () => {
@@ -32,6 +38,32 @@ describe("Responses bridge fault injection", () => {
       retry: { maxAttempts: 2, totalRetries: 1 },
     });
     expect(bridge).toBeDefined();
+  });
+
+  it("counts a failed provider attempt before retry so the cost guard can stop the retry locally", async () => {
+    const root = await mkdtemp(join(tmpdir(), "floral-bridge-cost-"));
+    roots.push(root);
+    const costGuard = new DeepSeekCostGuard({
+      repositoryRoot: root,
+      policy: costPolicy({ max_requests_per_minute: 1 }),
+    });
+    let attempts = 0;
+    const { baseUrl } = await startBridge(async () => {
+      attempts += 1;
+      throw new Error("connection reset before headers");
+    }, costGuard);
+
+    const response = await requestBridge(baseUrl, "retry must be guarded");
+    expect(response.status).toBe(429);
+    await expect(response.json()).resolves.toMatchObject({
+      error: {
+        type: "provider_error",
+        kind: "cost_limit",
+        retryable: false,
+      },
+    });
+    expect(attempts).toBe(1);
+    expect((await costGuard.snapshot()).requests.minute).toBe(1);
   });
 
   it("retries one pre-stream rate limit and then succeeds", async () => {
@@ -190,7 +222,10 @@ describe("Responses bridge fault injection", () => {
   });
 });
 
-async function startBridge(fetchImpl: typeof fetch): Promise<{
+async function startBridge(
+  fetchImpl: typeof fetch,
+  costGuard?: DeepSeekCostGuard,
+): Promise<{
   bridge: ResponsesBridgeServer;
   baseUrl: string;
 }> {
@@ -204,6 +239,7 @@ async function startBridge(fetchImpl: typeof fetch): Promise<{
       maxQueuedRequests: 1,
       queueTimeoutMs: 500,
     },
+    ...(costGuard ? { costGuard } : {}),
     deepSeek: {
       apiKey: "deepseek-test-key",
       baseUrl: "https://deepseek.invalid",
@@ -259,4 +295,28 @@ function successSse(text: string): Response {
     status: 200,
     headers: { "content-type": "text/event-stream" },
   });
+}
+
+function costPolicy(overrides: Partial<DeepSeekCostGuardPolicy> = {}): DeepSeekCostGuardPolicy {
+  return {
+    enabled: true,
+    state_path: "./data/cost-guard/deepseek.json",
+    max_requests_per_minute: 20,
+    max_requests_per_hour: 120,
+    max_requests_per_day: 1_000,
+    max_tokens_per_hour: 5_000_000,
+    max_tokens_per_day: 20_000_000,
+    max_cost_cny_per_hour: 2,
+    max_cost_cny_per_day: 10,
+    duplicate_window_ms: 300_000,
+    duplicate_max_attempts: 4,
+    max_unknown_usage_per_hour: 8,
+    pricing: {
+      model: "deepseek-v4-flash",
+      input_cache_hit_cny_per_million: 0.02,
+      input_cache_miss_cny_per_million: 1,
+      output_cny_per_million: 2,
+    },
+    ...overrides,
+  };
 }

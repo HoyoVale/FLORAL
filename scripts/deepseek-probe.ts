@@ -2,6 +2,7 @@ import { DeepSeekClient } from "../src/agent/provider/deepseek-client.js";
 import { ModelProviderError } from "../src/agent/provider/provider-errors.js";
 import { loadEnv } from "../src/config/env.js";
 import { loadProjectEnv } from "../src/config/load-project-env.js";
+import { createProjectDeepSeekCostGuard } from "../src/runtime/cost/cost-guard-factory.js";
 
 loadProjectEnv();
 const env = loadEnv();
@@ -28,17 +29,31 @@ if (!env.DEEPSEEK_API_KEY) {
     reasoningEffort: env.DEEPSEEK_REASONING_EFFORT,
   });
 
+  const completionRequest = {
+    messages: [
+      {
+        role: "system" as const,
+        content: "You are a connectivity probe. Follow the user's output constraint exactly.",
+      },
+      { role: "user" as const, content: "Reply with exactly: FLORAL_DEEPSEEK_OK" },
+    ],
+    maxTokens: 64,
+  };
+  const costGuard = await createProjectDeepSeekCostGuard(process.cwd(), process.env);
+  let lease: Awaited<ReturnType<typeof costGuard.beginAttempt>> | undefined;
+
   try {
-    const result = await client.complete({
-      messages: [
-        {
-          role: "system",
-          content: "You are a connectivity probe. Follow the user's output constraint exactly.",
-        },
-        { role: "user", content: "Reply with exactly: FLORAL_DEEPSEEK_OK" },
-      ],
-      maxTokens: 64,
+    lease = await costGuard.beginAttempt({
+      model: env.DEEPSEEK_MODEL,
+      messages: completionRequest.messages,
+      tools: [],
+      toolMap: new Map(),
+      maxTokens: completionRequest.maxTokens,
+      parallelToolCalls: false,
     });
+    const result = await client.complete(completionRequest);
+    await costGuard.completeAttempt(lease, result.usage, "completed");
+    lease = undefined;
 
     console.log(`probe.response_model=${result.model}`);
     console.log(`probe.finish_reason=${result.finishReason ?? "<none>"}`);
@@ -51,6 +66,9 @@ if (!env.DEEPSEEK_API_KEY) {
       console.log("probe.result=ok");
     }
   } catch (error) {
+    if (lease) {
+      await costGuard.completeAttempt(lease, undefined, "failed").catch(() => undefined);
+    }
     const wrapped = error instanceof ModelProviderError
       ? error
       : new ModelProviderError({

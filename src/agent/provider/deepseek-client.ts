@@ -169,7 +169,11 @@ function parseUsage(value: unknown): ProviderUsage | undefined {
   if (!usage) return undefined;
 
   const promptTokens = readNumber(usage.prompt_tokens);
+  const promptCacheHitTokens = readNumber(usage.prompt_cache_hit_tokens);
+  const promptCacheMissTokens = readNumber(usage.prompt_cache_miss_tokens);
   const completionTokens = readNumber(usage.completion_tokens);
+  const completionDetails = asRecord(usage.completion_tokens_details);
+  const reasoningTokens = readNumber(completionDetails?.reasoning_tokens);
   const totalTokens = readNumber(usage.total_tokens);
 
   if (
@@ -182,7 +186,10 @@ function parseUsage(value: unknown): ProviderUsage | undefined {
 
   return {
     ...(promptTokens !== undefined ? { promptTokens } : {}),
+    ...(promptCacheHitTokens !== undefined ? { promptCacheHitTokens } : {}),
+    ...(promptCacheMissTokens !== undefined ? { promptCacheMissTokens } : {}),
     ...(completionTokens !== undefined ? { completionTokens } : {}),
+    ...(reasoningTokens !== undefined ? { reasoningTokens } : {}),
     ...(totalTokens !== undefined ? { totalTokens } : {}),
   };
 }

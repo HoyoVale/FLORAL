@@ -225,6 +225,10 @@ describe("GatewayService identity and commands", () => {
     const gateway = new GatewayService(transport, agent, store, {
       cwd: ".",
       trustMockOwner: true,
+      runtimeStatusLines: async () => [
+        "cost_guard=ready",
+        "cost_24h=¥0.100/10.00",
+      ],
     });
     await gateway.start();
 
@@ -239,6 +243,8 @@ describe("GatewayService identity and commands", () => {
     const status = transport.sent.at(-1)?.text ?? "";
     expect(status).toContain("thread=active");
     expect(status).toContain("run=idle");
+    expect(status).toContain("cost_guard=ready");
+    expect(status).toContain("cost_24h=¥0.100/10.00");
     expect(status).not.toContain("thread-1");
 
     await transport.receive(incoming({ id: "c-3", text: "/new", ...base }));

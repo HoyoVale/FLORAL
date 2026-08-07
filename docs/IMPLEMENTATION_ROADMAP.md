@@ -205,14 +205,42 @@
 - retry exactly once with established legacy options after unified startup/report failure;
 - fold QQ runtime adoption into the global configuration cutover gate.
 
-## Phase 4 — macOS GUI
+### Phase 4.0E5 — SearXNG runtime preparation adoption (deferred until Phase 5.1)
 
-- Peekaboo MCP health and required-tool checks
-- screenshot and application-control smoke tests
-- per-tool authorization proxy or Codex approval mapping
-- evidence artifacts for each GUI E2E run
+- move container preparation and effective `settings.yml` installation behind the unified authority;
+- verify the pinned image digest before startup;
+- capture the bounded `/config` engine/plugin observation as an adoption report;
+- preserve a rollback path to the checked-in infrastructure templates;
+- resume this migration only after the provider cost guard has passed idle and live-message validation.
 
-## Phase 5 — Better Auth and web administration
+## Phase 5 — agent safety and cost control
+
+### Phase 5.1 — DeepSeek cost guard and runaway protection
+
+- meter every provider attempt before external I/O;
+- persist rolling request, token, and estimated-CNY budgets across restarts;
+- fingerprint translated provider requests without persisting prompt contents;
+- block duplicate loops and excessive unknown-usage failures locally;
+- capture DeepSeek cache-hit/cache-miss/reasoning usage;
+- expose local CLI and QQ `/status` budget visibility;
+- keep provider retry logic unable to bypass the guard.
+
+### Phase 5.2 — authorization and approval authority
+
+- bind capability checks to actual tool execution;
+- add owner-scoped one-shot QQ approvals;
+- add expiry, requester/session binding, and restart invalidation;
+- require local confirmation for system-administration operations.
+
+## Phase 6 — macOS GUI and visual MCP
+
+- MiMo-backed read-only visual analysis;
+- Peekaboo MCP health and required-tool checks;
+- screenshot and application-control smoke tests;
+- per-tool authorization proxy or Codex approval mapping;
+- evidence artifacts for each GUI E2E run.
+
+## Phase 7 — Better Auth and web administration
 
 - account/session endpoints
 - QQ identity linking
@@ -220,7 +248,7 @@
 - approval and audit dashboard
 - passkeys/2FA for owner administration
 
-## Phase 6 — remaining service hardening
+## Phase 8 — remaining service hardening
 
 - encrypted secret handling beyond owner-only local `.env`
 - backup/restore and incident lockout

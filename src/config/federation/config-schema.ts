@@ -3,6 +3,7 @@ import { z } from "zod";
 const modeSchema = z.enum(["mock", "real"]);
 const positiveInteger = z.number().int().positive();
 const nonNegativeInteger = z.number().int().nonnegative();
+const positiveNumber = z.number().positive();
 const boundedPort = z.number().int().min(0).max(65_535);
 const strictStringArray = z.array(z.string().trim().min(1));
 
@@ -130,6 +131,26 @@ export const requestedConfigSchema = z.object({
       }).strict(),
       qq_sdk: z.object({
         mode: z.enum(["legacy", "unified"]),
+      }).strict(),
+    }).strict(),
+    cost_guard: z.object({
+      enabled: z.boolean(),
+      state_path: z.string().trim().min(1),
+      max_requests_per_minute: positiveInteger,
+      max_requests_per_hour: positiveInteger,
+      max_requests_per_day: positiveInteger,
+      max_tokens_per_hour: positiveInteger,
+      max_tokens_per_day: positiveInteger,
+      max_cost_cny_per_hour: positiveNumber,
+      max_cost_cny_per_day: positiveNumber,
+      duplicate_window_ms: positiveInteger,
+      duplicate_max_attempts: positiveInteger,
+      max_unknown_usage_per_hour: positiveInteger,
+      pricing: z.object({
+        model: z.string().trim().min(1),
+        input_cache_hit_cny_per_million: positiveNumber,
+        input_cache_miss_cny_per_million: positiveNumber,
+        output_cny_per_million: positiveNumber,
       }).strict(),
     }).strict(),
   }).strict(),
@@ -291,6 +312,26 @@ export interface RequestedConfig {
         mode: "legacy" | "unified";
       };
     };
+    cost_guard: {
+      enabled: boolean;
+      state_path: string;
+      max_requests_per_minute: number;
+      max_requests_per_hour: number;
+      max_requests_per_day: number;
+      max_tokens_per_hour: number;
+      max_tokens_per_day: number;
+      max_cost_cny_per_hour: number;
+      max_cost_cny_per_day: number;
+      duplicate_window_ms: number;
+      duplicate_max_attempts: number;
+      max_unknown_usage_per_hour: number;
+      pricing: {
+        model: string;
+        input_cache_hit_cny_per_million: number;
+        input_cache_miss_cny_per_million: number;
+        output_cny_per_million: number;
+      };
+    };
   };
   macos: { mode: "mock" | "real"; peekaboo_command: string };
   mcp: {
@@ -445,6 +486,26 @@ export const DEFAULT_REQUESTED_CONFIG: RequestedConfig = {
       },
       qq_sdk: {
         mode: "unified",
+      },
+    },
+    cost_guard: {
+      enabled: true,
+      state_path: "./data/cost-guard/deepseek.json",
+      max_requests_per_minute: 20,
+      max_requests_per_hour: 120,
+      max_requests_per_day: 1_000,
+      max_tokens_per_hour: 5_000_000,
+      max_tokens_per_day: 20_000_000,
+      max_cost_cny_per_hour: 2,
+      max_cost_cny_per_day: 10,
+      duplicate_window_ms: 300_000,
+      duplicate_max_attempts: 4,
+      max_unknown_usage_per_hour: 8,
+      pricing: {
+        model: "deepseek-v4-flash",
+        input_cache_hit_cny_per_million: 0.02,
+        input_cache_miss_cny_per_million: 1,
+        output_cny_per_million: 2,
       },
     },
   },

@@ -102,4 +102,37 @@ describe("DeepSeek streaming protocol", () => {
       retryAfterMs: 2_000,
     });
   });
+  it("captures DeepSeek cache and reasoning usage needed for billing guards", async () => {
+    const stream = streamDeepSeekChat(
+      request,
+      options(async () => sse(
+        `data: ${JSON.stringify({
+          model: "deepseek-v4-flash",
+          choices: [],
+          usage: {
+            prompt_tokens: 100,
+            prompt_cache_hit_tokens: 80,
+            prompt_cache_miss_tokens: 20,
+            completion_tokens: 40,
+            completion_tokens_details: { reasoning_tokens: 30 },
+            total_tokens: 140,
+          },
+        })}\n\ndata: [DONE]\n\n`,
+      )),
+    );
+    await expect(stream.next()).resolves.toMatchObject({
+      done: false,
+      value: {
+        usage: {
+          promptTokens: 100,
+          promptCacheHitTokens: 80,
+          promptCacheMissTokens: 20,
+          completionTokens: 40,
+          reasoningTokens: 30,
+          totalTokens: 140,
+        },
+      },
+    });
+  });
+
 });

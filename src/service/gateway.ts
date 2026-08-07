@@ -20,6 +20,7 @@ export interface GatewayOptions {
   model?: string;
   ownerPairingCode?: string;
   trustMockOwner?: boolean;
+  runtimeStatusLines?: (() => Promise<string[]>) | undefined;
 }
 
 interface ActiveRun {
@@ -231,6 +232,9 @@ export class GatewayService {
           conversationId: resolved.conversationId,
           eventType: "command.status",
         });
+        const runtimeLines = this.options.runtimeStatusLines
+          ? await this.options.runtimeStatusLines().catch(() => ["cost_guard=error"])
+          : [];
         await this.#send(
           message.identity.conversationId,
           [
@@ -240,6 +244,7 @@ export class GatewayService {
             `role=${resolved.role}`,
             `thread=${threadId ? "active" : "none"}`,
             `run=${active ? "active" : "idle"}`,
+            ...runtimeLines,
           ].join("\n"),
         );
         return;

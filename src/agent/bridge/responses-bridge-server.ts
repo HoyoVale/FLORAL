@@ -12,7 +12,9 @@ import {
   BridgeCapacityError,
   BridgeConcurrencyGate,
 } from "./concurrency-gate.js";
-import type { DeepSeekStreamChunk } from "./bridge-types.js";
+import type { DeepSeekStreamChunk, TranslatedDeepSeekRequest } from "./bridge-types.js";
+import type { DeepSeekCostGuard } from "../../runtime/cost/deepseek-cost-guard.js";
+import type { ProviderActivityGate } from "../../runtime/cost/provider-activity-gate.js";
 import { streamDeepSeekChat } from "./deepseek-stream.js";
 import {
   type PreStreamRetryEvent,
@@ -38,6 +40,8 @@ export interface ResponsesBridgeServerOptions {
     maxQueuedRequests: number;
     queueTimeoutMs: number;
   } | undefined;
+  costGuard?: DeepSeekCostGuard | undefined;
+  activityGate?: ProviderActivityGate | undefined;
   compatibilityCapture?: {
     onRequest: (capture: CapturedCodexResponsesRequest) => void;
     onError?: ((error: Error) => void) | undefined;
@@ -197,6 +201,9 @@ export class ResponsesBridgeServer {
     setSecurityHeaders(response);
 
     if (request.method === "GET" && request.url === "/health") {
+      const costGuard = this.#options.costGuard
+        ? await this.#options.costGuard.snapshot().catch(() => undefined)
+        : undefined;
       writeJson(response, 200, {
         ok: !this.#stopping,
         service: "floral-responses-bridge",
@@ -206,6 +213,13 @@ export class ResponsesBridgeServer {
           maxAttempts: this.#retryOptions().maxAttempts,
           totalRetries: this.#retryCount,
         },
+        ...(costGuard ? { costGuard: {
+          enabled: costGuard.enabled,
+          requestsHour: costGuard.requests.hour,
+          tokensHour: costGuard.tokens.hour,
+          estimatedCostCnyHour: costGuard.estimatedCostCny.hour,
+          blockedReason: costGuard.blockedReason ?? null,
+        } } : {}),
       });
       return;
     }
@@ -287,18 +301,21 @@ export class ResponsesBridgeServer {
       );
 
       const retryOptions = this.#retryOptions();
+      const streamOptions = {
+        apiKey: this.#options.deepSeek.apiKey,
+        baseUrl: this.#options.deepSeek.baseUrl,
+        requestTimeoutMs: this.#options.deepSeek.requestTimeoutMs,
+        thinking: this.#options.deepSeek.thinking,
+        reasoningEffort: this.#options.deepSeek.reasoningEffort,
+        ...(forcedToolName ? { forcedToolName } : {}),
+        fetchImpl: this.#options.deepSeek.fetchImpl,
+      };
       const stream = streamWithPreStreamRetry(
-        () => streamDeepSeekChat(
+        () => guardedDeepSeekStream(
           translated,
-          {
-            apiKey: this.#options.deepSeek.apiKey,
-            baseUrl: this.#options.deepSeek.baseUrl,
-            requestTimeoutMs: this.#options.deepSeek.requestTimeoutMs,
-            thinking: this.#options.deepSeek.thinking,
-            reasoningEffort: this.#options.deepSeek.reasoningEffort,
-            ...(forcedToolName ? { forcedToolName } : {}),
-            fetchImpl: this.#options.deepSeek.fetchImpl,
-          },
+          streamOptions,
+          this.#options.costGuard,
+          this.#options.activityGate,
           requestController.signal,
         ),
         {
@@ -409,6 +426,42 @@ export class ResponsesBridgeServer {
   }
 }
 
+async function* guardedDeepSeekStream(
+  request: TranslatedDeepSeekRequest,
+  options: Parameters<typeof streamDeepSeekChat>[1],
+  costGuard: DeepSeekCostGuard | undefined,
+  activityGate: ProviderActivityGate | undefined,
+  signal?: AbortSignal,
+): AsyncGenerator<DeepSeekStreamChunk> {
+  activityGate?.assertProviderRequestAllowed();
+  if (!costGuard) {
+    yield* streamDeepSeekChat(request, options, signal);
+    return;
+  }
+
+  const lease = await costGuard.beginAttempt(request);
+  let usage: DeepSeekStreamChunk["usage"];
+  let status: "completed" | "failed" | "cancelled" = "failed";
+  try {
+    for await (const chunk of streamDeepSeekChat(request, options, signal)) {
+      if (chunk.usage) usage = chunk.usage;
+      yield chunk;
+    }
+    status = "completed";
+  } catch (error) {
+    if (signal?.aborted || (error instanceof ModelProviderError && error.kind === "cancelled")) {
+      status = "cancelled";
+    }
+    throw error;
+  } finally {
+    await costGuard.completeAttempt(lease, usage, status).catch((error) => {
+      process.stderr.write(
+        `bridge.cost_guard.state=error:${error instanceof Error ? error.name : "Error"}\n`,
+      );
+    });
+  }
+}
+
 function normalizeProviderError(error: unknown): ModelProviderError {
   if (error instanceof ModelProviderError) return error;
   return new ModelProviderError({
@@ -452,6 +505,7 @@ function writeProviderJsonError(
 function providerHttpStatus(error: ModelProviderError): number {
   switch (error.kind) {
     case "rate_limit":
+    case "cost_limit":
       return 429;
     case "timeout":
       return 504;

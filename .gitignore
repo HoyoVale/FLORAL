@@ -21,3 +21,5 @@ data/config/effective/
 data/config/native/
 data/config/diagnostics/
 data/config/adoption/
+
+data/cost-guard/

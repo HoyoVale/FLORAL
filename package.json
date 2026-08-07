@@ -78,7 +78,10 @@
     "config:mcp-adoption:check": "tsx scripts/mcp-registry-adoption.ts check",
     "config:qq-adoption": "tsx scripts/qq-runtime-adoption.ts show",
     "config:qq-adoption:json": "tsx scripts/qq-runtime-adoption.ts json",
-    "config:qq-adoption:check": "tsx scripts/qq-runtime-adoption.ts check"
+    "config:qq-adoption:check": "tsx scripts/qq-runtime-adoption.ts check",
+    "cost:status": "tsx scripts/cost-guard.ts show",
+    "cost:json": "tsx scripts/cost-guard.ts json",
+    "cost:check": "tsx scripts/cost-guard.ts check"
   },
   "dependencies": {
     "@tencent-connect/qqbot-nodejs": "1.0.4",

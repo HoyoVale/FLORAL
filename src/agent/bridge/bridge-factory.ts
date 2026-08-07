@@ -1,6 +1,8 @@
 import { ResponsesBridgeServer } from "./responses-bridge-server.js";
 import type { AppEnv } from "../../config/env.js";
 import type { CapturedCodexResponsesRequest } from "./responses-compat.js";
+import type { DeepSeekCostGuard } from "../../runtime/cost/deepseek-cost-guard.js";
+import type { ProviderActivityGate } from "../../runtime/cost/provider-activity-gate.js";
 
 export interface ResponsesBridgeOverrides {
   thinking?: "enabled" | "disabled" | undefined;
@@ -11,6 +13,8 @@ export interface ResponsesBridgeOverrides {
     (capture: CapturedCodexResponsesRequest) => void
   ) | undefined;
   onCompatibilityCaptureError?: ((error: Error) => void) | undefined;
+  costGuard?: DeepSeekCostGuard | undefined;
+  activityGate?: ProviderActivityGate | undefined;
 }
 
 export function createResponsesBridge(
@@ -32,6 +36,8 @@ export function createResponsesBridge(
       maxQueuedRequests: env.FLORAL_BRIDGE_MAX_QUEUED_REQUESTS,
       queueTimeoutMs: env.FLORAL_BRIDGE_QUEUE_TIMEOUT_MS,
     },
+    ...(overrides.costGuard ? { costGuard: overrides.costGuard } : {}),
+    ...(overrides.activityGate ? { activityGate: overrides.activityGate } : {}),
     ...(overrides.onCompatibilityRequest
       ? {
           compatibilityCapture: {

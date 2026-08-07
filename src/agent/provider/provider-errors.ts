@@ -3,6 +3,7 @@ export type ProviderErrorKind =
   | "authentication"
   | "payment_required"
   | "rate_limit"
+  | "cost_limit"
   | "bad_request"
   | "timeout"
   | "network"

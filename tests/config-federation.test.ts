@@ -50,6 +50,8 @@ describe("configuration federation authority", () => {
     expect(authority.effective.codex.mode).toBe("real");
     expect(authority.effective.deepseek.reasoning_effort).toBe("max");
     expect(authority.effective.runtime.adoption.codex.mode).toBe("unified");
+    expect(authority.effective.runtime.cost_guard.enabled).toBe(true);
+    expect(authority.effective.runtime.cost_guard.pricing.input_cache_hit_cny_per_million).toBe(0.02);
     expect(authority.effective.codex.args).toEqual(["app-server", "--flag", "two words"]);
     expect(authority.provenance["codex.mode"]).toMatchObject({
       source: "environment",
@@ -116,15 +118,17 @@ describe("configuration federation authority", () => {
       [codex]
       args = ["app-server", "--flag"] # comment
       enabled = true
+      price = 0.02
     `);
     expect(parsed.value).toEqual({
       schema_version: 1,
-      codex: { args: ["app-server", "--flag"], enabled: true },
+      codex: { args: ["app-server", "--flag"], enabled: true, price: 0.02 },
     });
     expect(parsed.explicitPaths).toEqual(new Set([
       "schema_version",
       "codex.args",
       "codex.enabled",
+      "codex.price",
     ]));
     expect(splitCommandArguments('app-server --flag "two words"')).toEqual([
       "app-server",

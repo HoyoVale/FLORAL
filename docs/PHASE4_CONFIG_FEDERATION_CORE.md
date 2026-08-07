@@ -76,7 +76,7 @@ parser deliberately supports only the subset required by `config/floral.toml`:
 - bare keys;
 - double-quoted strings;
 - booleans;
-- finite integers;
+- finite integers and fixed-point decimal numbers;
 - scalar arrays.
 
 It is not used to parse or render Codex, SearXNG, or other upstream native
