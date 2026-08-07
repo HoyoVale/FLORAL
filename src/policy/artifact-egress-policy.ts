@@ -232,7 +232,9 @@ function isInside(root: string, candidate: string): boolean {
     && !isAbsolute(rel);
 }
 
-function deny(reason: ArtifactEgressDenyReason): ArtifactEgressDecision {
+function deny(
+  reason: ArtifactEgressDenyReason,
+): Extract<ArtifactEgressDecision, { status: "deny" }> {
   return { status: "deny", reason };
 }
 
