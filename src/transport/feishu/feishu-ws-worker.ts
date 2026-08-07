@@ -9,8 +9,8 @@ import type {
   FeishuWorkerMessage,
 } from "./feishu-worker-protocol.js";
 
+if (!parentPort) throw new Error("Feishu WS worker requires a parent port");
 const port = parentPort;
-if (!port) throw new Error("Feishu WS worker requires a parent port");
 
 const config = workerData as Partial<FeishuWorkerConfig>;
 const appId = requireString(config.appId, "appId");

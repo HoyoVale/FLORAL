@@ -10,6 +10,7 @@ class FakeWorker implements FeishuWorkerLike {
   readonly #messageListeners: Array<(message: FeishuWorkerMessage) => void> = [];
   readonly #errorListeners: Array<(error: Error) => void> = [];
   readonly #exitListeners: Array<(code: number) => void> = [];
+  readonly #messageListenerReady = deferred<void>();
   terminated = false;
 
   on(event: "message", listener: (message: FeishuWorkerMessage) => void): this;
@@ -23,6 +24,7 @@ class FakeWorker implements FeishuWorkerLike {
   ): this {
     if (event === "message") {
       this.#messageListeners.push(listener as (message: FeishuWorkerMessage) => void);
+      this.#messageListenerReady.resolve(undefined);
     } else if (event === "error") {
       this.#errorListeners.push(listener as (error: Error) => void);
     } else {
@@ -34,6 +36,10 @@ class FakeWorker implements FeishuWorkerLike {
   async terminate(): Promise<number> {
     this.terminated = true;
     return 0;
+  }
+
+  async waitUntilMessageListenerRegistered(): Promise<void> {
+    await this.#messageListenerReady.promise;
   }
 
   message(value: FeishuWorkerMessage): void {
@@ -83,6 +89,7 @@ async function startTransport(
   onMessage: Parameters<FeishuTransport["start"]>[0] = async () => undefined,
 ): Promise<void> {
   const starting = transport.start(onMessage);
+  await worker.waitUntilMessageListenerRegistered();
   worker.message({ type: "started" });
   await starting;
 }
@@ -137,12 +144,15 @@ describe("FeishuTransport", () => {
     const worker = new FakeWorker();
     const requests: unknown[] = [];
     const gates = [deferred<void>(), deferred<void>()];
+    const requestStarted = [deferred<void>(), deferred<void>()];
     let call = 0;
     const transport = new FeishuTransport(options({
       worker,
       create: async (request) => {
+        const index = call++;
         requests.push(request);
-        await gates[call++]?.promise;
+        requestStarted[index]?.resolve(undefined);
+        await gates[index]?.promise;
         return { code: 0 };
       },
     }));
@@ -150,12 +160,12 @@ describe("FeishuTransport", () => {
 
     const first = transport.send({ conversationId: "oc_chat", text: "first" });
     const second = transport.send({ conversationId: "oc_chat", text: "second" });
-    await Promise.resolve();
+    await requestStarted[0]!.promise;
     expect(requests).toHaveLength(1);
 
     gates[0]?.resolve(undefined);
     await first;
-    await Promise.resolve();
+    await requestStarted[1]!.promise;
     expect(requests).toHaveLength(2);
 
     gates[1]?.resolve(undefined);
@@ -190,6 +200,7 @@ describe("FeishuTransport", () => {
     const worker = new FakeWorker();
     const transport = new FeishuTransport(options({ worker }));
     const starting = transport.start(async () => undefined);
+    await worker.waitUntilMessageListenerRegistered();
 
     worker.message({ type: "fatal", errorType: "AuthenticationError" });
 
