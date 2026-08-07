@@ -168,9 +168,35 @@ describe("QqTransport", () => {
     await transport.stop();
   });
 
-  it("uses the SDK-native typing indicator without allocating a separate reply sequence", async () => {
+  it("does not spend QQ API calls on native typing when production presentation disables it", async () => {
     const fake = new FakeBot();
     const transport = createTransport(fake);
+    const starting = transport.start(async () => undefined);
+    await fake.started.promise;
+    fake.emit("ready");
+    await starting;
+
+    await fake.emitAsync("message", {}, inbound({
+      messageId: "typing-disabled-source",
+      senderId: "user",
+      targetId: "conversation",
+      content: "hello",
+    }));
+
+    await transport.setConversationActivity("conversation", "typing");
+
+    expect(fake.typing).toEqual([]);
+    expect(transport.snapshot()).toMatchObject({
+      nativeTypingEnabled: false,
+      typingSignals: 0,
+      activeTypingConversations: 0,
+    });
+    await transport.stop();
+  });
+
+  it("uses the SDK-native typing indicator without allocating a separate reply sequence", async () => {
+    const fake = new FakeBot();
+    const transport = createTransport(fake, { nativeTypingEnabled: true });
     const starting = transport.start(async () => undefined);
     await fake.started.promise;
     fake.emit("ready");
@@ -212,7 +238,7 @@ describe("QqTransport", () => {
   it("treats typing delivery as best effort and preserves final text delivery", async () => {
     const fake = new FakeBot();
     fake.typingError = new Error("typing unavailable");
-    const transport = createTransport(fake);
+    const transport = createTransport(fake, { nativeTypingEnabled: true });
     const starting = transport.start(async () => undefined);
     await fake.started.promise;
     fake.emit("ready");
@@ -401,6 +427,7 @@ function createTransport(
     textChunkCharacters: 1_800,
     maxReplyChunks: 4,
     outboundTimeoutMs: 1_000,
+    nativeTypingEnabled: false,
     sdk: {
       accountIdStrategy: "sha256-app-id",
       sessionPersistence: "file",

@@ -78,6 +78,11 @@ const gateway = new GatewayService(
       ? { ownerPairingCode: env.OWNER_PAIRING_CODE }
       : {}),
     trustMockOwner: env.MOCK_TRUST_OWNER,
+    conversationUx: {
+      visibleActivityFallback: env.QQ_MODE === "real"
+        && authority.effective.qq.presentation.visible_activity_fallback,
+      visibleActivityDelayMs: authority.effective.qq.presentation.visible_activity_delay_ms,
+    },
     authorization: {
       authority: authorizationAuthority,
       approvalTtlMs: authority.effective.runtime.authorization.approval_ttl_ms,

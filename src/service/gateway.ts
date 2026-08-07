@@ -27,6 +27,10 @@ export interface GatewayOptions {
   ownerPairingCode?: string;
   trustMockOwner?: boolean;
   runtimeStatusLines?: (() => Promise<string[]>) | undefined;
+  conversationUx?: {
+    visibleActivityFallback: boolean;
+    visibleActivityDelayMs: number;
+  } | undefined;
   authorization?: {
     authority: AuthorizationAuthority;
     approvalTtlMs: number;
@@ -40,6 +44,10 @@ interface ActiveRun {
   threadId?: string;
   stopRequested: boolean;
   interruptSent: boolean;
+  visibleActivityTimer?: ReturnType<typeof setTimeout> | undefined;
+  visibleActivitySatisfied: boolean;
+  waitingForApproval: boolean;
+  latestToolName?: string | undefined;
 }
 
 export class GatewayService {
@@ -354,6 +362,7 @@ export class GatewayService {
         }
 
         active.stopRequested = true;
+        this.#cancelVisibleActivityFallback(active);
         this.#setConversationActivity(message.identity.conversationId, "idle");
         this.#approvalBroker?.cancelConversation(resolved.conversationId);
         if (active.threadId && !active.interruptSent) {
@@ -391,6 +400,8 @@ export class GatewayService {
     const active: ActiveRun = {
       stopRequested: false,
       interruptSent: false,
+      visibleActivitySatisfied: false,
+      waitingForApproval: false,
     };
     this.#activeRuns.set(resolved.conversationId, active);
 
@@ -401,6 +412,11 @@ export class GatewayService {
       payload: { characterCount: message.text.length },
     });
     this.#setConversationActivity(message.identity.conversationId, "typing");
+    this.#scheduleVisibleActivityFallback(
+      message.identity.conversationId,
+      resolved,
+      active,
+    );
 
     try {
       const threadId = await this.store.getActiveThread(resolved.conversationId);
@@ -412,6 +428,9 @@ export class GatewayService {
           ...(this.options.model ? { model: this.options.model } : {}),
           ...(this.#approvalBroker ? {
             approvalHandler: async (request) => {
+              active.waitingForApproval = true;
+              active.visibleActivitySatisfied = true;
+              this.#cancelVisibleActivityFallback(active);
               this.#setConversationActivity(
                 message.identity.conversationId,
                 "idle",
@@ -425,6 +444,7 @@ export class GatewayService {
                 },
                 request,
               );
+              active.waitingForApproval = false;
               if (
                 !active.stopRequested
                 && this.#activeRuns.get(resolved.conversationId) === active
@@ -448,6 +468,7 @@ export class GatewayService {
         eventType: "agent.run_completed",
         payload: { responseCharacterCount: result.finalText.length },
       });
+      this.#cancelVisibleActivityFallback(active);
       this.#setConversationActivity(message.identity.conversationId, "idle");
       await this.#deliverWithAudit(
         message.identity.conversationId,
@@ -456,6 +477,7 @@ export class GatewayService {
         "agent_reply",
       );
     } catch (error) {
+      this.#cancelVisibleActivityFallback(active);
       this.#setConversationActivity(message.identity.conversationId, "idle");
       process.stderr.write(`${formatSafeAgentFailure(error)}\n`);
       await this.store.appendAudit({
@@ -476,6 +498,7 @@ export class GatewayService {
         "agent_failure",
       );
     } finally {
+      this.#cancelVisibleActivityFallback(active);
       this.#approvalBroker?.cancelConversation(resolved.conversationId);
       if (this.#activeRuns.get(resolved.conversationId) === active) {
         this.#activeRuns.delete(resolved.conversationId);
@@ -497,6 +520,7 @@ export class GatewayService {
     }
 
     if (event.type === "tool.started" || event.type === "tool.completed") {
+      if (event.type === "tool.started") active.latestToolName = event.name;
       void this.store.appendAudit({
         userId: resolved.userId,
         conversationId: resolved.conversationId,
@@ -514,6 +538,65 @@ export class GatewayService {
         payload: { capability: event.capability, kind: event.kind },
       }).catch(() => undefined);
     }
+  }
+
+  #scheduleVisibleActivityFallback(
+    deliveryConversationId: string,
+    resolved: ResolvedGatewayIdentity,
+    active: ActiveRun,
+  ): void {
+    const ux = this.options.conversationUx;
+    if (!ux?.visibleActivityFallback || active.visibleActivitySatisfied) return;
+    this.#cancelVisibleActivityFallback(active);
+
+    const timer = setTimeout(() => {
+      active.visibleActivityTimer = undefined;
+      if (
+        active.stopRequested
+        || active.waitingForApproval
+        || active.visibleActivitySatisfied
+        || this.#activeRuns.get(resolved.conversationId) !== active
+      ) {
+        return;
+      }
+
+      active.visibleActivitySatisfied = true;
+      const progress = visibleActivityProgress(active.latestToolName);
+      void (async () => {
+        try {
+          await this.#send(deliveryConversationId, progress.text);
+          await this.store.appendAudit({
+            userId: resolved.userId,
+            conversationId: resolved.conversationId,
+            eventType: "conversation.visible_activity_sent",
+            payload: { category: progress.category },
+          }).catch(() => undefined);
+        } catch (error) {
+          process.stderr.write(
+            `conversation.visible_activity_error=${safeLogToken(
+              error instanceof Error ? error.name : "Error",
+            )}\n`,
+          );
+          await this.store.appendAudit({
+            userId: resolved.userId,
+            conversationId: resolved.conversationId,
+            eventType: "conversation.visible_activity_failed",
+            payload: {
+              category: progress.category,
+              errorType: error instanceof Error ? error.name : "unknown",
+            },
+          }).catch(() => undefined);
+        }
+      })();
+    }, ux.visibleActivityDelayMs);
+    timer.unref?.();
+    active.visibleActivityTimer = timer;
+  }
+
+  #cancelVisibleActivityFallback(active: ActiveRun): void {
+    if (!active.visibleActivityTimer) return;
+    clearTimeout(active.visibleActivityTimer);
+    active.visibleActivityTimer = undefined;
   }
 
   async #interruptRun(
@@ -581,6 +664,23 @@ export class GatewayService {
   async #send(conversationId: string, text: string): Promise<void> {
     await this.transport.send({ conversationId, text });
   }
+}
+
+function visibleActivityProgress(toolName: string | undefined): {
+  text: string;
+  category: "search" | "reading" | "tool" | "thinking";
+} {
+  const normalized = toolName?.toLowerCase() ?? "";
+  if (/(?:search|searx|web)/u.test(normalized)) {
+    return { text: "正在搜索相关信息…", category: "search" };
+  }
+  if (/(?:read|file|list|grep|find)/u.test(normalized)) {
+    return { text: "正在读取相关资料…", category: "reading" };
+  }
+  if (normalized) {
+    return { text: "正在处理工具结果…", category: "tool" };
+  }
+  return { text: "正在处理，请稍候…", category: "thinking" };
 }
 
 function approvalCommandReply(

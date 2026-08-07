@@ -60,6 +60,9 @@ describe("configuration federation authority", () => {
     expect(authority.effective.runtime.authorization.allow_remote_file_change_approval).toBe(true);
     expect(authority.effective.runtime.authorization.local_confirmation_enabled).toBe(true);
     expect(authority.effective.runtime.authorization.local_approval_ttl_ms).toBe(300_000);
+    expect(authority.effective.qq.presentation.native_typing).toBe(false);
+    expect(authority.effective.qq.presentation.visible_activity_fallback).toBe(true);
+    expect(authority.effective.qq.presentation.visible_activity_delay_ms).toBe(6_000);
     expect(authority.effective.runtime.cost_guard.enabled).toBe(true);
     expect(authority.effective.runtime.cost_guard.pricing.input_cache_hit_cny_per_million).toBe(0.02);
     expect(authority.effective.codex.args).toEqual(["app-server", "--flag", "two words"]);
@@ -91,6 +94,9 @@ describe("configuration federation authority", () => {
     expect(output).toContain("config.runtime.authorization.codex_approvals_reviewer=user");
     expect(output).toContain("config.runtime.authorization.allow_remote_file_change_approval=true");
     expect(output).toContain("config.runtime.authorization.local_confirmation_enabled=true");
+    expect(output).toContain("config.qq.presentation.native_typing=false");
+    expect(output).toContain("config.qq.presentation.visible_activity_fallback=true");
+    expect(output).toContain("config.qq.presentation.visible_activity_delay_ms=6000");
   });
 
   it("rejects locked-field overrides and unknown keys before runtime adoption", async () => {

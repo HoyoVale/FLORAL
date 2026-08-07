@@ -14,6 +14,9 @@ export interface QqRuntimeOptionsContract {
     root: string;
     layout: "qq/account-fingerprint/session.json";
   };
+  presentation: {
+    nativeTyping: boolean;
+  };
   delivery: {
     startupTimeoutMs: number;
     replyTargetTtlMs: number;
@@ -48,6 +51,9 @@ export function buildQqRuntimeOptionsContract(
       root: config.qq.session_dir,
       layout: "qq/account-fingerprint/session.json" as const,
     },
+    presentation: {
+      nativeTyping: config.qq.presentation.native_typing,
+    },
     delivery: {
       startupTimeoutMs: config.qq.startup_timeout_ms,
       replyTargetTtlMs: config.qq.reply_target_ttl_ms,
@@ -79,6 +85,9 @@ export function buildLegacyQqRuntimeOptionsContract(env: AppEnv): QqRuntimeOptio
     session: {
       root: env.QQBOT_SESSION_DIR ?? `${env.DATA_DIR}/qq-session`,
       layout: "qq/account-fingerprint/session.json" as const,
+    },
+    presentation: {
+      nativeTyping: false,
     },
     delivery: {
       startupTimeoutMs: env.QQBOT_STARTUP_TIMEOUT_MS,
@@ -152,6 +161,7 @@ export function createQqTransportOptionsFromContract(input: {
     textChunkCharacters: input.contract.delivery.textChunkCharacters,
     maxReplyChunks: input.contract.delivery.maxReplyChunks,
     outboundTimeoutMs: input.contract.delivery.outboundTimeoutMs,
+    nativeTypingEnabled: input.contract.presentation.nativeTyping,
     sdk: input.contract.sdk,
     ...(input.createBot ? { createBot: input.createBot } : {}),
     ...(input.now ? { now: input.now } : {}),
@@ -179,6 +189,7 @@ export function safeQqRuntimeOptionsJson(
       logger: contract.sdk.logger,
     },
     session: contract.session,
+    presentation: contract.presentation,
     delivery: contract.delivery,
     runtimeFingerprint: contract.runtimeFingerprint,
   };
@@ -207,6 +218,9 @@ export function validateQqRuntimeOptionsContract(
   if (value.session.layout !== "qq/account-fingerprint/session.json") {
     throw new Error("Unsupported QQ session layout");
   }
+  if (typeof value.presentation.nativeTyping !== "boolean") {
+    throw new Error("QQ native typing flag must be boolean");
+  }
   for (const [key, number] of Object.entries(value.delivery)) {
     if (!Number.isInteger(number) || number <= 0) {
       throw new Error(`QQ delivery option ${key} must be a positive integer`);
@@ -221,6 +235,7 @@ export function validateQqRuntimeOptionsContract(
       mode: value.mode,
       sdk: value.sdk,
       session: value.session,
+      presentation: value.presentation,
       delivery: value.delivery,
     })
   ) {

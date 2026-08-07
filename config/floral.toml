@@ -32,6 +32,14 @@ probe_timeout_ms = 120000
 full_chain_timeout_ms = 300000
 reconnect_probe_timeout_ms = 300000
 
+[qq.presentation]
+# Native sendTyping resolves successfully on the current QQ C2C bot/account but
+# is not rendered by the mobile client. Keep the direct probe for diagnostics,
+# disable the invisible production heartbeat, and use one delayed visible status.
+native_typing = false
+visible_activity_fallback = true
+visible_activity_delay_ms = 6000
+
 [qq.sdk]
 # Pinned installed SDK contract; secrets remain environment-only.
 expected_version = "1.0.4"

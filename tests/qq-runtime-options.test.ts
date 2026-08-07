@@ -44,6 +44,7 @@ describe("QQ runtime options authority", () => {
     expect(options.appId).toBe("sensitive-app-id");
     expect(options.appSecret).toBe("sensitive-app-secret");
     expect(options.dataDir).toBe(resolve(repositoryRoot, authority.effective.qq.session_dir));
+    expect(options.nativeTypingEnabled).toBe(false);
     expect(options.sdk).toEqual({
       accountIdStrategy: "sha256-app-id",
       sessionPersistence: "file",
@@ -58,5 +59,6 @@ describe("QQ runtime options authority", () => {
     expect(legacy.expectedVersion).toBe("1.0.4");
     expect(legacy.sdk.tokenPrefetch).toBe("sync");
     expect(legacy.session.layout).toBe("qq/account-fingerprint/session.json");
+    expect(legacy.presentation.nativeTyping).toBe(false);
   });
 });

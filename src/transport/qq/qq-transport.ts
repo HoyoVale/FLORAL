@@ -47,6 +47,7 @@ export interface QqTransportDiagnostics {
   activeTypingConversations: number;
   sequencedConversations: number;
   cachedReplyTargets: number;
+  nativeTypingEnabled: boolean;
   lastErrorType?: string | undefined;
 }
 
@@ -67,6 +68,7 @@ export interface QqTransportOptions {
   textChunkCharacters: number;
   maxReplyChunks: number;
   outboundTimeoutMs: number;
+  nativeTypingEnabled: boolean;
   sdk: QqSdkRuntimePolicy;
   createBot?: (() => QqBotClient | Promise<QqBotClient>) | undefined;
   now?: (() => number) | undefined;
@@ -121,9 +123,11 @@ export class QqTransport implements ChatTransport, ConversationActivityTransport
     activeTypingConversations: 0,
     sequencedConversations: 0,
     cachedReplyTargets: 0,
+    nativeTypingEnabled: false,
   };
 
   constructor(private readonly options: QqTransportOptions) {
+    this.#diagnostics.nativeTypingEnabled = options.nativeTypingEnabled;
     this.#replyTargets = new ReplyTargetCache(
       options.replyTargetTtlMs,
       options.replyTargetCacheEntries,
@@ -313,6 +317,7 @@ export class QqTransport implements ChatTransport, ConversationActivityTransport
       return;
     }
 
+    if (!this.options.nativeTypingEnabled) return;
     if (this.#typingSessions.has(conversationId)) return;
     this.#typingSessions.set(conversationId, {});
     await this.#sendTypingSignal(conversationId);

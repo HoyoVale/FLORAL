@@ -34,6 +34,11 @@ export const requestedConfigSchema = z.object({
     probe_timeout_ms: positiveInteger,
     full_chain_timeout_ms: positiveInteger,
     reconnect_probe_timeout_ms: positiveInteger,
+    presentation: z.object({
+      native_typing: z.boolean(),
+      visible_activity_fallback: z.boolean(),
+      visible_activity_delay_ms: positiveInteger,
+    }).strict(),
     sdk: z.object({
       expected_version: z.string().trim().min(1),
       account_id_strategy: z.literal("sha256-app-id"),
@@ -233,6 +238,11 @@ export interface RequestedConfig {
     probe_timeout_ms: number;
     full_chain_timeout_ms: number;
     reconnect_probe_timeout_ms: number;
+    presentation: {
+      native_typing: boolean;
+      visible_activity_fallback: boolean;
+      visible_activity_delay_ms: number;
+    };
     sdk: {
       expected_version: string;
       account_id_strategy: "sha256-app-id";
@@ -425,6 +435,11 @@ export const DEFAULT_REQUESTED_CONFIG: RequestedConfig = {
     probe_timeout_ms: 120_000,
     full_chain_timeout_ms: 300_000,
     reconnect_probe_timeout_ms: 300_000,
+    presentation: {
+      native_typing: false,
+      visible_activity_fallback: true,
+      visible_activity_delay_ms: 6_000,
+    },
     sdk: {
       expected_version: "1.0.4",
       account_id_strategy: "sha256-app-id",

@@ -112,6 +112,53 @@ Interpretation:
   chase a state the SDK reports as accepted;
 - SDK call rejects: capture the sanitized SDK error and debug the QQ transport layer.
 
-The production transport keeps native typing enabled because it is harmless and may
-render on other clients/accounts. A product-level fallback (delayed, single progress
-message or streaming reply) should be designed separately from native typing support.
+The direct 20-second C2C probe was then run against the production bot/account. Eight
+consecutive `sendTyping(rawReplyTarget)` calls resolved successfully and the passive
+reply succeeded, while mobile QQ rendered no typing state at any point. This freezes
+native typing as a non-visual capability for the current deployment rather than a
+Gateway defect.
+
+## Phase 5.4A-2.4 — Visible activity fallback
+
+Production now disables the invisible native typing heartbeat by configuration while
+retaining `qq:typing:probe` as an isolated diagnostic. Long-running real QQ requests
+receive one delayed visible activity message instead:
+
+- no status message is sent for requests that complete before the delay;
+- after 6 seconds, at most one message is emitted for the run;
+- the message is derived from the latest tool category when available (`search`,
+  `reading`, generic tool work, or model processing);
+- entering an approval wait cancels the timer because the approval card itself is
+  already visible progress;
+- `/stop`, final reply, failure, and shutdown cancel the timer;
+- activity delivery is best-effort and cannot fail the agent run.
+
+The default production presentation contract is:
+
+```toml
+[qq.presentation]
+native_typing = false
+visible_activity_fallback = true
+visible_activity_delay_ms = 6000
+```
+
+Typical behavior is therefore:
+
+```text
+0-6 s     no extra chat noise
+>6 s      正在搜索相关信息…   (or another single contextual status)
+final     normal answer
+```
+
+This is deliberately not model commentary and is never fed back into the Codex or
+DeepSeek conversation history.
+
+
+### 5.4A-2.4 acceptance
+
+1. A fast request that completes within 6 seconds produces no progress bubble.
+2. A longer web-search request produces at most one `正在搜索相关信息…` bubble before the final answer.
+3. A long non-tool request produces at most one generic `正在处理，请稍候…` bubble.
+4. A request that enters approval waiting does not emit an additional progress bubble after the approval prompt appears.
+5. `config:validate` reports `qq.presentation.native_typing=false`, visible fallback enabled, and the configured delay.
+6. The direct `qq:typing:probe` remains available for future QQ SDK/client regression checks.

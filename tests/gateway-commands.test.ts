@@ -143,6 +143,29 @@ class DeferredAgent implements AgentRuntime {
   async stop(): Promise<void> {}
 }
 
+class ToolDeferredAgent implements AgentRuntime {
+  readonly name = "tool-deferred-agent";
+  readonly started = deferred<void>();
+  readonly completion = deferred<AgentRunResult>();
+
+  constructor(private readonly toolName: string) {}
+
+  async start(): Promise<void> {}
+
+  async run(
+    _request: AgentRunRequest,
+    onEvent?: (event: AgentEvent) => void,
+  ): Promise<AgentRunResult> {
+    onEvent?.({ type: "run.started", threadId: "thread-tool-running" });
+    onEvent?.({ type: "tool.started", name: this.toolName });
+    this.started.resolve(undefined);
+    return await this.completion.promise;
+  }
+
+  async interrupt(): Promise<void> {}
+  async stop(): Promise<void> {}
+}
+
 describe("GatewayService identity and commands", () => {
   it("auto-claims the trusted mock owner and persists the active thread", async () => {
     const transport = new TestTransport();
@@ -199,6 +222,77 @@ describe("GatewayService identity and commands", () => {
       { conversationId: "conversation-1", state: "idle" },
     ]);
     expect(transport.sent.at(-1)?.text).toBe("reply:hello");
+    await gateway.stop();
+  });
+
+  it("sends one delayed visible activity fallback for a long search run", async () => {
+    const transport = new TestTransport();
+    const agent = new ToolDeferredAgent("floral_search/searxng_web_search");
+    const store = new MemoryThreadStore();
+    const gateway = new GatewayService(transport, agent, store, {
+      cwd: ".",
+      trustMockOwner: true,
+      conversationUx: {
+        visibleActivityFallback: true,
+        visibleActivityDelayMs: 5,
+      },
+    });
+    await gateway.start();
+
+    const runPromise = transport.receive(incoming({
+      id: "visible-search-1",
+      transport: "mock",
+      text: "search something",
+    }));
+    await agent.started.promise;
+    await sleep(20);
+
+    expect(transport.sent.map((entry) => entry.text)).toEqual([
+      "正在搜索相关信息…",
+    ]);
+
+    agent.completion.resolve({
+      threadId: "thread-tool-running",
+      finalText: "search complete",
+    });
+    await runPromise;
+
+    expect(transport.sent.map((entry) => entry.text)).toEqual([
+      "正在搜索相关信息…",
+      "search complete",
+    ]);
+    expect(store.auditEvents().some((event) =>
+      event.eventType === "conversation.visible_activity_sent"
+      && event.payload?.category === "search"
+    )).toBe(true);
+    await gateway.stop();
+  });
+
+  it("does not add a visible activity message when a run completes before the delay", async () => {
+    const transport = new TestTransport();
+    const gateway = new GatewayService(
+      transport,
+      new TestAgent(),
+      new MemoryThreadStore(),
+      {
+        cwd: ".",
+        trustMockOwner: true,
+        conversationUx: {
+          visibleActivityFallback: true,
+          visibleActivityDelayMs: 50,
+        },
+      },
+    );
+    await gateway.start();
+
+    await transport.receive(incoming({
+      id: "visible-fast-1",
+      transport: "mock",
+      text: "hello",
+    }));
+    await sleep(70);
+
+    expect(transport.sent.map((entry) => entry.text)).toEqual(["reply:hello"]);
     await gateway.stop();
   });
 
@@ -559,6 +653,10 @@ function incoming(options: {
     text: options.text,
     receivedAt: new Date("2026-08-06T10:00:00Z"),
   };
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 function deferred<T>(): {
