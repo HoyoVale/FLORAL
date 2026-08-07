@@ -37,6 +37,7 @@
   },
   "expect": {
     "messageRoles": [
+      "system",
       "user"
     ],
     "deepSeekToolNames": [

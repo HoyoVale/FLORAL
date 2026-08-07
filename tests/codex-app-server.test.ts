@@ -227,6 +227,38 @@ describe("CodexAppServerRuntime", () => {
     }
   });
 
+  it("does not return a pre-tool commentary message when the turn has no final answer", async () => {
+    const runtime = createRuntime("tool-after-commentary-without-final");
+    try {
+      await runtime.start();
+      await expect(runtime.run({
+        text: "search then summarize",
+        cwd: process.cwd(),
+      })).rejects.toMatchObject({
+        name: "CodexRuntimeError",
+        kind: "protocol",
+      });
+    } finally {
+      await runtime.stop();
+    }
+  });
+
+  it("invalidates an unphased pre-tool fallback after later work starts", async () => {
+    const runtime = createRuntime("unphased-message-before-tool-without-final");
+    try {
+      await runtime.start();
+      await expect(runtime.run({
+        text: "inspect then answer",
+        cwd: process.cwd(),
+      })).rejects.toMatchObject({
+        name: "CodexRuntimeError",
+        kind: "protocol",
+      });
+    } finally {
+      await runtime.stop();
+    }
+  });
+
   it("surfaces provider usage limits as a typed error", async () => {
     const runtime = createRuntime("quota");
     try {

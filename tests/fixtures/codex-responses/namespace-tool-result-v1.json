@@ -86,6 +86,7 @@
   },
   "expect": {
     "messageRoles": [
+      "system",
       "assistant",
       "tool"
     ],

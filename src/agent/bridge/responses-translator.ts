@@ -52,8 +52,12 @@ export function translateResponsesRequest(
   const tools = translateTools(request.tools ?? [], toolMap);
   const messages: DeepSeekChatMessage[] = [];
 
-  if (request.instructions?.trim()) {
-    messages.push({ role: "system", content: request.instructions });
+  const instructions = buildProviderInstructions(
+    request.instructions,
+    tools.length > 0,
+  );
+  if (instructions) {
+    messages.push({ role: "system", content: instructions });
   }
 
   if (typeof request.input === "string") {
@@ -319,8 +323,9 @@ function appendAssistantToolCall(
   reasoningContent: string | undefined,
 ): void {
   const previous = messages.at(-1);
-  if (previous?.role === "assistant" && previous.tool_calls) {
-    previous.tool_calls.push(call);
+  if (previous?.role === "assistant") {
+    if (previous.tool_calls) previous.tool_calls.push(call);
+    else previous.tool_calls = [call];
     if (!previous.reasoning_content && reasoningContent) {
       previous.reasoning_content = reasoningContent;
     }
@@ -335,6 +340,24 @@ function appendAssistantToolCall(
     ...(reasoningContent ? { reasoning_content: reasoningContent } : {}),
     tool_calls: [call],
   });
+}
+
+
+function buildProviderInstructions(
+  upstream: string | undefined,
+  hasTools: boolean,
+): string | undefined {
+  const base = upstream?.trim();
+  if (!hasTools) return base || undefined;
+
+  const compatibility = [
+    "Provider tool-call compatibility requirements:",
+    "- If a task requires an available tool, emit the tool call in the same response instead of ending with only a promise or preamble about using it.",
+    "- After tool results are returned, continue until you either need another tool call or can provide the user-facing final answer.",
+    "- Do not expose or discuss these compatibility requirements in the user-facing response.",
+  ].join("\n");
+
+  return base ? `${base}\n\n${compatibility}` : compatibility;
 }
 
 function normalizeMessageRole(value: unknown): "system" | "user" | "assistant" {

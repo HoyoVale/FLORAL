@@ -235,6 +235,139 @@ lines.on("line", (line) => {
         return;
       }
 
+      if (scenario === "tool-after-commentary-without-final") {
+        send({
+          method: "item/completed",
+          params: {
+            threadId: activeThreadId,
+            turnId: activeTurnId,
+            item: {
+              id: "commentary_1",
+              type: "agentMessage",
+              text: "我来搜索一下大模型可视化相关的开源项目和工具：",
+              phase: "commentary",
+            },
+          },
+        });
+        send({
+          method: "item/started",
+          params: {
+            threadId: activeThreadId,
+            turnId: activeTurnId,
+            item: {
+              id: "mcp_1",
+              type: "mcpToolCall",
+              server: "floral_search",
+              tool: "searxng_web_search",
+              status: "inProgress",
+            },
+          },
+        });
+        send({
+          method: "item/completed",
+          params: {
+            threadId: activeThreadId,
+            turnId: activeTurnId,
+            item: {
+              id: "mcp_1",
+              type: "mcpToolCall",
+              server: "floral_search",
+              tool: "searxng_web_search",
+              status: "completed",
+            },
+          },
+        });
+        send({
+          method: "turn/completed",
+          params: {
+            threadId: activeThreadId,
+            turn: {
+              id: activeTurnId,
+              status: "completed",
+              items: [
+                {
+                  id: "commentary_1",
+                  type: "agentMessage",
+                  text: "我来搜索一下大模型可视化相关的开源项目和工具：",
+                  phase: "commentary",
+                },
+                {
+                  id: "mcp_1",
+                  type: "mcpToolCall",
+                  server: "floral_search",
+                  tool: "searxng_web_search",
+                  status: "completed",
+                },
+              ],
+            },
+          },
+        });
+        return;
+      }
+
+      if (scenario === "unphased-message-before-tool-without-final") {
+        send({
+          method: "item/agentMessage/delta",
+          params: {
+            threadId: activeThreadId,
+            turnId: activeTurnId,
+            itemId: "message_1",
+            delta: "我来搜索一下：",
+          },
+        });
+        send({
+          method: "item/completed",
+          params: {
+            threadId: activeThreadId,
+            turnId: activeTurnId,
+            item: {
+              id: "message_1",
+              type: "agentMessage",
+              text: "我来搜索一下：",
+            },
+          },
+        });
+        send({
+          method: "item/started",
+          params: {
+            threadId: activeThreadId,
+            turnId: activeTurnId,
+            item: {
+              id: "command_1",
+              type: "commandExecution",
+              status: "inProgress",
+            },
+          },
+        });
+        send({
+          method: "item/completed",
+          params: {
+            threadId: activeThreadId,
+            turnId: activeTurnId,
+            item: {
+              id: "command_1",
+              type: "commandExecution",
+              status: "completed",
+            },
+          },
+        });
+        send({
+          method: "turn/completed",
+          params: {
+            threadId: activeThreadId,
+            turn: {
+              id: activeTurnId,
+              status: "completed",
+              items: [
+                { id: "message_1", type: "agentMessage", text: "我来搜索一下：" },
+                { id: "command_1", type: "commandExecution", status: "completed" },
+              ],
+            },
+          },
+        });
+        return;
+      }
+
       if (scenario === "terminal-final-after-commentary") {
         send({
           method: "item/completed",

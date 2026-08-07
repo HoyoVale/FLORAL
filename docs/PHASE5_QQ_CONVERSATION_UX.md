@@ -24,7 +24,7 @@ The transport boundary is explicit:
 - the QQ SDK remains the sole owner of protocol-level passive-reply sequencing;
 - FLORAL does not allocate or mutate an independent `msg_seq` for typing;
 - text replies continue to carry the cached inbound `msgId` through `QQBot.sendText`;
-- native typing uses the cached SDK `ReplyTarget` plus the triggering inbound `msgId` through `QQBot.sendTyping`;
+- native typing passes the cached SDK `ReplyTarget` unchanged through `QQBot.sendTyping`; unlike passive text replies, the typing activity call does not attach the triggering inbound `msgId`;
 - typing and text operations share one per-conversation outbound sequencer, so a multi-chunk reply cannot interleave with another FLORAL send in the same conversation;
 - a failed operation does not poison the conversation queue or block later delivery.
 
@@ -37,9 +37,9 @@ Typing lifecycle is owned by the gateway/runtime boundary:
 5. final reply, failure reply, `/stop`, or any other outbound text stops the local typing refresh;
 6. typing failures are best effort: they are diagnosed but never fail the agent run or suppress the final text reply.
 
-Real-device validation after the first 5.4A-2 cut exposed a gap that unit fakes did not model: a one-shot typing signal plus a 50-second refresh cadence is too sparse for QQ clients that can clear the visual indicator when the chat view changes state. The corrected path also preserves the triggering inbound `msgId` on the SDK target, refreshes at a short keepalive cadence, and logs a redacted failure reason when the SDK/API rejects a typing signal.
+Real-device validation after the first 5.4A-2 cut exposed gaps that unit fakes did not model. A one-shot typing signal plus a 50-second refresh cadence was too sparse, so the refresh remains short. A second real-device pass showed that attaching passive-reply `msgId` to `sendTyping` could resolve without an SDK error while producing no visible QQ indicator. FLORAL now follows the official QQ integration contract: text replies attach `msgId`, but `sendTyping` receives the bare `ReplyTarget`. The transport emits one bounded `qq.transport.typing_session=started` diagnostic after the first successful SDK call and retains redacted failure diagnostics.
 
-The same validation also exposed a Codex result-selection edge case: an earlier `agentMessage` commentary item could be returned when the authoritative final answer was present only in the terminal `turn/completed.items`. FLORAL now prefers a terminal `final_answer` item before falling back to earlier commentary text.
+The same validation exposed a deeper custom-provider tool-loop issue. Responses history may contain an assistant preamble immediately followed by a tool call. FLORAL now replays those as one DeepSeek assistant message containing both `content` and `tool_calls`, injects a provider-only compatibility instruction when tools are present, and requires the provider to continue after tool results until a real user-facing final answer exists. Codex result selection also invalidates pre-tool commentary once later work starts. If a completed turn still has no post-tool final message, FLORAL fails it as a protocol error instead of presenting "I will search..." as if it were the answer.
 
 `idle` stops FLORAL's refresh timer; QQ does not provide FLORAL with a separate retract operation for a typing signal already delivered. The following text reply remains the authoritative end of the activity state.
 
@@ -64,8 +64,8 @@ In particular, approval buttons must remain UI only. They may resolve an existin
 
 ### 5.4A-2
 
-1. Send a normal question that takes several seconds. QQ should display its native typing state before the final answer arrives and refresh it during longer tool work.
-2. The final reply must still use the triggering message's passive-reply `msgId`; FLORAL must not emit or maintain a parallel `msg_seq`.
+1. Send a normal question that takes several seconds. QQ should display its native typing state before the final answer arrives and refresh it during longer tool work. The service log should contain one `qq.transport.typing_session=started scope=c2c` after the first successful SDK signal.
+2. The final text reply must still use the triggering message's passive-reply `msgId`; typing must use a bare `ReplyTarget`. FLORAL must not emit or maintain a parallel `msg_seq`.
 3. Trigger a file-change approval. Typing should pause while the approval is waiting and resume after `/approve` or `/deny` if the agent continues.
 4. Trigger two outbound sends concurrently in tests. The second send must not enter the SDK before the first send completes.
 5. Simulate `sendTyping` failure. Final text delivery must still succeed.

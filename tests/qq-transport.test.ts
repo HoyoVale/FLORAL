@@ -188,7 +188,6 @@ describe("QqTransport", () => {
     expect(fake.typing).toEqual([{
       scope: "c2c",
       targetId: "conversation",
-      msgId: "typing-source",
     }]);
     expect(transport.snapshot()).toMatchObject({
       typingSignals: 1,

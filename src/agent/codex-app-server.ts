@@ -192,6 +192,17 @@ export class CodexAppServerRuntime implements AgentRuntime {
     const itemStartedListener = (value: unknown) => {
       const params = value as ItemLifecycleParams;
       if (!matchesTurn(params, threadId, activeTurnId)) return;
+
+      // Any tool/side-effect work that starts after a narrative message turns
+      // that narrative into commentary, not a safe final-answer candidate.
+      // Reset streamed fallback too so a pre-tool "I'll search..." delta
+      // cannot be returned as the final answer when the provider never closes
+      // the tool loop with a post-tool message.
+      if (isAgentWorkItem(params.item)) {
+        lastAgentMessageText = "";
+        streamedText = "";
+      }
+
       const itemId = params.item?.id;
       if (itemId) {
         const approvalSummary = summarizeApprovalItem(params.item);
@@ -227,9 +238,16 @@ export class CodexAppServerRuntime implements AgentRuntime {
       if (params.item?.type !== "agentMessage" || typeof params.item.text !== "string") return;
       if (params.item.phase === "final_answer") {
         authoritativeText = params.item.text;
-      } else {
-        lastAgentMessageText = params.item.text;
+        return;
       }
+      if (params.item.phase === "commentary") {
+        lastAgentMessageText = "";
+        streamedText = "";
+        return;
+      }
+      // Older/variant app-server surfaces may omit phase. Keep an unphased
+      // message as a fallback only until later tool work invalidates it.
+      lastAgentMessageText = params.item.text;
     };
 
     const errorListener = (value: unknown) => {
@@ -306,13 +324,19 @@ export class CodexAppServerRuntime implements AgentRuntime {
         throw codexProtocolError(`Unexpected Codex turn status: ${status}`);
       }
 
+      const finalText = authoritativeText
+        || readFinalAgentText(terminal.params.turn.items)
+        || lastAgentMessageText
+        || streamedText;
+      if (!finalText) {
+        throw codexProtocolError(
+          "Codex turn completed without a final agent message",
+        );
+      }
+
       const result = {
         threadId,
-        finalText: authoritativeText
-          || readFinalAgentText(terminal.params.turn.items)
-          || lastAgentMessageText
-          || streamedText
-          || "Codex turn completed without an agent message.",
+        finalText,
       };
       onEvent?.({ type: "run.completed", ...result });
       return result;
@@ -683,11 +707,39 @@ function readFinalAgentText(items: unknown[] | undefined): string | undefined {
     }
   }
 
-  for (let index = items.length - 1; index >= 0; index -= 1) {
-    const item = asRecord(items[index]);
-    if (item?.type === "agentMessage" && typeof item.text === "string") return item.text;
+  // Some app-server builds omit `phase`. In that case only an agent message
+  // that occurs after the most recent work item may be treated as final. A
+  // pre-tool narrative must never survive as the terminal answer.
+  let candidate: string | undefined;
+  for (const value of items) {
+    const item = asRecord(value);
+    if (!item) continue;
+    if (isAgentWorkItem(item)) {
+      candidate = undefined;
+      continue;
+    }
+    if (
+      item.type === "agentMessage"
+      && item.phase !== "commentary"
+      && typeof item.text === "string"
+    ) {
+      candidate = item.text;
+    }
   }
-  return undefined;
+  return candidate;
+}
+
+function isAgentWorkItem(
+  item: ItemLifecycleParams["item"] | Record<string, unknown> | undefined,
+): boolean {
+  const type = item?.type;
+  if (typeof type !== "string" || type.length === 0) return false;
+  return !new Set([
+    "agentMessage",
+    "reasoning",
+    "plan",
+    "userMessage",
+  ]).has(type);
 }
 
 function asRecord(value: unknown): Record<string, unknown> | undefined {

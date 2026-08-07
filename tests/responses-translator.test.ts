@@ -169,6 +169,91 @@ describe("Responses request translation", () => {
     ]);
   });
 
+
+  it("adds provider tool-loop requirements without changing no-tool prompts", () => {
+    const withTool = translateResponsesRequest(
+      parseResponsesRequest({
+        model: "deepseek-v4-flash",
+        instructions: "upstream rules",
+        input: "search first",
+        tools: [{
+          type: "function",
+          name: "lookup",
+          parameters: { type: "object" },
+        }],
+      }),
+      "deepseek-v4-flash",
+    );
+    expect(withTool.messages[0]).toMatchObject({
+      role: "system",
+    });
+    expect(withTool.messages[0]?.content).toContain("upstream rules");
+    expect(withTool.messages[0]?.content).toContain(
+      "emit the tool call in the same response",
+    );
+    expect(withTool.messages[0]?.content).toContain(
+      "After tool results are returned",
+    );
+
+    const withoutTool = translateResponsesRequest(
+      parseResponsesRequest({
+        model: "deepseek-v4-flash",
+        instructions: "upstream rules",
+        input: "answer directly",
+      }),
+      "deepseek-v4-flash",
+    );
+    expect(withoutTool.messages[0]).toEqual({
+      role: "system",
+      content: "upstream rules",
+    });
+  });
+
+  it("keeps assistant preamble and its tool call in one provider history message", () => {
+    const request = parseResponsesRequest({
+      model: "deepseek-v4-flash",
+      input: [
+        {
+          type: "message",
+          role: "assistant",
+          content: "我来搜索一下相关资料：",
+        },
+        {
+          type: "function_call",
+          call_id: "call_search",
+          name: "lookup",
+          arguments: "{\"query\":\"test\"}",
+        },
+        {
+          type: "function_call_output",
+          call_id: "call_search",
+          output: "result",
+        },
+      ],
+    });
+
+    const translated = translateResponsesRequest(request, "deepseek-v4-flash");
+    expect(translated.messages).toEqual([
+      {
+        role: "assistant",
+        content: "我来搜索一下相关资料：",
+        tool_calls: [{
+          id: "call_search",
+          type: "function",
+          function: {
+            name: "lookup",
+            arguments: "{\"query\":\"test\"}",
+          },
+        }],
+      },
+      {
+        role: "tool",
+        tool_call_id: "call_search",
+        content: "result",
+      },
+    ]);
+  });
+
   it("restores cached DeepSeek reasoning for a returned tool call", () => {
     const request = parseResponsesRequest({
       model: "deepseek-v4-flash",

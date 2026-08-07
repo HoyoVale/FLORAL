@@ -98,6 +98,7 @@ const QQ_TYPING_TIMEOUT_CAP_MS = 2_000;
 
 interface TypingSession {
   timer?: ReturnType<typeof setTimeout> | undefined;
+  reportedStarted?: boolean | undefined;
 }
 
 export class QqTransport implements ChatTransport, ConversationActivityTransport {
@@ -354,11 +355,12 @@ export class QqTransport implements ChatTransport, ConversationActivityTransport
     }
 
     try {
+      // QQ SDK typing is an activity signal, not a passive message reply.
+      // Keep the original ReplyTarget shape exactly as Tencent's official
+      // integration does; attaching msgId can make the SDK call succeed while
+      // the QQ client silently ignores the indicator.
       await this.#sequenceOutbound(conversationId, () => withTimeout(
-        bot.sendTyping({
-          ...cached.target,
-          msgId: cached.messageId,
-        }),
+        bot.sendTyping(cached.target),
         Math.min(this.options.outboundTimeoutMs, QQ_TYPING_TIMEOUT_CAP_MS),
         "QQ typing indicator",
       ));
@@ -366,6 +368,13 @@ export class QqTransport implements ChatTransport, ConversationActivityTransport
         ...this.#diagnostics,
         typingSignals: this.#diagnostics.typingSignals + 1,
       };
+      const session = this.#typingSessions.get(conversationId);
+      if (session && !session.reportedStarted) {
+        session.reportedStarted = true;
+        process.stderr.write(
+          `qq.transport.typing_session=started scope=${cached.target.scope}\n`,
+        );
+      }
     } catch (error) {
       this.#diagnostics = {
         ...this.#diagnostics,

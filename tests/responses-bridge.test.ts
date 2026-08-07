@@ -309,14 +309,24 @@ describe("ResponsesBridgeServer", () => {
     });
     expect(upstreamBodies[2]?.tool_choice).toBeUndefined();
     expect(upstreamBodies[2]?.messages?.[0]).toMatchObject({
+      role: "system",
+    });
+    expect(upstreamBodies[2]?.messages?.[0]?.content).toContain(
+      "After tool results are returned",
+    );
+    expect(upstreamBodies[2]?.messages).toContainEqual(expect.objectContaining({
       role: "assistant",
       content: "",
       reasoning_content: "search before answering",
       tool_calls: [{
         id: "call_search",
-        function: { name: "mcp__floral_search__searxng_web_search" },
+        type: "function",
+        function: {
+          name: "mcp__floral_search__searxng_web_search",
+          arguments: "{\"query\":\"SearXNG Search API\"}",
+        },
       }],
-    });
+    }));
   });
 
   it("emits sanitized compatibility captures without exposing request content", async () => {

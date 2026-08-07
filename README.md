@@ -154,11 +154,12 @@ chunks, `/status` becomes user-facing while `/status --debug` preserves raw
 diagnostics, and `/help` exposes the compact command surface. Phase 5.4A-2
 adds SDK-native QQ typing plus a single per-conversation outbound sequencer for
 typing and text delivery; FLORAL does not create a parallel REST sender or own
-`msg_seq`. Real-device correction keeps the inbound `msgId` on typing calls,
-uses a short keepalive cadence, and prefers Codex terminal final-answer items
-over earlier commentary messages. Native Markdown and inline approval keyboards remain the
-5.4B
-follow-up. See `docs/PHASE5_QQ_CONVERSATION_UX.md`.
+`msg_seq`. Real-device correction now follows the official SDK split: passive
+text replies retain inbound `msgId`, while typing receives the bare `ReplyTarget`
+and uses a short keepalive cadence. The custom-provider bridge also preserves
+assistant-content-plus-tool-call history and refuses to surface pre-tool
+commentary as a terminal answer. Native Markdown and inline approval keyboards
+remain the 5.4B follow-up. See `docs/PHASE5_QQ_CONVERSATION_UX.md`.
 
 ## Prepare the Mac mini
 
