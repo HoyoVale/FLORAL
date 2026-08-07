@@ -21,6 +21,7 @@ export const requestedConfigSchema = z.object({
     service_state_path: z.string().trim().min(1),
     service_mode: z.enum(["foreground", "launchagent"]),
     mock_trust_owner: z.boolean(),
+    chat_transport: z.enum(["auto", "mock", "qq", "feishu"]),
   }).strict(),
   qq: z.object({
     mode: modeSchema,
@@ -44,6 +45,22 @@ export const requestedConfigSchema = z.object({
       account_id_strategy: z.literal("sha256-app-id"),
       session_persistence: z.literal("file"),
       token_prefetch: z.enum(["sync", "async"]),
+      logger: z.literal("redacted"),
+    }).strict(),
+  }).strict(),
+  feishu: z.object({
+    startup_timeout_ms: positiveInteger,
+    outbound_timeout_ms: positiveInteger,
+    text_chunk_bytes: positiveInteger,
+    max_reply_chunks: positiveInteger,
+    probe_timeout_ms: positiveInteger,
+    presentation: z.object({
+      visible_activity_fallback: z.boolean(),
+      visible_activity_delay_ms: positiveInteger,
+    }).strict(),
+    sdk: z.object({
+      expected_version: z.string().trim().min(1),
+      ingress_isolation: z.literal("worker-thread"),
       logger: z.literal("redacted"),
     }).strict(),
   }).strict(),
@@ -225,6 +242,7 @@ export interface RequestedConfig {
     service_state_path: string;
     service_mode: "foreground" | "launchagent";
     mock_trust_owner: boolean;
+    chat_transport: "auto" | "mock" | "qq" | "feishu";
   };
   qq: {
     mode: "mock" | "real";
@@ -248,6 +266,22 @@ export interface RequestedConfig {
       account_id_strategy: "sha256-app-id";
       session_persistence: "file";
       token_prefetch: "sync" | "async";
+      logger: "redacted";
+    };
+  };
+  feishu: {
+    startup_timeout_ms: number;
+    outbound_timeout_ms: number;
+    text_chunk_bytes: number;
+    max_reply_chunks: number;
+    probe_timeout_ms: number;
+    presentation: {
+      visible_activity_fallback: boolean;
+      visible_activity_delay_ms: number;
+    };
+    sdk: {
+      expected_version: string;
+      ingress_isolation: "worker-thread";
       logger: "redacted";
     };
   };
@@ -422,6 +456,7 @@ export const DEFAULT_REQUESTED_CONFIG: RequestedConfig = {
     service_state_path: "./data/service-state.json",
     service_mode: "foreground",
     mock_trust_owner: true,
+    chat_transport: "auto",
   },
   qq: {
     mode: "mock",
@@ -445,6 +480,22 @@ export const DEFAULT_REQUESTED_CONFIG: RequestedConfig = {
       account_id_strategy: "sha256-app-id",
       session_persistence: "file",
       token_prefetch: "sync",
+      logger: "redacted",
+    },
+  },
+  feishu: {
+    startup_timeout_ms: 30_000,
+    outbound_timeout_ms: 30_000,
+    text_chunk_bytes: 120_000,
+    max_reply_chunks: 4,
+    probe_timeout_ms: 120_000,
+    presentation: {
+      visible_activity_fallback: true,
+      visible_activity_delay_ms: 6_000,
+    },
+    sdk: {
+      expected_version: "1.36.0",
+      ingress_isolation: "worker-thread",
       logger: "redacted",
     },
   },
@@ -624,6 +675,9 @@ export const LOCKED_CONFIG_VALUES = {
   "auth.email_password_enabled": false,
   "qq.sdk.expected_version": "1.0.4",
   "qq.sdk.logger": "redacted",
+  "feishu.sdk.expected_version": "1.36.0",
+  "feishu.sdk.ingress_isolation": "worker-thread",
+  "feishu.sdk.logger": "redacted",
   "search.container.host_bind_address": "127.0.0.1",
   "search.container.image": "docker.io/searxng/searxng@sha256:02aa607ecc87165ebe6212476a176b8984d891c01a2d130ad03a58109d13db77",
   "mcp.search.default_tools_approval_mode": "approve",

@@ -3,9 +3,9 @@
 A deliberately thin Node.js/TypeScript gateway for this architecture:
 
 ```text
-QQ Open Platform
+Feishu Open Platform (primary) / QQ Open Platform (compatibility)
         ↓
-QQ transport adapter
+chat transport adapter
         ↓
 identity / policy / approval / audit
         ↓
@@ -16,7 +16,7 @@ configured model provider / future bridge
 Peekaboo MCP (macOS GUI automation)
 ```
 
-This bundle is a **development baseline**, not a finished remote-control product. It starts in mock mode so Windows development can begin before QQ credentials, Codex configuration, macOS permissions, and Peekaboo are ready.
+This bundle is a **development baseline**, not a finished remote-control product. It starts in mock mode so Windows development can begin before remote-chat credentials, Codex configuration, macOS permissions, and Peekaboo are ready.
 
 ## Recommended environments
 
@@ -35,7 +35,7 @@ corepack pnpm test
 corepack pnpm dev
 ```
 
-The default `QQ_MODE=mock` exposes a terminal chat loop. Type a message and the mock agent echoes a deterministic response. This validates configuration, message routing, and shutdown behavior without contacting any external service.
+The default `CHAT_TRANSPORT`/`QQ_MODE` settings expose the local mock terminal chat loop. Type a message and the mock agent echoes a deterministic response. This validates configuration, message routing, and shutdown behavior without contacting any external service.
 
 ## Inspect the unified configuration authority
 
@@ -108,7 +108,7 @@ request limits before another provider attempt is allowed. See
 `docs/PHASE5_AGENT_COST_GUARD.md`.
 
 Phase 5.2 adds the FLORAL-owned authorization authority and owner-scoped,
-one-shot QQ approval broker without relaxing the production read-only Codex
+one-shot remote approval broker without relaxing the production read-only Codex
 sandbox:
 
 ```bash
@@ -132,7 +132,7 @@ cwd-only, network-disabled workspace-write turn sandbox while retaining the
 native read-only/never fail-safe. FLORAL sends the pinned Codex 0.146.1 approval wire value `untrusted` while
 retaining app-server v2's camelCase sandbox values (`workspaceWrite`). A concrete Codex file-change
 request may receive one
-owner/conversation-bound QQ grant; opaque command escalation still requires an
+owner/conversation-bound remote grant; opaque command escalation still requires an
 independent Mac-local confirmation. Local confirmations use a private,
 service-session-bound mailbox under the FLORAL runtime directory and can be
 resolved only from the Mac:
@@ -168,6 +168,13 @@ commentary as a terminal answer. Phase 5.4B adds QQ Inline Keyboard buttons for
 remote one-shot approvals without moving authorization into the transport; native
 Markdown remains a separate rendering follow-up. See
 `docs/PHASE5_QQ_CONVERSATION_UX.md`.
+
+Phase 5F makes Feishu the preferred production chat entry while keeping QQ as a
+compatibility adapter. The target Mac receives `im.message.receive_v1` through
+the official Feishu long connection in an isolated worker thread; the parent
+process keeps the existing Gateway, SQLite identity, Codex, DeepSeek, MCP, and
+authorization boundaries. Set `CHAT_TRANSPORT=feishu` for the production cutover.
+See `docs/PHASE5F_FEISHU_TRANSPORT.md`.
 
 ## Prepare the Mac mini
 

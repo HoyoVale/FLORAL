@@ -325,12 +325,12 @@ function localApprovalPrompt(
     "FLORAL 要求 Mac 本地确认",
     `本地审批编号=${publicId}`,
     `能力=${request.capability}`,
-    "请求详情仅在 Mac 本地显示，避免高风险命令内容进入 QQ。",
+    "请求详情仅在 Mac 本地显示，避免高风险命令内容进入远程聊天。",
     `有效期=${seconds} 秒`,
     `Mac 查看：corepack pnpm approval:local:list`,
     `Mac 允许：corepack pnpm approval:local:approve -- ${publicId}`,
     `Mac 拒绝：corepack pnpm approval:local:deny -- ${publicId}`,
-    "QQ /approve 无法授权此操作。",
+    "远程 /approve 无法授权此操作。",
   ].join("\n");
 }
 

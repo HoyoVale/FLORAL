@@ -18,6 +18,7 @@ instance_lock_path = "./data/floral.lock"
 service_state_path = "./data/service-state.json"
 service_mode = "foreground"
 mock_trust_owner = true
+chat_transport = "auto"
 
 [qq]
 mode = "mock"
@@ -46,6 +47,23 @@ expected_version = "1.0.4"
 account_id_strategy = "sha256-app-id"
 session_persistence = "file"
 token_prefetch = "sync"
+logger = "redacted"
+
+
+[feishu]
+startup_timeout_ms = 30000
+outbound_timeout_ms = 30000
+text_chunk_bytes = 120000
+max_reply_chunks = 4
+probe_timeout_ms = 120000
+
+[feishu.presentation]
+visible_activity_fallback = true
+visible_activity_delay_ms = 6000
+
+[feishu.sdk]
+expected_version = "1.36.0"
+ingress_isolation = "worker-thread"
 logger = "redacted"
 
 [codex]

@@ -12,7 +12,7 @@ import { constants } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { loadEnv } from "../src/config/env.js";
+import { loadEnv, resolveChatTransport } from "../src/config/env.js";
 import { loadProjectEnv } from "../src/config/load-project-env.js";
 import { readServiceState } from "../src/runtime/service-state.js";
 import { waitForLaunchAgentShutdown } from "../src/service/launchagent-lifecycle.js";
@@ -104,6 +104,7 @@ async function doctor(): Promise<void> {
   console.log("service.doctor.platform=ok");
   console.log("service.doctor.build=ok");
   console.log("service.doctor.env_permissions=ok");
+  console.log(`service.doctor.chat_transport=${resolveChatTransport(env)}`);
   console.log(`service.doctor.node=${node}`);
   console.log(`service.doctor.codex=${codex}`);
   console.log(`service.doctor.npx=${npx}`);
@@ -251,8 +252,8 @@ async function ensurePrivateEnv(): Promise<void> {
   if ((metadata.mode & 0o077) !== 0) {
     throw new Error(".env permissions are too broad; run chmod 600 .env");
   }
-  if (env.QQ_MODE !== "real" || env.CODEX_MODE !== "real") {
-    throw new Error("LaunchAgent requires QQ_MODE=real and CODEX_MODE=real");
+  if (resolveChatTransport(env) === "mock" || env.CODEX_MODE !== "real") {
+    throw new Error("LaunchAgent requires a real chat transport and CODEX_MODE=real");
   }
   if (env.MOCK_TRUST_OWNER) {
     throw new Error("LaunchAgent requires MOCK_TRUST_OWNER=false");

@@ -3,7 +3,7 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
-  "description": "QQ-connected macOS agent gateway powered by Codex app-server, Better Auth, and Peekaboo, with a model-provider bridge seam.",
+  "description": "Feishu-first macOS agent gateway powered by Codex app-server, with QQ compatibility, Better Auth, Peekaboo, and a model-provider bridge seam.",
   "engines": {
     "node": ">=22.0.0"
   },

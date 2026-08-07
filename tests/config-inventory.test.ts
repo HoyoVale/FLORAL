@@ -41,6 +41,7 @@ describe("configuration inventory", () => {
         "deepseek",
         "searxng",
         "qq-sdk",
+        "feishu-sdk",
         "mcp",
         "better-auth",
         "peekaboo",
@@ -72,7 +73,7 @@ describe("configuration inventory", () => {
   it("validates catalog shape and extraction helpers", async () => {
     const catalog = await loadUpstreamConfigCatalog(repositoryRoot);
     expect(catalog.schemaVersion).toBe(1);
-    expect(Object.keys(catalog.environmentKeyPolicies)).toHaveLength(57);
+    expect(Object.keys(catalog.environmentKeyPolicies)).toHaveLength(67);
     expect(catalog.classifications).toEqual([
       "floral-owned",
       "upstream-managed",

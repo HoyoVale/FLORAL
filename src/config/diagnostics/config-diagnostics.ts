@@ -39,9 +39,10 @@ import {
   type NativeConfigArtifact,
   type NativeConfigBundle,
 } from "../adapters/native-config-types.js";
-import type {
-  ConfigurationProvenance,
-  ResolvedConfigurationAuthority,
+import {
+  resolveEffectiveChatTransport,
+  type ConfigurationProvenance,
+  type ResolvedConfigurationAuthority,
 } from "../federation/config-authority.js";
 import { buildConfigurationInventory } from "../inventory/config-inventory.js";
 import { buildMcpRuntimeRegistry } from "../mcp/mcp-runtime-registry.js";
@@ -756,7 +757,7 @@ function buildFindings(input: {
   }
 
   if (
-    input.authority.effective.qq.mode === "real"
+    resolveEffectiveChatTransport(input.authority.effective) === "qq"
     && input.authority.effective.runtime.adoption.qq_sdk.mode === "unified"
   ) {
     if (input.qqRuntime.status === "missing") {
@@ -845,7 +846,10 @@ function buildFindings(input: {
       input.authority.effective.search.container.image,
     ));
   }
-  if (input.qqSdk.status !== "match" && input.authority.effective.qq.mode === "real") {
+  if (
+    input.qqSdk.status !== "match"
+    && resolveEffectiveChatTransport(input.authority.effective) === "qq"
+  ) {
     findings.push(finding(
       "qq-sdk-version-drift",
       "qq-sdk",

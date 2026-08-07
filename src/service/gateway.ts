@@ -163,7 +163,7 @@ export class GatewayService {
         });
         await this.#send(
           message.identity.conversationId,
-          "此 QQ 身份尚未绑定。请使用 /pair <配对码> 完成所有者绑定。",
+          "当前聊天身份尚未绑定。请使用 /pair <配对码> 完成所有者绑定。",
         );
       }
       return;

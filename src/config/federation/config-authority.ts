@@ -25,6 +25,8 @@ export type SecretId =
   | "deepseek_api_key"
   | "qq_app_id"
   | "qq_app_secret"
+  | "feishu_app_id"
+  | "feishu_app_secret"
   | "bridge_token"
   | "better_auth_secret"
   | "owner_pairing_code";
@@ -69,6 +71,8 @@ export const SECRET_ENVIRONMENT_REFERENCES: Record<SecretId, string> = {
   deepseek_api_key: "DEEPSEEK_API_KEY",
   qq_app_id: "QQBOT_APP_ID",
   qq_app_secret: "QQBOT_APP_SECRET",
+  feishu_app_id: "FEISHU_APP_ID",
+  feishu_app_secret: "FEISHU_APP_SECRET",
   bridge_token: "FLORAL_BRIDGE_TOKEN",
   better_auth_secret: "BETTER_AUTH_SECRET",
   owner_pairing_code: "OWNER_PAIRING_CODE",
@@ -85,6 +89,7 @@ export const ENVIRONMENT_BINDINGS: readonly EnvironmentBinding[] = [
   binding("FLORAL_SERVICE_STATE_PATH", "floral.service_state_path"),
   binding("FLORAL_SERVICE_MODE", "floral.service_mode"),
   binding("MOCK_TRUST_OWNER", "floral.mock_trust_owner"),
+  binding("CHAT_TRANSPORT", "floral.chat_transport"),
   binding("QQ_MODE", "qq.mode"),
   binding("CODEX_MODE", "codex.mode"),
   binding("MACOS_MODE", "macos.mode"),
@@ -99,6 +104,13 @@ export const ENVIRONMENT_BINDINGS: readonly EnvironmentBinding[] = [
   binding("QQBOT_PROBE_TIMEOUT_MS", "qq.probe_timeout_ms"),
   binding("QQBOT_FULL_CHAIN_TIMEOUT_MS", "qq.full_chain_timeout_ms"),
   binding("QQBOT_RECONNECT_PROBE_TIMEOUT_MS", "qq.reconnect_probe_timeout_ms"),
+  binding("FEISHU_STARTUP_TIMEOUT_MS", "feishu.startup_timeout_ms"),
+  binding("FEISHU_OUTBOUND_TIMEOUT_MS", "feishu.outbound_timeout_ms"),
+  binding("FEISHU_TEXT_CHUNK_BYTES", "feishu.text_chunk_bytes"),
+  binding("FEISHU_MAX_REPLY_CHUNKS", "feishu.max_reply_chunks"),
+  binding("FEISHU_PROBE_TIMEOUT_MS", "feishu.probe_timeout_ms"),
+  binding("FEISHU_VISIBLE_ACTIVITY_FALLBACK", "feishu.presentation.visible_activity_fallback"),
+  binding("FEISHU_VISIBLE_ACTIVITY_DELAY_MS", "feishu.presentation.visible_activity_delay_ms"),
   binding("CODEX_COMMAND", "codex.command"),
   {
     key: "CODEX_ARGS",
@@ -208,6 +220,7 @@ export function renderConfigurationAuthority(
     `config.path=${authority.configPath}`,
     `config.schema_version=${String(authority.effective.schema_version)}`,
     `config.profile=${authority.effective.profile}`,
+    `config.chat_transport=${resolveEffectiveChatTransport(authority.effective)}`,
     `config.requested_fingerprint=${authority.requestedFingerprint}`,
     `config.effective_fingerprint=${authority.effectiveFingerprint}`,
     `config.environment_overrides=${String(authority.environmentOverrideKeys.length)}`,
@@ -242,6 +255,9 @@ export function renderConfigurationAuthority(
     `config.qq.presentation.visible_activity_fallback=${String(authority.effective.qq.presentation.visible_activity_fallback)}`,
     `config.qq.presentation.visible_activity_delay_ms=${String(authority.effective.qq.presentation.visible_activity_delay_ms)}`,
     `config.qq.sdk.expected_version=${authority.effective.qq.sdk.expected_version}`,
+    `config.feishu.sdk.expected_version=${authority.effective.feishu.sdk.expected_version}`,
+    `config.feishu.presentation.visible_activity_fallback=${String(authority.effective.feishu.presentation.visible_activity_fallback)}`,
+    `config.feishu.presentation.visible_activity_delay_ms=${String(authority.effective.feishu.presentation.visible_activity_delay_ms)}`,
     `config.mcp.search.enabled=${String(authority.effective.mcp.search.enabled)}`,
     `config.mcp.vision.enabled=${String(authority.effective.mcp.vision.enabled)}`,
     `config.mcp.macos.enabled=${String(authority.effective.mcp.macos.enabled)}`,
@@ -401,12 +417,37 @@ function validateCrossFieldRules(
   if (!config.search.settings.formats.includes("json")) {
     throw new Error("search.settings.formats must include json for FLORAL MCP integration");
   }
+  if (config.feishu.text_chunk_bytes > 140_000) {
+    throw new Error("feishu.text_chunk_bytes must not exceed 140000");
+  }
+  if (config.feishu.max_reply_chunks > 5) {
+    throw new Error("feishu.max_reply_chunks must not exceed 5");
+  }
+  if (config.feishu.startup_timeout_ms > 120_000 || config.feishu.outbound_timeout_ms > 120_000) {
+    throw new Error("Feishu startup/outbound timeout must not exceed 120000ms");
+  }
+  if (config.feishu.presentation.visible_activity_delay_ms > 120_000) {
+    throw new Error("feishu.presentation.visible_activity_delay_ms must not exceed 120000");
+  }
   if (config.codex.mode === "real" && !secrets.deepseek_api_key.present) {
     throw new Error("codex.mode=real requires secret DEEPSEEK_API_KEY");
   }
-  if (config.qq.mode === "real") {
+  const chatTransport = resolveEffectiveChatTransport(config);
+  if (chatTransport === "qq") {
+    if (config.qq.mode !== "real") {
+      throw new Error("floral.chat_transport=qq requires qq.mode=real");
+    }
     for (const id of ["qq_app_id", "qq_app_secret", "owner_pairing_code"] as const) {
-      if (!secrets[id].present) throw new Error(`qq.mode=real requires secret ${secrets[id].name}`);
+      if (!secrets[id].present) {
+        throw new Error(`QQ chat transport requires secret ${secrets[id].name}`);
+      }
+    }
+  }
+  if (chatTransport === "feishu") {
+    for (const id of ["feishu_app_id", "feishu_app_secret", "owner_pairing_code"] as const) {
+      if (!secrets[id].present) {
+        throw new Error(`floral.chat_transport=feishu requires secret ${secrets[id].name}`);
+      }
     }
   }
   if (config.auth.mode === "better-auth" && !secrets.better_auth_secret.present) {
@@ -431,6 +472,14 @@ function validateCrossFieldRules(
       throw new Error(`mcp.${id}.enabled_tools contains duplicates`);
     }
   }
+}
+
+export function resolveEffectiveChatTransport(
+  config: Pick<RequestedConfig, "floral" | "qq">,
+): "mock" | "qq" | "feishu" {
+  const selected = config.floral.chat_transport;
+  if (selected !== "auto") return selected;
+  return config.qq.mode === "real" ? "qq" : "mock";
 }
 
 function buildSecretReferences(

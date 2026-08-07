@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { loadEnv } from "../src/config/env.js";
+import { loadEnv, resolveChatTransport } from "../src/config/env.js";
 
 describe("Phase 3 environment configuration", () => {
   it("uses persistent SQLite and trusted mock-owner defaults", () => {
@@ -70,6 +70,56 @@ describe("Phase 3 environment configuration", () => {
     expect(loadEnv({
       CODEX_MANAGED_HOME: "/tmp/floral-codex-home",
     }).CODEX_MANAGED_HOME).toBe("/tmp/floral-codex-home");
+  });
+
+  it("selects Feishu explicitly while preserving legacy QQ fallback", () => {
+    const feishu = loadEnv({
+      CHAT_TRANSPORT: "feishu",
+      FEISHU_APP_ID: "cli_floral",
+      FEISHU_APP_SECRET: "feishu-secret",
+      OWNER_PAIRING_CODE: "correct-horse-battery",
+    });
+    expect(resolveChatTransport(feishu)).toBe("feishu");
+
+    const legacyQq = loadEnv({
+      QQ_MODE: "real",
+      QQBOT_APP_ID: "app-id",
+      QQBOT_APP_SECRET: "app-secret",
+      OWNER_PAIRING_CODE: "correct-horse-battery",
+    });
+    expect(resolveChatTransport(legacyQq)).toBe("qq");
+  });
+
+  it("requires Feishu credentials and pairing only when Feishu is selected", () => {
+    expect(() => loadEnv({
+      CHAT_TRANSPORT: "feishu",
+      OWNER_PAIRING_CODE: "correct-horse-battery",
+    })).toThrow("FEISHU_APP_ID");
+
+    expect(() => loadEnv({
+      CHAT_TRANSPORT: "feishu",
+      FEISHU_APP_ID: "cli_floral",
+      FEISHU_APP_SECRET: "feishu-secret",
+    })).toThrow("OWNER_PAIRING_CODE");
+
+    expect(loadEnv({
+      CHAT_TRANSPORT: "feishu",
+      QQ_MODE: "real",
+      FEISHU_APP_ID: "cli_floral",
+      FEISHU_APP_SECRET: "feishu-secret",
+      OWNER_PAIRING_CODE: "correct-horse-battery",
+    }).CHAT_TRANSPORT).toBe("feishu");
+  });
+
+  it("uses bounded Feishu transport defaults", () => {
+    const env = loadEnv({});
+    expect(env.FEISHU_STARTUP_TIMEOUT_MS).toBe(30_000);
+    expect(env.FEISHU_OUTBOUND_TIMEOUT_MS).toBe(30_000);
+    expect(env.FEISHU_TEXT_CHUNK_BYTES).toBe(120_000);
+    expect(env.FEISHU_MAX_REPLY_CHUNKS).toBe(4);
+    expect(env.FEISHU_PROBE_TIMEOUT_MS).toBe(120_000);
+    expect(env.FEISHU_VISIBLE_ACTIVITY_FALLBACK).toBe(true);
+    expect(env.FEISHU_VISIBLE_ACTIVITY_DELAY_MS).toBe(6_000);
   });
 
 });

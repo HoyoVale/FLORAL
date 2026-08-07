@@ -1,6 +1,7 @@
 import { z } from "zod";
 
 const modeSchema = z.enum(["mock", "real"]);
+const chatTransportSchema = z.enum(["mock", "qq", "feishu"]);
 const optionalNonEmptyString = z.preprocess(
   (value: unknown) => typeof value === "string" && value.trim() === "" ? undefined : value,
   z.string().trim().min(1).optional(),
@@ -23,6 +24,10 @@ const envSchema = z.object({
   FLORAL_SERVICE_STATE_PATH: z.string().trim().min(1).default("./data/service-state.json"),
   FLORAL_SERVICE_MODE: z.enum(["foreground", "launchagent"]).default("foreground"),
   MOCK_TRUST_OWNER: booleanString.default(true),
+  CHAT_TRANSPORT: z.preprocess(
+    (value: unknown) => typeof value === "string" && value.trim() === "" ? undefined : value,
+    chatTransportSchema.optional(),
+  ),
   QQ_MODE: modeSchema.default("mock"),
   CODEX_MODE: modeSchema.default("mock"),
   MACOS_MODE: modeSchema.default("mock"),
@@ -39,6 +44,15 @@ const envSchema = z.object({
   QQBOT_PROBE_TIMEOUT_MS: z.coerce.number().int().min(10_000).max(10 * 60_000).default(120_000),
   QQBOT_FULL_CHAIN_TIMEOUT_MS: z.coerce.number().int().min(30_000).max(20 * 60_000).default(300_000),
   QQBOT_RECONNECT_PROBE_TIMEOUT_MS: z.coerce.number().int().min(30_000).max(20 * 60_000).default(300_000),
+  FEISHU_APP_ID: optionalNonEmptyString,
+  FEISHU_APP_SECRET: optionalNonEmptyString,
+  FEISHU_STARTUP_TIMEOUT_MS: z.coerce.number().int().min(1_000).max(120_000).default(30_000),
+  FEISHU_OUTBOUND_TIMEOUT_MS: z.coerce.number().int().min(1_000).max(120_000).default(30_000),
+  FEISHU_TEXT_CHUNK_BYTES: z.coerce.number().int().min(1_024).max(140_000).default(120_000),
+  FEISHU_MAX_REPLY_CHUNKS: z.coerce.number().int().min(1).max(5).default(4),
+  FEISHU_PROBE_TIMEOUT_MS: z.coerce.number().int().min(10_000).max(10 * 60_000).default(120_000),
+  FEISHU_VISIBLE_ACTIVITY_FALLBACK: booleanString.default(true),
+  FEISHU_VISIBLE_ACTIVITY_DELAY_MS: z.coerce.number().int().min(1_000).max(120_000).default(6_000),
   CODEX_COMMAND: z.string().default("codex"),
   CODEX_ARGS: z.string().default("app-server"),
   CODEX_MODEL: optionalNonEmptyString,
@@ -96,14 +110,35 @@ export function loadEnv(source: NodeJS.ProcessEnv = process.env): AppEnv {
     throw new Error("CODEX_MODE=real requires DEEPSEEK_API_KEY");
   }
 
-  if (parsed.data.QQ_MODE === "real") {
+  const chatTransport = resolveChatTransport(parsed.data);
+  if (chatTransport === "qq") {
     if (!parsed.data.QQBOT_APP_ID || !parsed.data.QQBOT_APP_SECRET) {
-      throw new Error("QQ_MODE=real requires QQBOT_APP_ID and QQBOT_APP_SECRET");
+      throw new Error("QQ chat transport requires QQBOT_APP_ID and QQBOT_APP_SECRET");
     }
     if (!parsed.data.OWNER_PAIRING_CODE) {
-      throw new Error("QQ_MODE=real requires OWNER_PAIRING_CODE with at least 12 characters");
+      throw new Error("QQ chat transport requires OWNER_PAIRING_CODE with at least 12 characters");
+    }
+  }
+
+  if (chatTransport === "feishu") {
+    if (!parsed.data.FEISHU_APP_ID || !parsed.data.FEISHU_APP_SECRET) {
+      throw new Error("Feishu chat transport requires FEISHU_APP_ID and FEISHU_APP_SECRET");
+    }
+    if (!parsed.data.OWNER_PAIRING_CODE) {
+      throw new Error("Feishu chat transport requires OWNER_PAIRING_CODE with at least 12 characters");
     }
   }
 
   return parsed.data;
+}
+
+export type ChatTransportSelection = z.infer<typeof chatTransportSchema>;
+
+/**
+ * `CHAT_TRANSPORT` is the new explicit selector. When it is absent, keep the
+ * established QQ_MODE behavior so existing deployments do not switch transports
+ * during the Feishu migration.
+ */
+export function resolveChatTransport(env: AppEnv): ChatTransportSelection {
+  return env.CHAT_TRANSPORT ?? (env.QQ_MODE === "real" ? "qq" : "mock");
 }

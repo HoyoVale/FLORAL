@@ -6,6 +6,7 @@ import {
   listBoundEnvironmentKeys,
   renderConfigurationAuthority,
   resolveConfigurationAuthority,
+  resolveEffectiveChatTransport,
   safeConfigurationJson,
   splitCommandArguments,
 } from "../src/config/federation/config-authority.js";
@@ -97,6 +98,29 @@ describe("configuration federation authority", () => {
     expect(output).toContain("config.qq.presentation.native_typing=false");
     expect(output).toContain("config.qq.presentation.visible_activity_fallback=true");
     expect(output).toContain("config.qq.presentation.visible_activity_delay_ms=6000");
+  });
+
+  it("selects Feishu through the federated authority without requiring QQ secrets", async () => {
+    const authority = await resolveConfigurationAuthority({
+      repositoryRoot,
+      environment: {
+        CHAT_TRANSPORT: "feishu",
+        QQ_MODE: "mock",
+        FEISHU_APP_ID: "feishu-app-id-sensitive",
+        FEISHU_APP_SECRET: "feishu-app-secret-sensitive",
+        OWNER_PAIRING_CODE: "owner-pairing-code-sensitive",
+        FEISHU_VISIBLE_ACTIVITY_DELAY_MS: "7000",
+      },
+    });
+
+    expect(resolveEffectiveChatTransport(authority.effective)).toBe("feishu");
+    expect(authority.effective.feishu.presentation.visible_activity_delay_ms).toBe(7_000);
+    expect(authority.effective.secrets.feishu_app_id.present).toBe(true);
+    expect(authority.effective.secrets.feishu_app_secret.present).toBe(true);
+    const rendered = renderConfigurationAuthority(authority);
+    expect(rendered).toContain("config.chat_transport=feishu");
+    expect(rendered).toContain("config.secret.feishu_app_secret=present");
+    expect(rendered).not.toContain("feishu-app-secret-sensitive");
   });
 
   it("rejects locked-field overrides and unknown keys before runtime adoption", async () => {

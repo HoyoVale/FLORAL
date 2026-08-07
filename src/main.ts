@@ -3,9 +3,16 @@ import { resolve } from "node:path";
 import { ManagedCodexDeepSeekRuntime } from "./agent/managed-codex-deepseek-runtime.js";
 import { MockAgentRuntime } from "./agent/mock-agent.js";
 import { loadEnv } from "./config/env.js";
-import { resolveConfigurationAuthority } from "./config/federation/config-authority.js";
+import {
+  resolveConfigurationAuthority,
+  resolveEffectiveChatTransport,
+} from "./config/federation/config-authority.js";
 import { loadProjectEnv } from "./config/load-project-env.js";
 import { buildMcpRuntimeRegistry } from "./config/mcp/mcp-runtime-registry.js";
+import {
+  buildFeishuRuntimeOptionsContract,
+  resolveFeishuRuntimeCredentials,
+} from "./config/feishu/feishu-runtime-options.js";
 import type { AgentRuntime, ChatTransport } from "./core/contracts.js";
 import { acquireProcessLock } from "./runtime/process-lock.js";
 import { createServiceStateWriter } from "./runtime/service-state.js";
@@ -15,6 +22,7 @@ import { LocalConfirmationBroker } from "./policy/local-confirmation-broker.js";
 import { resolveLocalConfirmationDirectory } from "./policy/local-confirmation-paths.js";
 import { GatewayService } from "./service/gateway.js";
 import { SqliteGatewayStore } from "./storage/sqlite.js";
+import { FeishuTransport } from "./transport/feishu/feishu-transport.js";
 import { MockQqTransport } from "./transport/qq/mock-qq-transport.js";
 import { QqRuntimeAdoptionTransport } from "./transport/qq/qq-runtime-adoption-transport.js";
 
@@ -35,14 +43,8 @@ const serviceState = env.FLORAL_SERVICE_MODE === "launchagent"
 
 await serviceState?.write("starting");
 
-const transport: ChatTransport = env.QQ_MODE === "real"
-  ? new QqRuntimeAdoptionTransport(
-      repositoryRoot,
-      authority,
-      env,
-      process.env,
-    )
-  : new MockQqTransport();
+const chatTransport = resolveEffectiveChatTransport(authority.effective);
+const transport: ChatTransport = createChatTransport(chatTransport);
 
 const agent: AgentRuntime = env.CODEX_MODE === "real"
   ? new ManagedCodexDeepSeekRuntime(env, {}, {
@@ -78,11 +80,21 @@ const gateway = new GatewayService(
       ? { ownerPairingCode: env.OWNER_PAIRING_CODE }
       : {}),
     trustMockOwner: env.MOCK_TRUST_OWNER,
-    conversationUx: {
-      visibleActivityFallback: env.QQ_MODE === "real"
-        && authority.effective.qq.presentation.visible_activity_fallback,
-      visibleActivityDelayMs: authority.effective.qq.presentation.visible_activity_delay_ms,
-    },
+    conversationUx: chatTransport === "mock"
+      ? { visibleActivityFallback: false, visibleActivityDelayMs: 6_000 }
+      : chatTransport === "feishu"
+        ? {
+            visibleActivityFallback:
+              authority.effective.feishu.presentation.visible_activity_fallback,
+            visibleActivityDelayMs:
+              authority.effective.feishu.presentation.visible_activity_delay_ms,
+          }
+        : {
+            visibleActivityFallback:
+              authority.effective.qq.presentation.visible_activity_fallback,
+            visibleActivityDelayMs:
+              authority.effective.qq.presentation.visible_activity_delay_ms,
+          },
     authorization: {
       authority: authorizationAuthority,
       approvalTtlMs: authority.effective.runtime.authorization.approval_ttl_ms,
@@ -104,6 +116,39 @@ const gateway = new GatewayService(
     },
   },
 );
+
+function createChatTransport(
+  selection: "mock" | "qq" | "feishu",
+): ChatTransport {
+  if (selection === "mock") return new MockQqTransport();
+  if (selection === "qq") {
+    return new QqRuntimeAdoptionTransport(
+      repositoryRoot,
+      authority,
+      env,
+      process.env,
+    );
+  }
+
+  const contract = buildFeishuRuntimeOptionsContract(authority.effective);
+  const credentials = resolveFeishuRuntimeCredentials(authority, process.env);
+  return new FeishuTransport({
+    appId: credentials.appId,
+    appSecret: credentials.appSecret,
+    expectedSdkVersion: contract.expectedVersion,
+    startupTimeoutMs: contract.delivery.startupTimeoutMs,
+    outboundTimeoutMs: contract.delivery.outboundTimeoutMs,
+    textChunkBytes: contract.delivery.textChunkBytes,
+    maxReplyChunks: contract.delivery.maxReplyChunks,
+    onFatal: () => {
+      // A dead long-connection worker makes the chat ingress unavailable. Re-enter
+      // the normal SIGTERM shutdown path so LaunchAgent can restart the process.
+      queueMicrotask(() => {
+        if (!shutdownPromise) process.kill(process.pid, "SIGTERM");
+      });
+    },
+  });
+}
 
 let shutdownPromise: Promise<void> | undefined;
 const shutdown = (signal: string): Promise<void> => {

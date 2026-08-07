@@ -39,7 +39,7 @@ activated.
 ## Concrete file-change flow
 
 A `item/fileChange/requestApproval` request is translated to the typed
-`files.write` capability. Only this concrete source can enter the existing QQ
+`files.write` capability. Only this concrete source can enter the existing remote
 one-shot approval flow while FLORAL keeps the policy authority stricter than
 the execution sandbox:
 
@@ -47,21 +47,21 @@ the execution sandbox:
 Codex concrete file-change request
   -> FLORAL AuthorizationAuthority
   -> owner + exact conversation + exact request
-  -> QQ /approve <id> or /deny <id>
+  -> remote /approve <id> or /deny <id>
   -> accept or decline for this request only
 ```
 
 A generic FLORAL `files.write` request is still denied by the FLORAL
 authorization ceiling because the authority continues to evaluate against the
 native read-only baseline. Only a concrete `codex-file-change` request receives
-the scoped exception that can reach QQ. This prevents one approved edit from
+the scoped exception that can reach the remote chat approval flow. This prevents one approved edit from
 becoming a reusable write capability. FLORAL never maps the decision to
 `acceptForSession`.
 
 ## Opaque command escalation
 
 A Codex command approval remains `local-confirmation`, not `chat-confirmation`.
-The gateway publishes only a bounded, redacted notice to QQ and creates a
+The gateway publishes only a bounded, redacted notice to the remote chat and creates a
 private local approval record. The user must resolve it on the Mac:
 
 ```bash

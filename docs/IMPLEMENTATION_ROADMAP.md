@@ -255,6 +255,12 @@
 - 5.4B: QQ Inline Keyboard `[允许一次] [拒绝]` implementation and probes are complete, but production exposure is platform-gated while message-template approval is pending; stable `/approve <id>` and `/deny <id>` remain the production path. Native Markdown stays decoupled from authorization.
 - Authorization semantics remain owned by the existing policy and approval layers.
 
+### Phase 5F — Feishu primary transport migration
+
+- 5F.0/5F.1: add the Feishu transport identity, pin the official Node SDK, normalize P2P text events, and pass a direct target-Mac long-connection receive/send probe while leaving production unchanged.
+- 5F.2: select the primary chat transport explicitly, federate Feishu credentials/options, isolate long-connection ingress in a worker thread, route P2P text through the existing Gateway/SQLite/Codex stack, and keep remote approval on the established text command path. QQ remains a compatibility transport.
+- 5F.3: after the production text chain passes, add Feishu interactive approval cards without moving authorization into the transport.
+
 ## Phase 6 — macOS GUI and visual MCP
 
 - MiMo-backed read-only visual analysis;
@@ -266,7 +272,7 @@
 ## Phase 7 — Better Auth and web administration
 
 - account/session endpoints
-- QQ identity linking
+- chat identity linking (Feishu primary, QQ compatibility)
 - role administration
 - approval and audit dashboard
 - passkeys/2FA for owner administration

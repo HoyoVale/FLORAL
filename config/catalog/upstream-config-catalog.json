@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
-  "reviewedAt": "2026-08-07",
-  "purpose": "Phase 4 configuration federation, Phase 4.0E5 SearXNG runtime adoption, Phase 5.1 cost guard, Phase 5.2 authorization authority, and Phase 5.3A controlled Codex capability activation inventory.",
+  "reviewedAt": "2026-08-08",
+  "purpose": "Phase 4 configuration federation, Phase 5 safety controls, and Phase 5F Feishu primary-chat migration inventory.",
   "classifications": [
     "floral-owned",
     "upstream-managed",
@@ -166,7 +166,7 @@
             "project trust",
             "permission profiles"
           ],
-          "notes": "Phase 5.3A keeps the native/default Codex fail-safe at read-only/never, while FLORAL explicitly starts reviewed app-server turns with workspaceWrite + untrusted (pinned 0.146.1 app-server wire values) and reviewer=user. File-change approval may be granted once through the owner-scoped QQ broker; opaque command escalation remains Mac-local only. Granular permission-profile expansion remains denied."
+          "notes": "Phase 5.3A keeps the native/default Codex fail-safe at read-only/never, while FLORAL explicitly starts reviewed app-server turns with workspaceWrite + untrusted (pinned 0.146.1 app-server wire values) and reviewer=user. File-change approval may be granted once through the owner-scoped remote approval broker; opaque command escalation remains Mac-local only. Granular permission-profile expansion remains denied."
         },
         {
           "id": "mcp-client",
@@ -383,7 +383,7 @@
     {
       "id": "qq-sdk",
       "displayName": "Tencent QQ Bot Node.js SDK",
-      "integrationStatus": "active",
+      "integrationStatus": "active-compatibility",
       "versionSource": "@tencent-connect/qqbot-nodejs package.json",
       "officialSources": [
         "https://www.npmjs.com/package/@tencent-connect/qqbot-nodejs",
@@ -456,6 +456,70 @@
         "declaration-file symbol catalog",
         "config-like type names",
         "current adapter methods"
+      ]
+    },
+    {
+      "id": "feishu-sdk",
+      "displayName": "Feishu / Lark Open Platform Node.js SDK",
+      "integrationStatus": "active-primary",
+      "versionSource": "@larksuiteoapi/node-sdk package.json",
+      "officialSources": [
+        "https://open.feishu.cn/document/server-docs/event-subscription-guide/event-subscription-configure-/request-url-configuration-case",
+        "https://open.feishu.cn/document/server-docs/im-v1/message/events/receive",
+        "https://open.feishu.cn/document/server-docs/im-v1/message/create",
+        "https://github.com/larksuite/node-sdk"
+      ],
+      "groups": [
+        {
+          "id": "floral-adapter",
+          "classification": "floral-owned",
+          "coverage": "typed-runtime-enforced",
+          "knownKeys": [
+            "CHAT_TRANSPORT",
+            "FEISHU_STARTUP_TIMEOUT_MS",
+            "FEISHU_OUTBOUND_TIMEOUT_MS",
+            "FEISHU_TEXT_CHUNK_BYTES",
+            "FEISHU_MAX_REPLY_CHUNKS",
+            "FEISHU_PROBE_TIMEOUT_MS",
+            "FEISHU_VISIBLE_ACTIVITY_FALLBACK",
+            "FEISHU_VISIBLE_ACTIVITY_DELAY_MS"
+          ],
+          "notes": "Phase 5F.2 uses a worker-thread-isolated SDK long connection for ingress and the official message API for outbound delivery. Only P2P user text is admitted in the first production cutover."
+        },
+        {
+          "id": "protocol-capabilities",
+          "classification": "upstream-managed",
+          "coverage": "p2p-text-production",
+          "knownKeys": [
+            "WSClient long connection",
+            "EventDispatcher",
+            "im.message.receive_v1",
+            "im.v1.message.create",
+            "chat_id receive_id",
+            "message_id deduplication"
+          ],
+          "futureKeys": [
+            "card.action.trigger",
+            "interactive cards",
+            "rich text",
+            "files and images"
+          ]
+        },
+        {
+          "id": "credentials",
+          "classification": "locked",
+          "coverage": "managed",
+          "knownKeys": [
+            "FEISHU_APP_ID",
+            "FEISHU_APP_SECRET"
+          ]
+        }
+      ],
+      "runtimeIntrospection": [
+        "installed package version",
+        "direct P2P long-connection probe",
+        "worker lifecycle diagnostics",
+        "message API success code"
       ]
     },
     {
@@ -1018,6 +1082,22 @@
       "file": "src/config/codex/codex-model-catalog.ts",
       "needle": "apply_patch_tool_type: \"freeform\"",
       "risk": "Unknown custom model slugs fall back to Codex metadata without apply_patch; FLORAL must pin a private startup model catalog so concrete file changes can reach the approval broker."
+    },
+    {
+      "id": "feishu.sdk-version",
+      "component": "feishu-sdk",
+      "classification": "locked",
+      "file": "src/config/federation/config-schema.ts",
+      "needle": "expected_version: \"1.36.0\"",
+      "risk": "The production transport depends on the SDK behavior proven by the Phase 5F.1 real long-connection probe; version drift must be explicit."
+    },
+    {
+      "id": "feishu.ingress-worker-isolation",
+      "component": "feishu-sdk",
+      "classification": "locked",
+      "file": "src/config/federation/config-schema.ts",
+      "needle": "ingress_isolation: \"worker-thread\"",
+      "risk": "The pinned SDK long-connection lifecycle is isolated so service shutdown remains deterministic even when the SDK connection loop does not expose a reliable close contract."
     }
   ],
   "environmentKeyPolicies": {
@@ -1032,6 +1112,10 @@
     "BETTER_AUTH_URL": {
       "component": "better-auth",
       "classification": "upstream-managed"
+    },
+    "CHAT_TRANSPORT": {
+      "component": "floral",
+      "classification": "floral-owned"
     },
     "CODEX_ARGS": {
       "component": "codex",
@@ -1104,6 +1188,42 @@
     "DEEPSEEK_THINKING": {
       "component": "deepseek",
       "classification": "upstream-managed"
+    },
+    "FEISHU_APP_ID": {
+      "component": "feishu-sdk",
+      "classification": "locked"
+    },
+    "FEISHU_APP_SECRET": {
+      "component": "feishu-sdk",
+      "classification": "locked"
+    },
+    "FEISHU_MAX_REPLY_CHUNKS": {
+      "component": "feishu-sdk",
+      "classification": "floral-owned"
+    },
+    "FEISHU_OUTBOUND_TIMEOUT_MS": {
+      "component": "feishu-sdk",
+      "classification": "floral-owned"
+    },
+    "FEISHU_PROBE_TIMEOUT_MS": {
+      "component": "feishu-sdk",
+      "classification": "floral-owned"
+    },
+    "FEISHU_STARTUP_TIMEOUT_MS": {
+      "component": "feishu-sdk",
+      "classification": "floral-owned"
+    },
+    "FEISHU_TEXT_CHUNK_BYTES": {
+      "component": "feishu-sdk",
+      "classification": "floral-owned"
+    },
+    "FEISHU_VISIBLE_ACTIVITY_DELAY_MS": {
+      "component": "feishu-sdk",
+      "classification": "floral-owned"
+    },
+    "FEISHU_VISIBLE_ACTIVITY_FALLBACK": {
+      "component": "feishu-sdk",
+      "classification": "floral-owned"
     },
     "FLORAL_BRIDGE_HOST": {
       "component": "floral",

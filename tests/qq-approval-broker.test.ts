@@ -334,7 +334,7 @@ describe("QqApprovalBroker", () => {
     expect(prompt).toContain("本地审批编号=LOCAL777");
     expect(prompt).toContain("请求详情仅在 Mac 本地显示");
     expect(prompt).not.toContain("echo local");
-    expect(prompt).toContain("QQ /approve 无法授权");
+    expect(prompt).toContain("远程 /approve 无法授权");
     expect(broker.pendingCount("conversation-1")).toBe(1);
     expect(await writeLocalApprovalDecision(directory, "LOCAL777", "approve")).toBe("written");
     await expect(decision).resolves.toBe("approve");
