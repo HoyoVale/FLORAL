@@ -181,6 +181,159 @@ describe("FeishuTransport", () => {
     await transport.stop();
   });
 
+  it("sends a native approval card and routes a matching callback through the command path", async () => {
+    const worker = new FakeWorker();
+    const requests: unknown[] = [];
+    const callbackReceived = deferred<void>();
+    const received: unknown[] = [];
+    const transport = new FeishuTransport(options({
+      worker,
+      create: async (request) => {
+        requests.push(request);
+        return { code: 0 };
+      },
+    }));
+    await startTransport(transport, worker, async (message) => {
+      received.push(message);
+      if (message.id.startsWith("feishu-card-action:")) {
+        callbackReceived.resolve(undefined);
+      }
+    });
+
+    worker.message({
+      type: "message",
+      message: {
+        id: "om_request",
+        botId: "cli_floral",
+        externalUserId: "ou_owner",
+        conversationId: "oc_chat",
+        text: "please patch",
+        receivedAtMs: 1_786_123_456_000,
+      },
+    });
+
+    await transport.sendInteractiveApprovalPrompt({
+      conversationId: "oc_chat",
+      approvalId: "ABCDEF123456",
+      capability: "files.write",
+      summary: "write phase5f3b-test.txt",
+      ttlMs: 60_000,
+    });
+
+    expect(requests).toHaveLength(1);
+    const request = requests[0] as {
+      params?: { receive_id_type?: unknown };
+      data?: {
+        receive_id?: unknown;
+        msg_type?: unknown;
+        content?: string;
+      };
+    };
+    expect(request.params?.receive_id_type).toBe("chat_id");
+    expect(request.data?.receive_id).toBe("oc_chat");
+    expect(request.data?.msg_type).toBe("interactive");
+    const card = JSON.parse(request.data?.content ?? "{}") as { schema?: unknown };
+    expect(card.schema).toBe("2.0");
+
+    worker.message({
+      type: "card-action",
+      action: {
+        eventId: "evt_approve",
+        externalUserId: "ou_owner",
+        conversationId: "oc_chat",
+        approvalId: "ABCDEF123456",
+        decision: "approve",
+        receivedAtMs: 1_786_123_456_789,
+      },
+    });
+    await callbackReceived.promise;
+
+    expect(received.at(-1)).toEqual({
+      id: "feishu-card-action:evt_approve",
+      identity: {
+        transport: "feishu",
+        botId: "cli_floral",
+        externalUserId: "ou_owner",
+        conversationId: "oc_chat",
+      },
+      text: "/approve ABCDEF123456",
+      receivedAt: new Date(1_786_123_456_789),
+    });
+    await transport.stop();
+  });
+
+  it("fails closed when an approval callback user or conversation does not match the route", async () => {
+    const worker = new FakeWorker();
+    const received: unknown[] = [];
+    const transport = new FeishuTransport(options({ worker }));
+    await startTransport(transport, worker, async (message) => {
+      received.push(message);
+    });
+
+    worker.message({
+      type: "message",
+      message: {
+        id: "om_request",
+        botId: "cli_floral",
+        externalUserId: "ou_owner",
+        conversationId: "oc_chat",
+        text: "please patch",
+        receivedAtMs: 1_786_123_456_000,
+      },
+    });
+    await transport.sendInteractiveApprovalPrompt({
+      conversationId: "oc_chat",
+      approvalId: "ABCDEF123456",
+      capability: "files.write",
+      summary: "write",
+      ttlMs: 60_000,
+    });
+    const baseline = received.length;
+
+    worker.message({
+      type: "card-action",
+      action: {
+        eventId: "evt_foreign",
+        externalUserId: "ou_attacker",
+        conversationId: "oc_chat",
+        approvalId: "ABCDEF123456",
+        decision: "approve",
+        receivedAtMs: 1_786_123_456_789,
+      },
+    });
+    worker.message({
+      type: "card-action",
+      action: {
+        eventId: "evt_wrong_chat",
+        externalUserId: "ou_owner",
+        conversationId: "oc_other",
+        approvalId: "ABCDEF123456",
+        decision: "approve",
+        receivedAtMs: 1_786_123_456_790,
+      },
+    });
+    await Promise.resolve();
+
+    expect(received).toHaveLength(baseline);
+    await transport.stop();
+  });
+
+  it("falls back safely when no inbound identity route exists for an approval card", async () => {
+    const worker = new FakeWorker();
+    const transport = new FeishuTransport(options({ worker }));
+    await startTransport(transport, worker);
+
+    await expect(transport.sendInteractiveApprovalPrompt({
+      conversationId: "oc_chat",
+      approvalId: "ABCDEF123456",
+      capability: "files.write",
+      summary: "write",
+      ttlMs: 60_000,
+    })).rejects.toThrow("route is unavailable");
+
+    await transport.stop();
+  });
+
   it("reports an unexpected post-start worker failure to the service supervisor hook", async () => {
     const worker = new FakeWorker();
     const fatal: Error[] = [];

@@ -1,6 +1,10 @@
 import { parentPort, workerData } from "node:worker_threads";
 import * as Lark from "@larksuiteoapi/node-sdk";
 import {
+  normalizeFeishuApprovalCardAction,
+  type FeishuCardActionEvent,
+} from "./feishu-card.js";
+import {
   normalizeFeishuMessageEvent,
   type FeishuMessageEvent,
 } from "./feishu-message.js";
@@ -39,6 +43,31 @@ const eventDispatcher = new Lark.EventDispatcher({}).register({
     });
     return {};
   },
+
+  "card.action.trigger": async (data: unknown) => {
+    const action = normalizeFeishuApprovalCardAction(
+      data as FeishuCardActionEvent,
+      appId,
+    );
+    if (!action) {
+      return callbackToast("warning", "无法识别该审批操作");
+    }
+
+    // The callback response must return immediately. Parent-process routing still
+    // validates the short-lived approval route before entering Gateway.
+    post({
+      type: "card-action",
+      action: {
+        eventId: action.eventId,
+        externalUserId: action.externalUserId,
+        conversationId: action.conversationId,
+        approvalId: action.approvalId,
+        decision: action.decision,
+        receivedAtMs: action.receivedAt.getTime(),
+      },
+    });
+    return callbackToast("success", "审批操作已收到，FLORAL 正在处理");
+  },
 });
 
 const wsClient = new Lark.WSClient({
@@ -61,6 +90,18 @@ try {
 
 function post(message: FeishuWorkerMessage): void {
   port.postMessage(message);
+}
+
+function callbackToast(
+  type: "success" | "warning" | "error",
+  content: string,
+): Record<string, unknown> {
+  return {
+    toast: {
+      type,
+      content,
+    },
+  };
 }
 
 function requireString(value: unknown, label: string): string {

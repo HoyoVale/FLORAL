@@ -1,7 +1,12 @@
 import { Worker } from "node:worker_threads";
 import * as Lark from "@larksuiteoapi/node-sdk";
-import type { ChatTransport } from "../../core/contracts.js";
+import type {
+  ChatTransport,
+  InteractiveApprovalPrompt,
+  InteractiveApprovalTransport,
+} from "../../core/contracts.js";
 import type { IncomingMessage, OutgoingMessage } from "../../core/types.js";
+import { buildFeishuApprovalCard } from "./feishu-card.js";
 import { assertInstalledFeishuSdkVersion } from "./feishu-sdk-contract.js";
 import type {
   FeishuWorkerConfig,
@@ -32,7 +37,7 @@ interface FeishuOutboundClient {
           params: { receive_id_type: "chat_id" };
           data: {
             receive_id: string;
-            msg_type: "text";
+            msg_type: "text" | "interactive";
             content: string;
           };
         }): Promise<unknown>;
@@ -48,10 +53,20 @@ export interface FeishuWorkerLike {
   terminate(): Promise<number>;
 }
 
-export class FeishuTransport implements ChatTransport {
+interface FeishuApprovalInteractionRoute {
+  conversationId: string;
+  expectedExternalUserId: string;
+  timer: ReturnType<typeof setTimeout>;
+}
+
+const MAX_FEISHU_CONVERSATION_USERS = 512;
+
+export class FeishuTransport implements ChatTransport, InteractiveApprovalTransport {
   readonly name = "feishu";
   readonly #client: FeishuOutboundClient;
   readonly #outboundTails = new Map<string, Promise<void>>();
+  readonly #conversationUsers = new Map<string, string>();
+  readonly #approvalInteractionRoutes = new Map<string, FeishuApprovalInteractionRoute>();
   #worker: FeishuWorkerLike | undefined;
   #onMessage: ((message: IncomingMessage) => Promise<void>) | undefined;
   #started = false;
@@ -107,6 +122,10 @@ export class FeishuTransport implements ChatTransport {
       }
       if (message.type === "message") {
         this.#dispatchInbound(message);
+        return;
+      }
+      if (message.type === "card-action") {
+        this.#dispatchApprovalAction(message);
       }
     });
     worker.on("error", (error) => {
@@ -161,6 +180,65 @@ export class FeishuTransport implements ChatTransport {
     }
   }
 
+  async sendInteractiveApprovalPrompt(
+    prompt: InteractiveApprovalPrompt,
+  ): Promise<void> {
+    if (!this.#started || this.#stopped) {
+      throw new Error("Feishu transport is not ready");
+    }
+
+    const conversationId = prompt.conversationId.trim();
+    if (!conversationId) {
+      throw new Error("Feishu approval conversation id must not be empty");
+    }
+    const expectedExternalUserId = this.#conversationUsers.get(conversationId);
+    if (!expectedExternalUserId) {
+      throw new Error("Feishu approval route is unavailable for this conversation");
+    }
+
+    const approvalId = prompt.approvalId.trim().toUpperCase();
+    const card = buildFeishuApprovalCard({
+      ...prompt,
+      conversationId,
+      approvalId,
+    });
+
+    const previous = this.#outboundTails.get(conversationId) ?? Promise.resolve();
+    const current = previous
+      .catch(() => undefined)
+      .then(async () => {
+        const response = await withTimeout(
+          this.#client.im.v1.message.create({
+            params: { receive_id_type: "chat_id" },
+            data: {
+              receive_id: conversationId,
+              msg_type: "interactive",
+              content: JSON.stringify(card),
+            },
+          }),
+          this.options.outboundTimeoutMs,
+          "Feishu interactive approval",
+        );
+        assertFeishuApiSuccess(response);
+      });
+    this.#outboundTails.set(conversationId, current);
+    try {
+      await current;
+    } finally {
+      if (this.#outboundTails.get(conversationId) === current) {
+        this.#outboundTails.delete(conversationId);
+      }
+    }
+
+    this.#rememberApprovalInteractionRoute(
+      approvalId,
+      conversationId,
+      expectedExternalUserId,
+      prompt.ttlMs,
+    );
+    process.stderr.write("feishu.transport.approval_card=sent scope=p2p\n");
+  }
+
   async stop(): Promise<void> {
     if (this.#stopped) return;
     this.#stopped = true;
@@ -169,6 +247,8 @@ export class FeishuTransport implements ChatTransport {
     const worker = this.#worker;
     this.#worker = undefined;
     this.#outboundTails.clear();
+    this.#conversationUsers.clear();
+    this.#clearApprovalInteractionRoutes();
     if (worker) await worker.terminate().catch(() => undefined);
   }
 
@@ -202,6 +282,11 @@ export class FeishuTransport implements ChatTransport {
     const receivedAt = new Date(value.receivedAtMs);
     if (!Number.isFinite(receivedAt.getTime())) return;
 
+    this.#rememberConversationUser(
+      value.conversationId,
+      value.externalUserId,
+    );
+
     // Return to the Feishu worker immediately. Gateway/Codex processing happens in
     // the parent and message_id remains the durable SQLite deduplication key.
     void onMessage({
@@ -219,6 +304,94 @@ export class FeishuTransport implements ChatTransport {
         `feishu.transport.inbound_handler_error=${errorName(error)}\n`,
       );
     });
+  }
+
+  #dispatchApprovalAction(
+    message: Extract<FeishuWorkerMessage, { type: "card-action" }>,
+  ): void {
+    const onMessage = this.#onMessage;
+    if (!onMessage || this.#stopped) return;
+
+    const value = message.action;
+    const approvalId = value.approvalId.trim().toUpperCase();
+    const route = this.#approvalInteractionRoutes.get(approvalId);
+    if (!route) {
+      process.stderr.write("feishu.transport.card_action_ignored=unknown-approval\n");
+      return;
+    }
+    if (
+      route.conversationId !== value.conversationId
+      || route.expectedExternalUserId !== value.externalUserId
+    ) {
+      process.stderr.write("feishu.transport.card_action_ignored=scope-mismatch\n");
+      return;
+    }
+
+    const receivedAt = new Date(value.receivedAtMs);
+    if (!Number.isFinite(receivedAt.getTime())) {
+      process.stderr.write("feishu.transport.card_action_ignored=invalid-time\n");
+      return;
+    }
+
+    process.stderr.write(
+      `feishu.transport.approval_card_action=received decision=${value.decision}\n`,
+    );
+    void onMessage({
+      id: `feishu-card-action:${value.eventId}`,
+      identity: {
+        transport: "feishu",
+        botId: this.options.appId,
+        externalUserId: value.externalUserId,
+        conversationId: value.conversationId,
+      },
+      text: `/${value.decision} ${approvalId}`,
+      receivedAt,
+    }).catch((error) => {
+      process.stderr.write(
+        `feishu.transport.card_action_handler_error=${errorName(error)}\n`,
+      );
+    });
+  }
+
+  #rememberConversationUser(conversationId: string, externalUserId: string): void {
+    this.#conversationUsers.delete(conversationId);
+    this.#conversationUsers.set(conversationId, externalUserId);
+    while (this.#conversationUsers.size > MAX_FEISHU_CONVERSATION_USERS) {
+      const oldest = this.#conversationUsers.keys().next().value as string | undefined;
+      if (!oldest) break;
+      this.#conversationUsers.delete(oldest);
+    }
+  }
+
+  #rememberApprovalInteractionRoute(
+    approvalId: string,
+    conversationId: string,
+    expectedExternalUserId: string,
+    ttlMs: number,
+  ): void {
+    const existing = this.#approvalInteractionRoutes.get(approvalId);
+    if (existing) clearTimeout(existing.timer);
+
+    const timer = setTimeout(() => {
+      const current = this.#approvalInteractionRoutes.get(approvalId);
+      if (current?.timer === timer) {
+        this.#approvalInteractionRoutes.delete(approvalId);
+      }
+    }, ttlMs);
+    timer.unref?.();
+
+    this.#approvalInteractionRoutes.set(approvalId, {
+      conversationId,
+      expectedExternalUserId,
+      timer,
+    });
+  }
+
+  #clearApprovalInteractionRoutes(): void {
+    for (const route of this.#approvalInteractionRoutes.values()) {
+      clearTimeout(route.timer);
+    }
+    this.#approvalInteractionRoutes.clear();
   }
 
   #reportFatal(error: Error): void {

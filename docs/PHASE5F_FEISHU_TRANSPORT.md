@@ -224,3 +224,40 @@ feishu.card_probe.result=ok
 Only after this probe passes does 5F.3B expose Feishu native cards to
 `InteractiveApprovalTransport`; `files.write` will then use the native card while
 `shell.execute` remains Mac-local and `system.admin` remains denied.
+
+
+## Phase 5F.3B — production native approval cards
+
+After 5F.3A confirmed real Feishu JSON 2.0 rendering and
+`card.action.trigger` delivery, the production `FeishuTransport` now advertises
+`InteractiveApprovalTransport`.
+
+The authorization authority itself is unchanged:
+
+```text
+Codex files.write
+  -> approval broker allocates one short-lived public approval ID
+  -> FeishuTransport sends [允许一次] / [拒绝]
+  -> worker returns the Feishu callback toast immediately
+  -> parent validates approvalId + open_chat_id + operator.open_id
+  -> matching callback is converted to the existing /approve or /deny command path
+  -> Gateway resolves the bound Feishu identity
+  -> broker re-checks owner + internal conversation + TTL + one-shot state
+```
+
+This means the card is presentation only. It cannot grant a capability by itself.
+
+Fail-closed behavior:
+
+- no remembered P2P user for the chat -> interactive delivery throws, so the
+  existing broker sends the text `/approve <id>` / `/deny <id>` fallback;
+- unknown / expired approval ID -> card callback ignored by the transport;
+- callback user mismatch -> ignored;
+- callback chat mismatch -> ignored;
+- duplicate callback event -> durable Gateway message de-duplication and broker
+  one-shot state prevent a second grant;
+- service restart -> in-memory card routes disappear and pending approvals are
+  already cancelled by Gateway shutdown.
+
+`files.write` can use the Feishu card. `shell.execute` remains Mac-local
+confirmation only. `system.admin` remains denied.

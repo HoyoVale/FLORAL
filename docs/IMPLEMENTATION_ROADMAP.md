@@ -260,6 +260,7 @@
 - 5F.0/5F.1: add the Feishu transport identity, pin the official Node SDK, normalize P2P text events, and pass a direct target-Mac long-connection receive/send probe while leaving production unchanged.
 - 5F.2: select the primary chat transport explicitly, federate Feishu credentials/options, isolate long-connection ingress in a worker thread, route P2P text through the existing Gateway/SQLite/Codex stack, and keep remote approval on the established text command path. QQ remains a compatibility transport.
 - 5F.3A: Feishu JSON 2.0 approval-card isolation probe; validates `card.action.trigger` over the existing long connection before production authorization exposure.
+- 5F.3B: Feishu native approval cards enter production as a transport presentation capability; callback user/chat/approval routes fail closed and final authorization still runs through the existing owner/conversation/TTL/one-shot broker checks.
 - 5F.3: after the production text chain passes, add Feishu interactive approval cards without moving authorization into the transport.
 
 ## Phase 6 — macOS GUI and visual MCP
