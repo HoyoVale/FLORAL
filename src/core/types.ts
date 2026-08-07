@@ -69,11 +69,32 @@ export interface OutgoingMediaMessage {
   caption?: string | undefined;
 }
 
+export type AgentArtifactSource =
+  | {
+      type: "mcp";
+      serverId: string;
+      toolName: string;
+    }
+  | {
+      type: "floral";
+      capability: Capability;
+    };
+
+export interface AgentArtifact {
+  id: string;
+  kind: OutgoingMediaKind;
+  localPath: string;
+  source: AgentArtifactSource;
+  fileName?: string | undefined;
+  caption?: string | undefined;
+}
+
 export type AgentEvent =
   | { type: "run.started"; threadId: string }
   | { type: "assistant.delta"; text: string }
   | { type: "tool.started"; name: string; detail?: unknown }
   | { type: "tool.completed"; name: string; detail?: unknown }
+  | { type: "artifact.available"; artifact: AgentArtifact }
   | {
       type: "approval.requested";
       requestId: string;

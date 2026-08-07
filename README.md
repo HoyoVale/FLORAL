@@ -212,3 +212,5 @@ The optional script uses generic SSH, runs validation/build/tests on the Mac, an
 Codex app-server is currently an experimental integration surface. The project keeps it behind `AgentRuntime`, records the Codex version, and includes schema generation so protocol changes remain isolated.
 
 See `docs/CODEX_APP_SERVER_PHASE1.md`, `docs/ENVIRONMENT_SETUP.md`, `docs/SECURITY_BASELINE.md`, and `docs/IMPLEMENTATION_ROADMAP.md` before enabling real machine control.
+
+Phase 5F.4C adds a provenance-bound AgentArtifact outbound egress policy before Visual MCP.

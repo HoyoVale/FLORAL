@@ -1,6 +1,7 @@
 import {
   supportsConversationActivity,
   supportsInteractiveApproval,
+  supportsMediaTransport,
   type AgentRuntime,
   type ChatTransport,
   type ConversationActivityState,
@@ -20,6 +21,10 @@ import {
 import type { AuthorizationAuthority } from "../policy/authorization-authority.js";
 import { QqApprovalBroker } from "../policy/qq-approval-broker.js";
 import type { LocalConfirmationBroker } from "../policy/local-confirmation-broker.js";
+import type {
+  ArtifactEgressPolicy,
+  ArtifactEgressRunBudget,
+} from "../policy/artifact-egress-policy.js";
 import { formatGatewayStatus, gatewayHelpText } from "./gateway-status.js";
 
 export interface GatewayOptions {
@@ -39,6 +44,9 @@ export interface GatewayOptions {
     ownerOnlyRemoteApproval: boolean;
     localConfirmation?: LocalConfirmationBroker | undefined;
   } | undefined;
+  artifactEgress?: {
+    policy: ArtifactEgressPolicy;
+  } | undefined;
 }
 
 interface ActiveRun {
@@ -49,6 +57,8 @@ interface ActiveRun {
   visibleActivitySatisfied: boolean;
   waitingForApproval: boolean;
   latestToolName?: string | undefined;
+  artifactEgressTail: Promise<void>;
+  artifactBudget?: ArtifactEgressRunBudget | undefined;
 }
 
 export class GatewayService {
@@ -410,6 +420,10 @@ export class GatewayService {
       interruptSent: false,
       visibleActivitySatisfied: false,
       waitingForApproval: false,
+      artifactEgressTail: Promise.resolve(),
+      ...(this.options.artifactEgress
+        ? { artifactBudget: this.options.artifactEgress.policy.createRunBudget() }
+        : {}),
     };
     this.#activeRuns.set(resolved.conversationId, active);
 
@@ -466,9 +480,15 @@ export class GatewayService {
             },
           } : {}),
         },
-        (event) => this.#handleAgentEvent(resolved, active, event),
+        (event) => this.#handleAgentEvent(
+          message.identity.conversationId,
+          resolved,
+          active,
+          event,
+        ),
       );
 
+      await active.artifactEgressTail.catch(() => undefined);
       await this.store.setActiveThread(resolved.conversationId, result.threadId);
       await this.store.appendAudit({
         userId: resolved.userId,
@@ -515,6 +535,7 @@ export class GatewayService {
   }
 
   #handleAgentEvent(
+    deliveryConversationId: string,
     resolved: ResolvedGatewayIdentity,
     active: ActiveRun,
     event: AgentEvent,
@@ -535,6 +556,18 @@ export class GatewayService {
         eventType: `agent.${event.type}`,
         payload: { tool: event.name },
       }).catch(() => undefined);
+      return;
+    }
+
+    if (event.type === "artifact.available") {
+      active.artifactEgressTail = active.artifactEgressTail
+        .catch(() => undefined)
+        .then(() => this.#deliverArtifact(
+          deliveryConversationId,
+          resolved,
+          active,
+          event.artifact,
+        ));
       return;
     }
 
@@ -631,6 +664,108 @@ export class GatewayService {
         },
       });
     }
+  }
+
+  async #deliverArtifact(
+    deliveryConversationId: string,
+    resolved: ResolvedGatewayIdentity,
+    active: ActiveRun,
+    artifact: Extract<AgentEvent, { type: "artifact.available" }>["artifact"],
+  ): Promise<void> {
+    const egress = this.options.artifactEgress;
+    const budget = active.artifactBudget;
+    if (!egress || !budget) {
+      await this.#auditArtifactEgress(
+        resolved,
+        artifact,
+        "denied",
+        "policy-disabled",
+      );
+      return;
+    }
+    const mediaTransport = supportsMediaTransport(this.transport)
+      ? this.transport
+      : undefined;
+    if (!mediaTransport) {
+      await this.#auditArtifactEgress(
+        resolved,
+        artifact,
+        "denied",
+        "transport-media-unsupported",
+      );
+      return;
+    }
+
+    const decision = await egress.policy.authorizeAndReserve({
+      role: resolved.role,
+      artifact,
+      budget,
+    });
+    if (decision.status === "deny") {
+      await this.#auditArtifactEgress(
+        resolved,
+        artifact,
+        "denied",
+        decision.reason,
+      );
+      return;
+    }
+
+    try {
+      await mediaTransport.sendMedia({
+        conversationId: deliveryConversationId,
+        ...decision.media,
+      });
+      await this.store.appendAudit({
+        userId: resolved.userId,
+        conversationId: resolved.conversationId,
+        eventType: "artifact.egress_sent",
+        payload: {
+          artifactId: artifact.id,
+          kind: artifact.kind,
+          sourceCapability: decision.sourceCapability,
+          bytes: decision.byteLength,
+        },
+      });
+    } catch (error) {
+      await this.store.appendAudit({
+        userId: resolved.userId,
+        conversationId: resolved.conversationId,
+        eventType: "artifact.egress_failed",
+        payload: {
+          artifactId: artifact.id,
+          kind: artifact.kind,
+          errorType: error instanceof Error ? error.name : "unknown",
+        },
+      }).catch(() => undefined);
+      process.stderr.write(
+        `artifact.egress_failed=${safeLogToken(
+          error instanceof Error ? error.name : "Error",
+        )}\n`,
+      );
+    }
+  }
+
+  async #auditArtifactEgress(
+    resolved: ResolvedGatewayIdentity,
+    artifact: Extract<AgentEvent, { type: "artifact.available" }>["artifact"],
+    outcome: "denied",
+    reason: string,
+  ): Promise<void> {
+    await this.store.appendAudit({
+      userId: resolved.userId,
+      conversationId: resolved.conversationId,
+      eventType: "artifact.egress_denied",
+      payload: {
+        artifactId: artifact.id,
+        kind: artifact.kind,
+        outcome,
+        reason,
+      },
+    }).catch(() => undefined);
+    process.stderr.write(
+      `artifact.egress_denied=${safeLogToken(reason)} kind=${safeLogToken(artifact.kind)}\n`,
+    );
   }
 
   async #deliverWithAudit(

@@ -263,6 +263,7 @@
 - 5F.3B: Feishu native approval cards enter production as a transport presentation capability; callback user/chat/approval routes fail closed and final authorization still runs through the existing owner/conversation/TTL/one-shot broker checks.
 - 5F.4A: Markdown-aware Feishu `post`/`md` output with Feishu-only mention/image directives neutralized and oversize fallback to text.
 - 5F.4B: transport-neutral local media delivery seam plus native Feishu image/file upload and send; Agent-selected file egress remains deferred to 5F.4C.
+- 5F.4C: introduce provenance-bound `AgentArtifact` events and a local outbound egress policy. Remote delivery requires `message.send` plus the artifact source capability, a developer-allowlisted MCP producer, an `artifacts/outbound` path boundary, and per-run count/byte budgets before `MediaTransport` is invoked.
 - 5F.3: after the production text chain passes, add Feishu interactive approval cards without moving authorization into the transport.
 
 ## Phase 6 — macOS GUI and visual MCP

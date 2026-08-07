@@ -330,3 +330,64 @@ client.im.v1.file.create(...)  -> { file_key: "..." }
 
 FLORAL reads those top-level keys and retains nested `data.image_key` /
 `data.file_key` only as a compatibility fallback for injected/custom clients.
+
+
+## Phase 5F.4C — AgentArtifact and outbound egress policy
+
+Phase 5F.4B proved that FLORAL can upload native Feishu images and files. 5F.4C
+adds the security boundary required before Visual MCP is allowed to use that
+transport.
+
+The Agent runtime may now emit an explicit `artifact.available` event containing
+an `AgentArtifact`. Merely creating or capturing an artifact does not imply that
+it may leave the Mac.
+
+Production flow:
+
+```text
+MCP tool creates screenshot/file
+  -> local AgentArtifact event
+  -> ArtifactEgressPolicy
+      -> bound chat role has message.send
+      -> bound chat role has the artifact source capability
+      -> MCP producer is developer-allowlisted
+      -> local path resolves under artifacts/outbound
+      -> regular single-link file only
+      -> per-run count/byte budget
+  -> MediaTransport
+  -> Feishu native image/file
+```
+
+The initial local allowlist is intentionally narrow:
+
+```text
+<CODEX_CWD>/artifacts/outbound
+```
+
+Only the configured macOS/vision MCP tool identifiers are accepted as MCP
+provenance. Internal `source.type=floral` artifacts are denied in production
+until a later reviewed producer is explicitly added.
+
+Current per-run outbound limits:
+
+```text
+max artifacts: 4
+max total bytes: 25,000,000
+```
+
+Authorization remains layered:
+
+- `screen.capture` controls whether the role may obtain a screenshot;
+- `message.send` separately controls whether the role may export an artifact;
+- the owner role currently has `message.send`; operator/viewer do not;
+- `system.admin` is unrelated and remains governed by the existing deny/local
+  policy discussion.
+
+The Gateway queues artifact egress and waits for the queue before the final text
+reply. Media failures or policy denials are audited but do not convert a
+successful Agent run into a failed run. Audit records intentionally omit the
+local filesystem path.
+
+Phase 6 adapters must write any remotely deliverable screenshot into the
+allowlisted outbound root and emit a provenance-bound `AgentArtifact`; they must
+not call Feishu APIs directly.

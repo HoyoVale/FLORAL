@@ -18,6 +18,7 @@ import { acquireProcessLock } from "./runtime/process-lock.js";
 import { createServiceStateWriter } from "./runtime/service-state.js";
 import { readDeepSeekCostGuardSnapshot } from "./runtime/cost/deepseek-cost-guard.js";
 import { AuthorizationAuthority } from "./policy/authorization-authority.js";
+import { ArtifactEgressPolicy } from "./policy/artifact-egress-policy.js";
 import { LocalConfirmationBroker } from "./policy/local-confirmation-broker.js";
 import { resolveLocalConfirmationDirectory } from "./policy/local-confirmation-paths.js";
 import { GatewayService } from "./service/gateway.js";
@@ -69,6 +70,28 @@ const localConfirmation = new LocalConfirmationBroker({
   enabled: authority.effective.runtime.authorization.local_confirmation_enabled && process.platform === "darwin",
 });
 await localConfirmation.initialize();
+
+const artifactEgressPolicy = new ArtifactEgressPolicy({
+  enabled: chatTransport === "feishu",
+  allowedRoots: [
+    resolve(env.CODEX_CWD, "artifacts", "outbound"),
+  ],
+  allowedMcpProducers: [
+    ...authority.effective.mcp.macos.enabled_tools.map((toolName) =>
+      `${authority.effective.mcp.macos.id}/${toolName}`
+    ),
+    ...authority.effective.mcp.vision.enabled_tools.map((toolName) =>
+      `${authority.effective.mcp.vision.id}/${toolName}`
+    ),
+  ],
+  // No Agent may self-label arbitrary files as a trusted FLORAL artifact yet.
+  // Phase 6 visual adapters will use MCP provenance.
+  allowedFloralCapabilities: [],
+  maxArtifactsPerRun: 4,
+  maxBytesPerRun: 25_000_000,
+});
+await artifactEgressPolicy.initialize();
+
 const gateway = new GatewayService(
   transport,
   agent,
@@ -101,6 +124,9 @@ const gateway = new GatewayService(
       maxPendingApprovals: authority.effective.runtime.authorization.max_pending_approvals,
       ownerOnlyRemoteApproval: authority.effective.runtime.authorization.owner_only_remote_approval,
       localConfirmation,
+    },
+    artifactEgress: {
+      policy: artifactEgressPolicy,
     },
     runtimeStatusLines: async () => {
       const snapshot = await readDeepSeekCostGuardSnapshot(
