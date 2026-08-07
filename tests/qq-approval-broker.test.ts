@@ -122,12 +122,19 @@ describe("QqApprovalBroker", () => {
 
   it("falls back to the existing command prompt when native keyboard delivery fails", async () => {
     const sent: string[] = [];
+    let resolveFallbackSent!: () => void;
+    const fallbackSent = new Promise<void>((resolve) => {
+      resolveFallbackSent = resolve;
+    });
     const broker = new QqApprovalBroker({
       ttlMs: 5_000,
       maxPending: 4,
       ownerOnly: true,
       authority: writableAuthority(),
-      send: async (_conversationId, text) => { sent.push(text); },
+      send: async (_conversationId, text) => {
+        sent.push(text);
+        resolveFallbackSent();
+      },
       sendInteractive: async () => { throw new Error("keyboard unavailable"); },
       audit: async () => undefined,
       createPublicId: () => "FALLBACK1",
@@ -146,8 +153,7 @@ describe("QqApprovalBroker", () => {
       summary: "write",
       source: "codex",
     });
-    await Promise.resolve();
-    await Promise.resolve();
+    await fallbackSent;
 
     expect(sent.at(-1)).toContain("审批编号=FALLBACK1");
     expect(sent.at(-1)).toContain("/approve FALLBACK1");
