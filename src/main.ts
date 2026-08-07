@@ -1,3 +1,4 @@
+import { homedir } from "node:os";
 import { resolve } from "node:path";
 import { ManagedCodexDeepSeekRuntime } from "./agent/managed-codex-deepseek-runtime.js";
 import { MockAgentRuntime } from "./agent/mock-agent.js";
@@ -10,6 +11,8 @@ import { acquireProcessLock } from "./runtime/process-lock.js";
 import { createServiceStateWriter } from "./runtime/service-state.js";
 import { readDeepSeekCostGuardSnapshot } from "./runtime/cost/deepseek-cost-guard.js";
 import { AuthorizationAuthority } from "./policy/authorization-authority.js";
+import { LocalConfirmationBroker } from "./policy/local-confirmation-broker.js";
+import { resolveLocalConfirmationDirectory } from "./policy/local-confirmation-paths.js";
 import { GatewayService } from "./service/gateway.js";
 import { SqliteGatewayStore } from "./storage/sqlite.js";
 import { MockQqTransport } from "./transport/qq/mock-qq-transport.js";
@@ -42,15 +45,27 @@ const transport: ChatTransport = env.QQ_MODE === "real"
   : new MockQqTransport();
 
 const agent: AgentRuntime = env.CODEX_MODE === "real"
-  ? new ManagedCodexDeepSeekRuntime(env)
+  ? new ManagedCodexDeepSeekRuntime(env, {}, {
+      codexTurnApprovalPolicy: authority.effective.runtime.authorization.codex_turn_approval_policy,
+      codexSandboxMode: "read-only",
+    })
   : new MockAgentRuntime();
 
 const store = await SqliteGatewayStore.open(resolve(env.DATABASE_PATH));
 const authorizationAuthority = new AuthorizationAuthority({
   enabled: authority.effective.runtime.authorization.enabled,
   sandboxMode: authority.effective.codex.sandbox.mode,
+  allowRemoteFileChangeApproval: authority.effective.runtime.authorization.allow_remote_file_change_approval,
   mcpRegistry: buildMcpRuntimeRegistry(authority.effective),
 });
+const localConfirmation = new LocalConfirmationBroker({
+  directory: resolveLocalConfirmationDirectory(homedir()),
+  ttlMs: authority.effective.runtime.authorization.local_approval_ttl_ms,
+  pollIntervalMs: authority.effective.runtime.authorization.local_approval_poll_ms,
+  maxPending: authority.effective.runtime.authorization.max_pending_approvals,
+  enabled: authority.effective.runtime.authorization.local_confirmation_enabled && process.platform === "darwin",
+});
+await localConfirmation.initialize();
 const gateway = new GatewayService(
   transport,
   agent,
@@ -67,6 +82,7 @@ const gateway = new GatewayService(
       approvalTtlMs: authority.effective.runtime.authorization.approval_ttl_ms,
       maxPendingApprovals: authority.effective.runtime.authorization.max_pending_approvals,
       ownerOnlyRemoteApproval: authority.effective.runtime.authorization.owner_only_remote_approval,
+      localConfirmation,
     },
     runtimeStatusLines: async () => {
       const snapshot = await readDeepSeekCostGuardSnapshot(

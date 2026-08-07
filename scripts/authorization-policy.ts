@@ -12,6 +12,7 @@ const config = await resolveConfigurationAuthority({
 const authorization = new AuthorizationAuthority({
   enabled: config.effective.runtime.authorization.enabled,
   sandboxMode: config.effective.codex.sandbox.mode,
+  allowRemoteFileChangeApproval: config.effective.runtime.authorization.allow_remote_file_change_approval,
   mcpRegistry: buildMcpRuntimeRegistry(config.effective),
 });
 
@@ -43,6 +44,11 @@ const lines = [
   `policy.authorization.approval_ttl_ms=${String(config.effective.runtime.authorization.approval_ttl_ms)}`,
   `policy.authorization.max_pending=${String(config.effective.runtime.authorization.max_pending_approvals)}`,
   `policy.authorization.owner_only_remote=${String(config.effective.runtime.authorization.owner_only_remote_approval)}`,
+  `policy.authorization.codex_turn_approval_policy=${config.effective.runtime.authorization.codex_turn_approval_policy}`,
+  `policy.authorization.remote_file_change=${String(config.effective.runtime.authorization.allow_remote_file_change_approval)}`,
+  `policy.authorization.local_confirmation=${String(config.effective.runtime.authorization.local_confirmation_enabled)}`,
+  `policy.authorization.local_approval_ttl_ms=${String(config.effective.runtime.authorization.local_approval_ttl_ms)}`,
+  `policy.authorization.local_approval_poll_ms=${String(config.effective.runtime.authorization.local_approval_poll_ms)}`,
   `policy.sandbox=${config.effective.codex.sandbox.mode}`,
   `policy.codex.command=${renderDecision(command)}`,
   `policy.codex.file_change=${renderDecision(fileChange)}`,
@@ -58,8 +64,14 @@ if (check) {
   if (command.status !== "approval-required" || command.approvalLevel !== "local-confirmation") {
     failures.push("codex-command-not-local-only");
   }
-  if (fileChange.status !== "deny" || fileChange.reason !== "sandbox-capability-denied") {
-    failures.push("read-only-file-change-not-denied");
+  if (fileChange.status !== "approval-required" || fileChange.approvalLevel !== "chat-confirmation") {
+    failures.push("controlled-file-change-not-chat-confirmation");
+  }
+  if (config.effective.runtime.authorization.codex_turn_approval_policy !== "on-request") {
+    failures.push("codex-turn-approval-policy-not-on-request");
+  }
+  if (!config.effective.runtime.authorization.local_confirmation_enabled) {
+    failures.push("local-confirmation-disabled");
   }
   if (systemAdmin.status !== "deny" || systemAdmin.approvalLevel !== "local-confirmation") {
     failures.push("system-admin-not-local-confirmation");

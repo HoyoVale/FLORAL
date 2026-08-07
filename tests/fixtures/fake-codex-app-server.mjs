@@ -49,6 +49,13 @@ lines.on("line", (line) => {
   }
 
   if (message.method === "thread/start") {
+    if (scenario === "on-request-file-approval" && message.params?.approvalPolicy !== "on-request") {
+      send({
+        id: message.id,
+        error: { code: -32602, message: `invalid thread approval policy: ${String(message.params?.approvalPolicy)}` },
+      });
+      return;
+    }
     if (message.params?.sandbox !== "read-only") {
       send({
         id: message.id,
@@ -82,6 +89,13 @@ lines.on("line", (line) => {
   }
 
   if (message.method === "turn/start") {
+    if (scenario === "on-request-file-approval" && message.params?.approvalPolicy !== "on-request") {
+      send({
+        id: message.id,
+        error: { code: -32602, message: `invalid turn approval policy: ${String(message.params?.approvalPolicy)}` },
+      });
+      return;
+    }
     if (message.params?.sandboxPolicy?.type !== "readOnly") {
       send({
         id: message.id,
@@ -113,6 +127,36 @@ lines.on("line", (line) => {
           params: {
             threadId: activeThreadId,
             turn: { id: activeTurnId, status: "failed", error, items: [] },
+          },
+        });
+        return;
+      }
+
+      if (scenario === "on-request-file-approval") {
+        waitingForApproval = true;
+        send({
+          method: "item/started",
+          params: {
+            threadId: activeThreadId,
+            turnId: activeTurnId,
+            item: {
+              id: "patch_1",
+              type: "fileChange",
+              status: "inProgress",
+              changes: [
+                { path: "src/example.ts", kind: "update", diff: "+ const secret = 'not-for-approval';" },
+              ],
+            },
+          },
+        });
+        send({
+          id: "approval_1",
+          method: "item/fileChange/requestApproval",
+          params: {
+            threadId: activeThreadId,
+            turnId: activeTurnId,
+            itemId: "patch_1",
+            reason: "update one workspace file",
           },
         });
         return;

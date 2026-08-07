@@ -337,6 +337,7 @@ describe("GatewayService identity and commands", () => {
         authority: new AuthorizationAuthority({
           enabled: true,
           sandboxMode: "workspace-write",
+          allowRemoteFileChangeApproval: false,
           mcpRegistry: registry,
         }),
         approvalTtlMs: 5_000,

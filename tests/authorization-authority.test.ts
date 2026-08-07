@@ -31,7 +31,7 @@ function registry(): McpRuntimeRegistry {
 }
 
 function authority(sandboxMode: "read-only" | "workspace-write" | "danger-full-access") {
-  return new AuthorizationAuthority({ enabled: true, sandboxMode, mcpRegistry: registry() });
+  return new AuthorizationAuthority({ enabled: true, sandboxMode, allowRemoteFileChangeApproval: false, mcpRegistry: registry() });
 }
 
 describe("AuthorizationAuthority", () => {
@@ -60,6 +60,31 @@ describe("AuthorizationAuthority", () => {
       approvalLevel: "chat-confirmation",
       reason: "policy",
     });
+  });
+
+
+  it("allows a one-shot Codex file-change approval without widening the base read-only sandbox", () => {
+    const policy = new AuthorizationAuthority({
+      enabled: true,
+      sandboxMode: "read-only",
+      allowRemoteFileChangeApproval: true,
+      mcpRegistry: registry(),
+    });
+    expect(policy.evaluate({
+      role: "owner",
+      capability: "files.write",
+      source: "codex-file-change",
+    })).toEqual({
+      status: "approval-required",
+      approvalLevel: "chat-confirmation",
+      reason: "policy",
+    });
+
+    expect(policy.evaluate({
+      role: "owner",
+      capability: "files.write",
+      source: "floral",
+    })).toMatchObject({ status: "deny", reason: "sandbox-capability-denied" });
   });
 
   it("never turns an opaque Codex command escalation into a remote QQ approval", () => {
@@ -96,6 +121,7 @@ describe("AuthorizationAuthority", () => {
     expect(() => new AuthorizationAuthority({
       enabled: true,
       sandboxMode: "read-only",
+      allowRemoteFileChangeApproval: false,
       mcpRegistry: uncovered,
     })).toThrow(/no FLORAL capability mapping/u);
   });

@@ -16,6 +16,7 @@ import {
 } from "./gateway-commands.js";
 import type { AuthorizationAuthority } from "../policy/authorization-authority.js";
 import { QqApprovalBroker } from "../policy/qq-approval-broker.js";
+import type { LocalConfirmationBroker } from "../policy/local-confirmation-broker.js";
 
 export interface GatewayOptions {
   cwd: string;
@@ -28,6 +29,7 @@ export interface GatewayOptions {
     approvalTtlMs: number;
     maxPendingApprovals: number;
     ownerOnlyRemoteApproval: boolean;
+    localConfirmation?: LocalConfirmationBroker | undefined;
   } | undefined;
 }
 
@@ -57,6 +59,7 @@ export class GatewayService {
           maxPending: authorization.maxPendingApprovals,
           ownerOnly: authorization.ownerOnlyRemoteApproval,
           authority: authorization.authority,
+          localConfirmation: authorization.localConfirmation,
           send: (conversationId, text) => this.#send(conversationId, text),
           audit: (event) => this.store.appendAudit(event),
         })

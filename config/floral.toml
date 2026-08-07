@@ -156,6 +156,11 @@ enabled = true
 approval_ttl_ms = 60000
 max_pending_approvals = 8
 owner_only_remote_approval = true
+codex_turn_approval_policy = "on-request"
+allow_remote_file_change_approval = true
+local_confirmation_enabled = true
+local_approval_ttl_ms = 300000
+local_approval_poll_ms = 250
 
 [runtime.cost_guard]
 # Phase 5.1 fail-closed protection against runaway provider loops. Request and

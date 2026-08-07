@@ -95,6 +95,47 @@ describe("ManagedCodexDeepSeekRuntime", () => {
     await managed.stop();
   });
 
+
+  it("passes the FLORAL turn-scoped approval profile to Codex runtime creation", async () => {
+    let observed: { approvalPolicy: string; sandboxMode: string } | undefined;
+    const runtime = new FakeRuntime();
+    const managed = new ManagedCodexDeepSeekRuntime(loadEnv({
+      DEEPSEEK_API_KEY: "secret",
+    }), {
+      createToken: () => "token",
+      checkSearch: async () => ({ endpoint: "http://127.0.0.1:8888", resultCount: 1 }),
+      createBridge: () => ({
+        start: async () => ({ baseUrl: "http://127.0.0.1:9999/v1" }),
+        stop: async () => undefined,
+      }),
+      prepareCodexConfig: async ({ legacyConfig }) => ({
+        mode: "legacy",
+        productionConfig: legacyConfig,
+      }),
+      clearCodexShadowReport: async () => undefined,
+      clearCodexCutoverReport: async () => undefined,
+      clearMcpRegistryAdoptionReport: async () => undefined,
+      createWorkspace: async () => ({
+        codexHome: "/tmp/fake-codex",
+        cleanup: async () => undefined,
+      }),
+      createRuntime: (options) => {
+        observed = {
+          approvalPolicy: options.approvalPolicy,
+          sandboxMode: options.sandboxMode,
+        };
+        return runtime;
+      },
+    }, {
+      codexTurnApprovalPolicy: "on-request",
+      codexSandboxMode: "read-only",
+    });
+
+    await managed.start();
+    expect(observed).toEqual({ approvalPolicy: "on-request", sandboxMode: "read-only" });
+    await managed.stop();
+  });
+
   it("delegates run and interrupt", async () => {
     const { managed, runtime } = setup();
     await managed.start();

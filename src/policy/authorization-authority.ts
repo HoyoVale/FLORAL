@@ -39,6 +39,7 @@ export type AuthorizationDecision =
 export interface AuthorizationAuthorityOptions {
   enabled: boolean;
   sandboxMode: "read-only" | "workspace-write" | "danger-full-access";
+  allowRemoteFileChangeApproval: boolean;
   mcpRegistry: McpRuntimeRegistry;
 }
 
@@ -81,7 +82,11 @@ export class AuthorizationAuthority {
       };
     }
 
-    if (!sandboxAllows(this.options.sandboxMode, request.capability)) {
+    const scopedFileChangeGrant = request.source === "codex-file-change"
+      && request.capability === "files.write"
+      && this.options.allowRemoteFileChangeApproval;
+
+    if (!sandboxAllows(this.options.sandboxMode, request.capability) && !scopedFileChangeGrant) {
       return {
         status: "deny",
         approvalLevel: defaultLevel,

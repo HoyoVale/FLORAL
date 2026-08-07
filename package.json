@@ -86,7 +86,10 @@
     "cost:json": "tsx scripts/cost-guard.ts json",
     "cost:check": "tsx scripts/cost-guard.ts check",
     "policy:status": "tsx scripts/authorization-policy.ts",
-    "policy:check": "tsx scripts/authorization-policy.ts --check"
+    "policy:check": "tsx scripts/authorization-policy.ts --check",
+    "approval:local:list": "tsx scripts/local-approval.ts list",
+    "approval:local:approve": "tsx scripts/local-approval.ts approve",
+    "approval:local:deny": "tsx scripts/local-approval.ts deny"
   },
   "dependencies": {
     "@tencent-connect/qqbot-nodejs": "1.0.4",

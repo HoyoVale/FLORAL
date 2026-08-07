@@ -1,8 +1,12 @@
+import { mkdtemp } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import type { AuditEventInput } from "../src/core/types.js";
 import type { McpRuntimeRegistry } from "../src/config/mcp/mcp-runtime-registry.js";
 import { AuthorizationAuthority } from "../src/policy/authorization-authority.js";
 import { QqApprovalBroker } from "../src/policy/qq-approval-broker.js";
+import { LocalConfirmationBroker, writeLocalApprovalDecision } from "../src/policy/local-confirmation-broker.js";
 
 function writableAuthority(): AuthorizationAuthority {
   const registry: McpRuntimeRegistry = {
@@ -15,6 +19,7 @@ function writableAuthority(): AuthorizationAuthority {
   return new AuthorizationAuthority({
     enabled: true,
     sandboxMode: "workspace-write",
+    allowRemoteFileChangeApproval: false,
     mcpRegistry: registry,
   });
 }
@@ -181,6 +186,65 @@ describe("QqApprovalBroker", () => {
     expect(broker.pendingCount()).toBe(0);
   });
 
+
+  it("routes local-confirmation approvals through the Mac-local one-shot broker", async () => {
+    const sent: string[] = [];
+    const registry: McpRuntimeRegistry = {
+      schemaVersion: 1,
+      authorityVersion: 1,
+      profile: "test",
+      registryFingerprint: "test-only",
+      servers: [],
+    };
+    const directory = await mkdtemp(join(tmpdir(), "floral-qq-local-approval-"));
+    const localConfirmation = new LocalConfirmationBroker({
+      directory,
+      ttlMs: 5_000,
+      pollIntervalMs: 50,
+      maxPending: 4,
+      enabled: true,
+      createPublicId: () => "LOCAL777",
+    });
+    await localConfirmation.initialize();
+    const broker = new QqApprovalBroker({
+      ttlMs: 5_000,
+      maxPending: 4,
+      ownerOnly: true,
+      authority: new AuthorizationAuthority({
+        enabled: true,
+        sandboxMode: "danger-full-access",
+        allowRemoteFileChangeApproval: false,
+        mcpRegistry: registry,
+      }),
+      localConfirmation,
+      send: async (_conversationId, text) => { sent.push(text); },
+      audit: async () => undefined,
+    });
+
+    const decision = broker.request({
+      userId: "owner-1",
+      role: "owner",
+      conversationId: "conversation-1",
+      deliveryConversationId: "qq-conversation-1",
+    }, {
+      requestId: "req-local",
+      kind: "command-execution",
+      capability: "shell.execute",
+      summary: "echo local",
+      source: "codex",
+    });
+
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(sent.at(-1)).toContain("本地审批编号=LOCAL777");
+    expect(sent.at(-1)).toContain("请求详情仅在 Mac 本地显示");
+    expect(sent.at(-1)).not.toContain("echo local");
+    expect(sent.at(-1)).toContain("QQ /approve 无法授权");
+    expect(broker.pendingCount("conversation-1")).toBe(1);
+    expect(await writeLocalApprovalDecision(directory, "LOCAL777", "approve")).toBe("written");
+    await expect(decision).resolves.toBe("approve");
+    expect(broker.pendingCount("conversation-1")).toBe(0);
+  });
+
   it("refuses to remote-approve a local-confirmation capability", async () => {
     const sent: string[] = [];
     const registry: McpRuntimeRegistry = {
@@ -197,6 +261,7 @@ describe("QqApprovalBroker", () => {
       authority: new AuthorizationAuthority({
         enabled: true,
         sandboxMode: "danger-full-access",
+        allowRemoteFileChangeApproval: false,
         mcpRegistry: registry,
       }),
       send: async (_conversationId, text) => { sent.push(text); },

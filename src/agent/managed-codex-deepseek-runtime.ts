@@ -60,6 +60,8 @@ export interface ManagedCodexDeepSeekDependencies {
   createRuntime?: ((options: {
     codexHome: string;
     bridgeToken: string;
+    approvalPolicy: "never" | "on-request";
+    sandboxMode: "read-only";
   }) => AgentRuntime) | undefined;
   prepareCodexConfig?: ((options: {
     legacyConfig: string;
@@ -70,6 +72,11 @@ export interface ManagedCodexDeepSeekDependencies {
   recordCodexCutover?: ((report: CodexCutoverReport) => Promise<string>) | undefined;
   clearMcpRegistryAdoptionReport?: (() => Promise<void>) | undefined;
   recordMcpRegistryAdoption?: ((report: McpRegistryAdoptionReport) => Promise<string>) | undefined;
+}
+
+export interface ManagedCodexDeepSeekRuntimeOptions {
+  codexTurnApprovalPolicy?: "never" | "on-request" | undefined;
+  codexSandboxMode?: "read-only" | undefined;
 }
 
 export class ManagedCodexDeepSeekRuntime implements AgentRuntime {
@@ -84,6 +91,7 @@ export class ManagedCodexDeepSeekRuntime implements AgentRuntime {
   constructor(
     private readonly env: AppEnv,
     private readonly dependencies: ManagedCodexDeepSeekDependencies = {},
+    private readonly options: ManagedCodexDeepSeekRuntimeOptions = {},
   ) {}
 
   async start(): Promise<void> {
@@ -322,8 +330,17 @@ export class ManagedCodexDeepSeekRuntime implements AgentRuntime {
   }
 
   #createRuntime(codexHome: string, bridgeToken: string): AgentRuntime {
-    return this.dependencies.createRuntime?.({ codexHome, bridgeToken })
-      ?? createCodexRuntime(this.env, codexHome, bridgeToken);
+    const approvalPolicy = this.options.codexTurnApprovalPolicy ?? "never";
+    const sandboxMode = this.options.codexSandboxMode ?? "read-only";
+    return this.dependencies.createRuntime?.({
+      codexHome,
+      bridgeToken,
+      approvalPolicy,
+      sandboxMode,
+    }) ?? createCodexRuntime(this.env, codexHome, bridgeToken, {
+      approvalPolicy,
+      sandboxMode,
+    });
   }
 
   async #recordMcpRegistryAdoption(
@@ -499,6 +516,7 @@ function createCodexRuntime(
   env: AppEnv,
   codexHome: string,
   bridgeToken: string,
+  execution: { approvalPolicy: "never" | "on-request"; sandboxMode: "read-only" },
 ): AgentRuntime {
   const processEnv: NodeJS.ProcessEnv = {
     ...process.env,
@@ -512,6 +530,8 @@ function createCodexRuntime(
     args: env.CODEX_ARGS.split(/\s+/).filter(Boolean),
     requestTimeoutMs: env.CODEX_REQUEST_TIMEOUT_MS,
     defaultModel: env.DEEPSEEK_MODEL,
+    approvalPolicy: execution.approvalPolicy,
+    sandboxMode: execution.sandboxMode,
     processCwd: env.CODEX_CWD,
     processEnv,
   });

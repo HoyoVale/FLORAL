@@ -224,6 +224,11 @@ export function renderConfigurationAuthority(
     `config.runtime.authorization.approval_ttl_ms=${String(authority.effective.runtime.authorization.approval_ttl_ms)}`,
     `config.runtime.authorization.max_pending_approvals=${String(authority.effective.runtime.authorization.max_pending_approvals)}`,
     `config.runtime.authorization.owner_only_remote_approval=${String(authority.effective.runtime.authorization.owner_only_remote_approval)}`,
+    `config.runtime.authorization.codex_turn_approval_policy=${authority.effective.runtime.authorization.codex_turn_approval_policy}`,
+    `config.runtime.authorization.allow_remote_file_change_approval=${String(authority.effective.runtime.authorization.allow_remote_file_change_approval)}`,
+    `config.runtime.authorization.local_confirmation_enabled=${String(authority.effective.runtime.authorization.local_confirmation_enabled)}`,
+    `config.runtime.authorization.local_approval_ttl_ms=${String(authority.effective.runtime.authorization.local_approval_ttl_ms)}`,
+    `config.runtime.authorization.local_approval_poll_ms=${String(authority.effective.runtime.authorization.local_approval_poll_ms)}`,
     `config.runtime.cost_guard.enabled=${String(authority.effective.runtime.cost_guard.enabled)}`,
     `config.runtime.cost_guard.max_requests_per_hour=${String(authority.effective.runtime.cost_guard.max_requests_per_hour)}`,
     `config.runtime.cost_guard.max_tokens_per_day=${String(authority.effective.runtime.cost_guard.max_tokens_per_day)}`,
@@ -343,6 +348,18 @@ function validateCrossFieldRules(
 ): void {
   if (config.deepseek.retry_max_delay_ms < config.deepseek.retry_base_delay_ms) {
     throw new Error("deepseek.retry_max_delay_ms must be greater than or equal to retry_base_delay_ms");
+  }
+  if (
+    config.runtime.authorization.allow_remote_file_change_approval
+    && config.runtime.authorization.codex_turn_approval_policy !== "on-request"
+  ) {
+    throw new Error("runtime.authorization.allow_remote_file_change_approval requires codex_turn_approval_policy=on-request");
+  }
+  if (
+    config.runtime.authorization.codex_turn_approval_policy === "on-request"
+    && !config.runtime.authorization.enabled
+  ) {
+    throw new Error("runtime.authorization.codex_turn_approval_policy=on-request requires authorization.enabled=true");
   }
   if (config.runtime.cost_guard.max_requests_per_hour < config.runtime.cost_guard.max_requests_per_minute) {
     throw new Error("runtime.cost_guard.max_requests_per_hour must be greater than or equal to max_requests_per_minute");

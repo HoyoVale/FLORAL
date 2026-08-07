@@ -121,6 +121,22 @@ are bound to the current owner and conversation, are consumed once, and vanish
 on service restart. Opaque Codex command escalation and system administration
 remain Mac-local only. See `docs/PHASE5_AUTHORIZATION_APPROVAL_AUTHORITY.md`.
 
+Phase 5.3 activates Codex `on-request` approval handling while retaining the
+read-only sandbox ceiling. A concrete Codex file-change request may receive one
+owner/conversation-bound QQ grant; opaque command escalation still requires an
+independent Mac-local confirmation. Local confirmations use a private,
+service-session-bound mailbox under the FLORAL runtime directory and can be
+resolved only from the Mac:
+
+```bash
+corepack pnpm approval:local:list
+corepack pnpm approval:local:approve -- <id>
+corepack pnpm approval:local:deny -- <id>
+```
+
+No approval is promoted to session scope. See
+`docs/PHASE5_CONTROLLED_CAPABILITY_ACTIVATION.md`.
+
 ## Prepare the Mac mini
 
 Copy or clone the project onto the Mac and run:

@@ -6,6 +6,7 @@ import type {
   GatewayRole,
 } from "../core/types.js";
 import type { AuthorizationAuthority } from "./authorization-authority.js";
+import type { LocalConfirmationBroker } from "./local-confirmation-broker.js";
 
 export interface ApprovalRequesterScope {
   userId: string;
@@ -23,6 +24,7 @@ export interface QqApprovalBrokerOptions {
   audit: (event: AuditEventInput) => Promise<void>;
   now?: (() => number) | undefined;
   createPublicId?: (() => string) | undefined;
+  localConfirmation?: LocalConfirmationBroker | undefined;
 }
 
 export type ApprovalResolveResult =
@@ -86,15 +88,47 @@ export class QqApprovalBroker {
 
     if (decision.approvalLevel === "local-confirmation") {
       await this.#audit(scope, "authorization.local_confirmation_required", request);
-      await this.options.send(
-        scope.deliveryConversationId,
-        [
-          "FLORAL 已拒绝远程审批请求。",
-          `能力=${request.capability}`,
-          "该操作要求 Mac 本地确认，QQ /approve 不能授权。",
-        ].join("\n"),
-      ).catch(() => undefined);
-      return "deny";
+      const local = this.options.localConfirmation;
+      const handle = local
+        ? await local.request(
+            {
+              userId: scope.userId,
+              role: scope.role,
+              conversationId: scope.conversationId,
+            },
+            request,
+          ).catch(() => undefined)
+        : undefined;
+      if (!handle) {
+        await this.options.send(
+          scope.deliveryConversationId,
+          [
+            "FLORAL 已拒绝远程审批请求。",
+            `能力=${request.capability}`,
+            "该操作要求 Mac 本地确认，但本地确认通道当前不可用。",
+          ].join("\n"),
+        ).catch(() => undefined);
+        return "deny";
+      }
+
+      try {
+        await this.options.send(
+          scope.deliveryConversationId,
+          localApprovalPrompt(handle.notice.publicId, request, handle.notice.ttlMs),
+        );
+      } catch {
+        local?.cancelConversation(scope.conversationId);
+        return "deny";
+      }
+      const localDecision = await handle.decision;
+      await this.#audit(
+        scope,
+        localDecision === "approve"
+          ? "authorization.local_confirmation_approved"
+          : "authorization.local_confirmation_denied",
+        request,
+      );
+      return localDecision;
     }
 
     if (this.options.ownerOnly && scope.role !== "owner") {
@@ -181,13 +215,16 @@ export class QqApprovalBroker {
   }
 
   pendingCount(conversationId?: string): number {
-    if (!conversationId) return this.#pending.size;
-    return [...this.#pending.values()].filter((pending) =>
-      pending.scope.conversationId === conversationId
-    ).length;
+    const remote = !conversationId
+      ? this.#pending.size
+      : [...this.#pending.values()].filter((pending) =>
+          pending.scope.conversationId === conversationId
+        ).length;
+    return remote + (this.options.localConfirmation?.pendingCount(conversationId) ?? 0);
   }
 
   cancelConversation(conversationId: string): void {
+    this.options.localConfirmation?.cancelConversation(conversationId);
     for (const [publicId, pending] of this.#pending) {
       if (pending.scope.conversationId !== conversationId) continue;
       this.#finish(publicId, "deny");
@@ -196,6 +233,7 @@ export class QqApprovalBroker {
   }
 
   cancelAll(): void {
+    this.options.localConfirmation?.cancelAll();
     for (const [publicId, pending] of [...this.#pending.entries()]) {
       this.#finish(publicId, "deny");
       void this.#audit(pending.scope, "authorization.approval_cancelled", pending.request);
@@ -249,6 +287,25 @@ function sourceFor(
   if (request.kind === "permission-profile") return "codex-permission-profile";
   if (request.kind === "mcp-tool") return "mcp-tool";
   return "floral";
+}
+
+function localApprovalPrompt(
+  publicId: string,
+  request: AgentApprovalRequest,
+  ttlMs: number,
+): string {
+  const seconds = Math.max(1, Math.ceil(ttlMs / 1_000));
+  return [
+    "FLORAL 要求 Mac 本地确认",
+    `本地审批编号=${publicId}`,
+    `能力=${request.capability}`,
+    "请求详情仅在 Mac 本地显示，避免高风险命令内容进入 QQ。",
+    `有效期=${seconds} 秒`,
+    `Mac 查看：corepack pnpm approval:local:list`,
+    `Mac 允许：corepack pnpm approval:local:approve -- ${publicId}`,
+    `Mac 拒绝：corepack pnpm approval:local:deny -- ${publicId}`,
+    "QQ /approve 无法授权此操作。",
+  ].join("\n");
 }
 
 function approvalPrompt(

@@ -6,12 +6,17 @@ import type { AgentEvent } from "../src/core/types.js";
 
 const fixture = fileURLToPath(new URL("./fixtures/fake-codex-app-server.mjs", import.meta.url));
 
-function createRuntime(scenario: string, timeoutMs = 5_000): CodexAppServerRuntime {
+function createRuntime(
+  scenario: string,
+  timeoutMs = 5_000,
+  options: { approvalPolicy?: "never" | "on-request" } = {},
+): CodexAppServerRuntime {
   return new CodexAppServerRuntime({
     command: process.execPath,
     args: [fixture, scenario],
     requestTimeoutMs: timeoutMs,
     defaultModel: undefined,
+    ...options,
   });
 }
 
@@ -119,6 +124,33 @@ describe("CodexAppServerRuntime", () => {
     }
   });
 
+
+
+  it("activates on-request approvals per turn while keeping the sandbox read-only", async () => {
+    const runtime = createRuntime("on-request-file-approval", 5_000, {
+      approvalPolicy: "on-request",
+    });
+    try {
+      await runtime.start();
+      const result = await runtime.run({
+        text: "edit one file",
+        cwd: process.cwd(),
+        approvalHandler: async (request) => {
+          expect(request).toMatchObject({
+            kind: "file-change",
+            capability: "files.write",
+            source: "codex",
+          });
+          expect(request.summary).toContain("update:src/example.ts");
+          expect(request.summary).not.toContain("not-for-approval");
+          return "approve";
+        },
+      });
+      expect(result.finalText).toBe("approval accepted safely");
+    } finally {
+      await runtime.stop();
+    }
+  });
 
   it("emits bounded MCP tool lifecycle events", async () => {
     const runtime = createRuntime("mcp-tool");

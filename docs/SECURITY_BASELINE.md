@@ -55,3 +55,13 @@ QQ AppSecret, DeepSeek API key, Better Auth secret, and any future OAuth tokens 
 - `/stop`, run completion, gateway stop, and service restart invalidate pending approvals.
 - Opaque Codex command escalation, granular permission-profile expansion, `system.admin`, and `system.restart` cannot be approved remotely.
 - Approval audit payloads never persist raw command bodies, diffs, prompts, tool results, or Codex private request IDs.
+
+## Phase 5.3 controlled capability activation
+
+- Codex app-server turns use `on-request` approvals while the effective sandbox remains `read-only`; approval routing must not be interpreted as a sandbox expansion.
+- Only a concrete `codex-file-change` request may bypass the generic read-only denial long enough to request an owner-scoped, conversation-bound, one-shot QQ decision. Generic FLORAL `files.write` stays denied.
+- Opaque command execution escalation is never remotely approvable. It requires a separate Mac-local confirmation with its own random public ID and short TTL; the QQ notice omits the command body and detailed request text.
+- Local confirmation records live under the private FLORAL runtime directory, use 0700/0600 permissions on POSIX, contain no raw Codex private request ID or secret-bearing command body, and are removed at service-session initialization.
+- A local decision must match public ID, service-session ID, and exact request fingerprint. Old-session or forged decision files are ignored.
+- Approved Codex requests are answered only with one-shot `accept`; FLORAL does not emit `acceptForSession`, persistent exec-policy amendments, or session-scoped permission-profile grants.
+- `item/permissions/requestApproval` remains fail-closed until a later phase implements bounded granular permission subsets.

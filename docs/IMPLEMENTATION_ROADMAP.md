@@ -234,6 +234,15 @@
 - require local confirmation for system administration and opaque Codex command escalation;
 - keep production Codex read-only/never-approve until a later controlled capability activation.
 
+### Phase 5.3 — controlled capability activation and Mac-local confirmation
+
+- switch only the app-server turn override from `never` to `on-request`; keep the native fail-safe config and sandbox ceiling read-only;
+- allow only concrete Codex file-change requests to reach the existing owner-scoped QQ one-shot approval flow;
+- keep generic `files.write` denied by the read-only sandbox so a file-change grant cannot widen later actions;
+- route opaque command escalation to a private Mac-local one-shot confirmation mailbox, never to QQ `/approve`;
+- bind local decisions to the current service session and exact private request fingerprint, with restart cleanup and expiry;
+- never return `acceptForSession` or a persistent permission grant.
+
 ## Phase 6 — macOS GUI and visual MCP
 
 - MiMo-backed read-only visual analysis;

@@ -48,6 +48,9 @@ interface ItemLifecycleParams {
     tool?: string;
     status?: string;
     error?: unknown;
+    command?: string;
+    cwd?: string;
+    changes?: Array<{ path?: string; kind?: string; diff?: string }>;
   };
 }
 
@@ -70,6 +73,8 @@ export interface CodexAppServerOptions {
   args: string[];
   requestTimeoutMs: number;
   defaultModel: string | undefined;
+  approvalPolicy?: "never" | "on-request" | undefined;
+  sandboxMode?: "read-only" | undefined;
   processCwd?: string | undefined;
   processEnv?: NodeJS.ProcessEnv | undefined;
 }
@@ -84,10 +89,13 @@ export class CodexAppServerRuntime implements AgentRuntime {
   readonly #client: CodexRpcClient;
   readonly #defaultModel: string | undefined;
   readonly #turnTimeoutMs: number;
+  readonly #approvalPolicy: "never" | "on-request";
+  readonly #sandboxMode: "read-only";
   readonly #loadedThreads = new Set<string>();
   readonly #activeTurns = new Map<string, string>();
   readonly #eventHandlers = new Map<string, (event: AgentEvent) => void>();
   readonly #approvalHandlers = new Map<string, AgentApprovalHandler>();
+  readonly #approvalItemSummaries = new Map<string, string>();
   #started = false;
 
   constructor(options: CodexAppServerOptions) {
@@ -100,6 +108,8 @@ export class CodexAppServerRuntime implements AgentRuntime {
     });
     this.#defaultModel = options.defaultModel;
     this.#turnTimeoutMs = options.requestTimeoutMs;
+    this.#approvalPolicy = options.approvalPolicy ?? "never";
+    this.#sandboxMode = options.sandboxMode ?? "read-only";
     this.#client.on("serverRequest", (request: CodexServerRequest) => {
       void this.#handleServerRequest(request).catch(() => {
         this.#respondSafely(request.id, undefined, {
@@ -177,6 +187,12 @@ export class CodexAppServerRuntime implements AgentRuntime {
     const itemStartedListener = (value: unknown) => {
       const params = value as ItemLifecycleParams;
       if (!matchesTurn(params, threadId, activeTurnId)) return;
+      const itemId = params.item?.id;
+      if (itemId) {
+        const approvalSummary = summarizeApprovalItem(params.item);
+        if (approvalSummary) this.#approvalItemSummaries.set(approvalItemKey(threadId, itemId), approvalSummary);
+      }
+
       const tool = readMcpToolEvent(params.item);
       if (!tool) return;
       onEvent?.({
@@ -189,6 +205,9 @@ export class CodexAppServerRuntime implements AgentRuntime {
     const itemCompletedListener = (value: unknown) => {
       const params = value as ItemLifecycleParams;
       if (!matchesTurn(params, threadId, activeTurnId)) return;
+
+      const itemId = params.item?.id;
+      if (itemId) this.#approvalItemSummaries.delete(approvalItemKey(threadId, itemId));
 
       const tool = readMcpToolEvent(params.item);
       if (tool) {
@@ -245,7 +264,7 @@ export class CodexAppServerRuntime implements AgentRuntime {
         threadId,
         input: [{ type: "text", text: request.text }],
         cwd: request.cwd,
-        approvalPolicy: "never",
+        approvalPolicy: this.#approvalPolicy,
         sandboxPolicy: { type: "readOnly" },
       };
       const model = request.model ?? this.#defaultModel;
@@ -311,6 +330,7 @@ export class CodexAppServerRuntime implements AgentRuntime {
       this.#activeTurns.delete(threadId);
       this.#eventHandlers.delete(threadId);
       this.#approvalHandlers.delete(threadId);
+      this.#deleteApprovalItemSummaries(threadId);
     }
   }
 
@@ -333,6 +353,7 @@ export class CodexAppServerRuntime implements AgentRuntime {
     this.#activeTurns.clear();
     this.#eventHandlers.clear();
     this.#approvalHandlers.clear();
+    this.#approvalItemSummaries.clear();
     await this.#client.stop();
   }
 
@@ -355,8 +376,8 @@ export class CodexAppServerRuntime implements AgentRuntime {
   async #startThread(request: AgentRunRequest): Promise<string> {
     const params: Record<string, unknown> = {
       cwd: request.cwd,
-      approvalPolicy: "never",
-      sandbox: "read-only",
+      approvalPolicy: this.#approvalPolicy,
+      sandbox: this.#sandboxMode,
     };
     const model = request.model ?? this.#defaultModel;
     if (model) params.model = model;
@@ -398,7 +419,11 @@ export class CodexAppServerRuntime implements AgentRuntime {
       request.method === "item/commandExecution/requestApproval"
       || request.method === "item/fileChange/requestApproval"
     ) {
-      const approval = buildCodexApprovalRequest(request);
+      const itemId = readString(params?.itemId);
+      const itemSummary = threadId && itemId
+        ? this.#approvalItemSummaries.get(approvalItemKey(threadId, itemId))
+        : undefined;
+      const approval = buildCodexApprovalRequest(request, itemSummary);
       onEvent?.({
         type: "approval.requested",
         requestId: approval.requestId,
@@ -431,7 +456,7 @@ export class CodexAppServerRuntime implements AgentRuntime {
         detail: { summary: approval.summary },
       });
       // Granular permission grants are deliberately not remotely delegable in
-      // Phase 5.2. Returning an empty subset is fail-closed and keeps the
+      // Phase 5.3. Returning an empty subset is fail-closed and keeps the
       // stronger local-confirmation boundary intact.
       this.#respondSafely(request.id, { scope: "turn", permissions: {} });
       return;
@@ -446,6 +471,13 @@ export class CodexAppServerRuntime implements AgentRuntime {
       code: -32601,
       message: `FLORAL does not support interactive server request: ${request.method}`,
     });
+  }
+
+  #deleteApprovalItemSummaries(threadId: string): void {
+    const prefix = `${threadId}:`;
+    for (const key of this.#approvalItemSummaries.keys()) {
+      if (key.startsWith(prefix)) this.#approvalItemSummaries.delete(key);
+    }
   }
 
   #respondSafely(
@@ -480,7 +512,37 @@ export class CodexAppServerRuntime implements AgentRuntime {
 }
 
 
-function buildCodexApprovalRequest(request: CodexServerRequest): AgentApprovalRequest {
+function approvalItemKey(threadId: string, itemId: string): string {
+  return `${threadId}:${itemId}`;
+}
+
+function summarizeApprovalItem(item: ItemLifecycleParams["item"]): string | undefined {
+  if (!item) return undefined;
+  if (item.type === "fileChange") {
+    const changes = Array.isArray(item.changes) ? item.changes : [];
+    const summaries = changes.slice(0, 8).map((change) => {
+      const path = redactApprovalText(readString(change?.path)) ?? "<unknown-path>";
+      const kind = redactApprovalText(readString(change?.kind));
+      return kind ? `${kind}:${path}` : path;
+    });
+    if (summaries.length === 0) return undefined;
+    const omitted = changes.length - summaries.length;
+    const text = `${summaries.join(", ")}${omitted > 0 ? `, +${String(omitted)} more` : ""}`;
+    return redactApprovalText(text);
+  }
+  if (item.type === "commandExecution") {
+    const command = redactApprovalText(readString(item.command));
+    const cwd = redactApprovalText(readString(item.cwd));
+    if (!command) return undefined;
+    return cwd ? `${command} (cwd=${cwd})` : command;
+  }
+  return undefined;
+}
+
+function buildCodexApprovalRequest(
+  request: CodexServerRequest,
+  itemSummary?: string,
+): AgentApprovalRequest {
   const params = asRecord(request.params);
   const reason = redactApprovalText(readString(params?.reason));
   if (request.method === "item/fileChange/requestApproval") {
@@ -488,9 +550,11 @@ function buildCodexApprovalRequest(request: CodexServerRequest): AgentApprovalRe
       requestId: String(request.id),
       kind: "file-change",
       capability: "files.write",
-      summary: reason
-        ? `Codex 请求修改工作区文件：${reason}`
-        : "Codex 请求修改工作区文件。",
+      summary: itemSummary
+        ? `Codex 请求修改工作区文件：${itemSummary}${reason ? `；原因=${reason}` : ""}`
+        : reason
+          ? `Codex 请求修改工作区文件：${reason}`
+          : "Codex 请求修改工作区文件。",
       source: "codex",
     };
   }

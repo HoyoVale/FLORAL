@@ -50,13 +50,21 @@
             "runtime.authorization.max_pending_approvals",
             "runtime.authorization.owner_only_remote_approval",
             "/approve <id>",
-            "/deny <id>"
+            "/deny <id>",
+            "runtime.authorization.codex_turn_approval_policy",
+            "runtime.authorization.allow_remote_file_change_approval",
+            "runtime.authorization.local_confirmation_enabled",
+            "runtime.authorization.local_approval_ttl_ms",
+            "runtime.authorization.local_approval_poll_ms",
+            "approval:local:list",
+            "approval:local:approve",
+            "approval:local:deny"
           ],
           "futureKeys": [
-            "local_confirmation_ui",
-            "audit_retention"
+            "audit_retention",
+            "native_local_confirmation_ui"
           ],
-          "notes": "Remote approvals are owner/conversation/request scoped, one-shot, short-lived, and in-memory so restart invalidates them. System administration and opaque Codex command escalation remain Mac-local only."
+          "notes": "Remote file-change approvals are owner/conversation/request scoped and one-shot. Opaque Codex command escalation is never remotely approvable; it uses a private Mac-local file mailbox with process-session binding, short TTL, and one-shot decisions."
         },
         {
           "id": "security-invariants",
@@ -148,14 +156,14 @@
         {
           "id": "sandbox-approval-trust",
           "classification": "locked",
-          "coverage": "policy-broker-ready-native-never",
+          "coverage": "turn-scoped-controlled-activation",
           "knownKeys": [
             "approvalPolicy",
             "sandboxPolicy",
             "project trust",
             "permission profiles"
           ],
-          "notes": "Phase 5.2 routes app-server command/file approval requests through FLORAL capability policy when they occur. Production Codex remains read-only with approvalPolicy=never until a later controlled sandbox/approval activation phase."
+          "notes": "Phase 5.3 keeps the native Codex config fail-safe at read-only/never, but FLORAL explicitly starts app-server turns with read-only + on-request. File-change approval may be granted once through the owner-scoped QQ broker; opaque command escalation remains Mac-local only. Granular permission-profile expansion remains denied."
         },
         {
           "id": "mcp-client",
@@ -974,6 +982,30 @@
       "file": "src/policy/authorization-authority.ts",
       "needle": "Active MCP tool has no FLORAL capability mapping",
       "risk": "An enabled MCP tool must not bypass role and approval policy merely because it appears in the upstream allowlist."
+    },
+    {
+      "id": "authorization.codex-turn-on-request",
+      "component": "codex",
+      "classification": "floral-owned",
+      "file": "config/floral.toml",
+      "needle": "codex_turn_approval_policy = \"on-request\"",
+      "risk": "The native Codex config remains never/read-only; the active app-server turn override must be explicit, observable, and bounded by FLORAL approval brokers."
+    },
+    {
+      "id": "authorization.scoped-file-change",
+      "component": "floral",
+      "classification": "floral-owned",
+      "file": "src/policy/authorization-authority.ts",
+      "needle": "scopedFileChangeGrant",
+      "risk": "Remote write approval is allowed only for a concrete Codex file-change request and must not widen the base read-only sandbox for other capabilities."
+    },
+    {
+      "id": "authorization.local-mailbox-private",
+      "component": "floral",
+      "classification": "locked",
+      "file": "src/policy/local-confirmation-broker.ts",
+      "needle": "mode: 0o700",
+      "risk": "Mac-local decisions must remain private, process-session bound, expiring, and one-shot; stale decision files must not survive service restart."
     }
   ],
   "environmentKeyPolicies": {
