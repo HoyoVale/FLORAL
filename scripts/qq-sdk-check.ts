@@ -19,7 +19,14 @@ const qqBotPrototype = (sdk.QQBot as unknown as {
   prototype?: Record<string, unknown>;
 }).prototype;
 
-for (const method of ["start", "stop", "sendText", "sendTyping"]) {
+for (const method of [
+  "start",
+  "stop",
+  "sendText",
+  "sendTyping",
+  "sendTextWithKeyboard",
+  "acknowledgeInteraction",
+]) {
   if (typeof qqBotPrototype?.[method] !== "function") {
     throw new Error(`QQ SDK method missing: QQBot.prototype.${method}`);
   }
@@ -35,6 +42,8 @@ console.log("qq.sdk.export.QQBot=ok");
 console.log("qq.sdk.export.FileKVStore=ok");
 console.log("qq.sdk.export.kvSessionPersistence=ok");
 console.log("qq.sdk.method.sendTyping=ok");
+console.log("qq.sdk.method.sendTextWithKeyboard=ok");
+console.log("qq.sdk.method.acknowledgeInteraction=ok");
 console.log("qq.sdk.contract=ok");
 
 async function resolveInstalledVersion(): Promise<string> {

@@ -33,6 +33,25 @@ export function supportsConversationActivity(
     .setConversationActivity === "function";
 }
 
+export interface InteractiveApprovalPrompt {
+  conversationId: string;
+  approvalId: string;
+  capability: string;
+  summary: string;
+  ttlMs: number;
+}
+
+export interface InteractiveApprovalTransport {
+  sendInteractiveApprovalPrompt(prompt: InteractiveApprovalPrompt): Promise<void>;
+}
+
+export function supportsInteractiveApproval(
+  transport: ChatTransport,
+): transport is ChatTransport & InteractiveApprovalTransport {
+  return typeof (transport as Partial<InteractiveApprovalTransport>)
+    .sendInteractiveApprovalPrompt === "function";
+}
+
 export interface AgentRuntime {
   readonly name: string;
   start(): Promise<void>;

@@ -4,6 +4,8 @@ import type {
   ChatTransport,
   ConversationActivityState,
   ConversationActivityTransport,
+  InteractiveApprovalPrompt,
+  InteractiveApprovalTransport,
 } from "../src/core/contracts.js";
 import type {
   AgentEvent,
@@ -36,6 +38,14 @@ class TestTransport implements ChatTransport {
   }
 
   async stop(): Promise<void> {}
+}
+
+class InteractiveTransport extends TestTransport implements InteractiveApprovalTransport {
+  readonly approvals: InteractiveApprovalPrompt[] = [];
+
+  async sendInteractiveApprovalPrompt(prompt: InteractiveApprovalPrompt): Promise<void> {
+    this.approvals.push(prompt);
+  }
 }
 
 class ActivityTransport extends TestTransport implements ConversationActivityTransport {
@@ -526,6 +536,69 @@ describe("GatewayService identity and commands", () => {
       { conversationId: "conversation-1", state: "typing" },
       { conversationId: "conversation-1", state: "idle" },
     ]);
+    await gateway.stop();
+  });
+
+  it("presents a remote one-shot approval through the optional interactive transport", async () => {
+    const transport = new InteractiveTransport();
+    const agent = new ApprovalAgent();
+    const store = new MemoryThreadStore();
+    const registry: McpRuntimeRegistry = {
+      schemaVersion: 1,
+      authorityVersion: 1,
+      profile: "test",
+      registryFingerprint: "test-only",
+      servers: [],
+    };
+    const gateway = new GatewayService(transport, agent, store, {
+      cwd: ".",
+      trustMockOwner: true,
+      authorization: {
+        authority: new AuthorizationAuthority({
+          enabled: true,
+          sandboxMode: "workspace-write",
+          allowRemoteFileChangeApproval: false,
+          mcpRegistry: registry,
+        }),
+        approvalTtlMs: 5_000,
+        maxPendingApprovals: 4,
+        ownerOnlyRemoteApproval: true,
+      },
+    });
+    await gateway.start();
+
+    const runPromise = transport.receive(incoming({
+      id: "interactive-a-1",
+      transport: "mock",
+      text: "please edit",
+    }));
+    await agent.approvalRequested.promise;
+    await new Promise((resolve) => setImmediate(resolve));
+
+    expect(transport.approvals).toHaveLength(1);
+    expect(transport.sent.some((entry) =>
+      entry.text.includes("FLORAL 请求一次性授权")
+    )).toBe(false);
+    const approval = transport.approvals[0]!;
+    expect(approval).toMatchObject({
+      conversationId: "conversation-1",
+      capability: "files.write",
+      summary: "修改一个工作区文件",
+    });
+
+    await transport.receive(incoming({
+      id: "interactive-a-2",
+      transport: "mock",
+      text: `/approve ${approval.approvalId}`,
+    }));
+    await runPromise;
+
+    expect(transport.sent.some((entry) => entry.text === "一次性授权已批准。")).toBe(true);
+    expect(transport.sent.some((entry) => entry.text === "approved-work")).toBe(true);
+    expect(store.auditEvents().some((event) =>
+      event.eventType === "authorization.approval_requested"
+      && event.payload?.presentation === "interactive"
+    )).toBe(true);
     await gateway.stop();
   });
 

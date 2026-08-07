@@ -75,6 +75,86 @@ describe("QqApprovalBroker", () => {
     }, "ABC12345", "approve")).resolves.toBe("not-found");
   });
 
+  it("prefers an interactive one-shot prompt and keeps the approval ID out of text", async () => {
+    const sent: string[] = [];
+    const interactive: Array<{ approvalId: string; capability: string; summary: string }> = [];
+    const broker = new QqApprovalBroker({
+      ttlMs: 5_000,
+      maxPending: 4,
+      ownerOnly: true,
+      authority: writableAuthority(),
+      send: async (_conversationId, text) => { sent.push(text); },
+      sendInteractive: async (prompt) => {
+        interactive.push({
+          approvalId: prompt.approvalId,
+          capability: prompt.capability,
+          summary: prompt.summary,
+        });
+      },
+      audit: async () => undefined,
+      createPublicId: () => "BUTTON123",
+    });
+    const scope = {
+      userId: "owner-1",
+      role: "owner" as const,
+      conversationId: "conversation-1",
+      deliveryConversationId: "qq-conversation-1",
+    };
+
+    const decisionPromise = broker.request(scope, {
+      requestId: "req-button",
+      kind: "file-change",
+      capability: "files.write",
+      summary: "modify phase54b-test.txt",
+      source: "codex",
+    });
+    await Promise.resolve();
+
+    expect(sent).toEqual([]);
+    expect(interactive).toEqual([{
+      approvalId: "BUTTON123",
+      capability: "files.write",
+      summary: "modify phase54b-test.txt",
+    }]);
+    await expect(broker.resolve(scope, "BUTTON123", "approve")).resolves.toBe("approved");
+    await expect(decisionPromise).resolves.toBe("approve");
+  });
+
+  it("falls back to the existing command prompt when native keyboard delivery fails", async () => {
+    const sent: string[] = [];
+    const broker = new QqApprovalBroker({
+      ttlMs: 5_000,
+      maxPending: 4,
+      ownerOnly: true,
+      authority: writableAuthority(),
+      send: async (_conversationId, text) => { sent.push(text); },
+      sendInteractive: async () => { throw new Error("keyboard unavailable"); },
+      audit: async () => undefined,
+      createPublicId: () => "FALLBACK1",
+    });
+    const scope = {
+      userId: "owner-1",
+      role: "owner" as const,
+      conversationId: "conversation-1",
+      deliveryConversationId: "qq-conversation-1",
+    };
+
+    const decisionPromise = broker.request(scope, {
+      requestId: "req-fallback",
+      kind: "file-change",
+      capability: "files.write",
+      summary: "write",
+      source: "codex",
+    });
+    await Promise.resolve();
+    await Promise.resolve();
+
+    expect(sent.at(-1)).toContain("审批编号=FALLBACK1");
+    expect(sent.at(-1)).toContain("/approve FALLBACK1");
+    await expect(broker.resolve(scope, "FALLBACK1", "deny")).resolves.toBe("denied");
+    await expect(decisionPromise).resolves.toBe("deny");
+  });
+
   it("requires the owner role for remote approval prompts", async () => {
     const sent: string[] = [];
     const broker = new QqApprovalBroker({
@@ -210,6 +290,7 @@ describe("QqApprovalBroker", () => {
       createPublicId: () => "LOCAL777",
     });
     await localConfirmation.initialize();
+    let interactiveCalls = 0;
     const broker = new QqApprovalBroker({
       ttlMs: 5_000,
       maxPending: 4,
@@ -221,6 +302,7 @@ describe("QqApprovalBroker", () => {
         mcpRegistry: registry,
       }),
       localConfirmation,
+      sendInteractive: async () => { interactiveCalls += 1; },
       send: async (_conversationId, text) => {
         sent.push(text);
         resolveDelivery(text);
@@ -242,6 +324,7 @@ describe("QqApprovalBroker", () => {
     });
 
     const prompt = await delivery;
+    expect(interactiveCalls).toBe(0);
     expect(prompt).toContain("本地审批编号=LOCAL777");
     expect(prompt).toContain("请求详情仅在 Mac 本地显示");
     expect(prompt).not.toContain("echo local");

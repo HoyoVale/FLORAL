@@ -1,5 +1,6 @@
 import {
   supportsConversationActivity,
+  supportsInteractiveApproval,
   type AgentRuntime,
   type ChatTransport,
   type ConversationActivityState,
@@ -64,6 +65,9 @@ export class GatewayService {
     private readonly options: GatewayOptions,
   ) {
     const authorization = options.authorization;
+    const interactiveTransport = supportsInteractiveApproval(this.transport)
+      ? this.transport
+      : undefined;
     this.#approvalBroker = authorization
       ? new QqApprovalBroker({
           ttlMs: authorization.approvalTtlMs,
@@ -72,6 +76,10 @@ export class GatewayService {
           authority: authorization.authority,
           localConfirmation: authorization.localConfirmation,
           send: (conversationId, text) => this.#send(conversationId, text),
+          ...(interactiveTransport ? {
+            sendInteractive: (prompt) =>
+              interactiveTransport.sendInteractiveApprovalPrompt(prompt),
+          } : {}),
           audit: (event) => this.store.appendAudit(event),
         })
       : undefined;

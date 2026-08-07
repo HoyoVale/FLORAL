@@ -5,6 +5,9 @@ import {
   FileKVStore,
   QQBot,
   kvSessionPersistence,
+  type InlineKeyboard,
+  type InteractionContext,
+  type InteractionEvent,
   type MiddlewareContext,
   type QQBotInboundMessage,
   type ReplyTarget,
@@ -13,6 +16,8 @@ import type {
   ChatTransport,
   ConversationActivityState,
   ConversationActivityTransport,
+  InteractiveApprovalPrompt,
+  InteractiveApprovalTransport,
 } from "../../core/contracts.js";
 import type { IncomingMessage, OutgoingMessage } from "../../core/types.js";
 import { ReplyTargetCache } from "./reply-target-cache.js";
@@ -29,9 +34,26 @@ interface QqBotClient {
       message: QQBotInboundMessage,
     ) => Promise<void>,
   ): void;
+  on(
+    event: "interaction",
+    listener: (
+      context: InteractionContext,
+      event: InteractionEvent,
+    ) => Promise<void> | void,
+  ): void;
   start(signal?: AbortSignal): Promise<void>;
   stop(): void | Promise<void>;
   sendText(target: ReplyTarget, text: string): Promise<unknown>;
+  sendTextWithKeyboard(
+    target: ReplyTarget,
+    text: string,
+    keyboard: InlineKeyboard,
+  ): Promise<unknown>;
+  acknowledgeInteraction(
+    id: string,
+    code?: number,
+    data?: Record<string, unknown>,
+  ): Promise<unknown>;
   sendTyping(target: ReplyTarget): Promise<unknown>;
 }
 
@@ -42,6 +64,9 @@ export interface QqTransportDiagnostics {
   inboundMessages: number;
   outboundChunks: number;
   deliveryFailures: number;
+  interactiveApprovalPrompts: number;
+  interactionCallbacks: number;
+  interactionFailures: number;
   typingSignals: number;
   typingFailures: number;
   activeTypingConversations: number;
@@ -103,11 +128,21 @@ interface TypingSession {
   reportedStarted?: boolean | undefined;
 }
 
-export class QqTransport implements ChatTransport, ConversationActivityTransport {
+interface ApprovalInteractionRoute {
+  conversationId: string;
+  expectedExternalUserId: string;
+  timer: ReturnType<typeof setTimeout>;
+}
+
+export class QqTransport
+  implements ChatTransport, ConversationActivityTransport, InteractiveApprovalTransport
+{
   readonly name = "qq-open-platform";
   readonly #replyTargets: ReplyTargetCache<ReplyTarget>;
   readonly #outboundTails = new Map<string, Promise<void>>();
   readonly #typingSessions = new Map<string, TypingSession>();
+  readonly #conversationUsers = new Map<string, string>();
+  readonly #approvalInteractionRoutes = new Map<string, ApprovalInteractionRoute>();
   #bot: QqBotClient | undefined;
   #abortController: AbortController | undefined;
   #runPromise: Promise<void> | undefined;
@@ -118,6 +153,9 @@ export class QqTransport implements ChatTransport, ConversationActivityTransport
     inboundMessages: 0,
     outboundChunks: 0,
     deliveryFailures: 0,
+    interactiveApprovalPrompts: 0,
+    interactionCallbacks: 0,
+    interactionFailures: 0,
     typingSignals: 0,
     typingFailures: 0,
     activeTypingConversations: 0,
@@ -221,6 +259,20 @@ export class QqTransport implements ChatTransport, ConversationActivityTransport
       }
     });
 
+    bot.on("interaction", async (_context, event) => {
+      try {
+        await this.#handleInteraction(event, onMessage);
+      } catch (error) {
+        this.#diagnostics = {
+          ...this.#diagnostics,
+          interactionFailures: this.#diagnostics.interactionFailures + 1,
+        };
+        process.stderr.write(
+          `qq.transport.interaction_error=${safeErrorType(error)} reason=${safeErrorMessage(error)}\n`,
+        );
+      }
+    });
+
     this.#runPromise = bot.start(abortController.signal);
     void this.#runPromise.catch((error) => {
       if (abortController.signal.aborted) return;
@@ -308,6 +360,60 @@ export class QqTransport implements ChatTransport, ConversationActivityTransport
     });
   }
 
+  async sendInteractiveApprovalPrompt(
+    prompt: InteractiveApprovalPrompt,
+  ): Promise<void> {
+    const bot = this.#bot;
+    if (!bot || this.#diagnostics.state !== "ready") {
+      throw new Error("QQ transport is not ready");
+    }
+
+    const cached = this.#replyTargets.get(prompt.conversationId);
+    if (!cached) throw new QqReplyTargetUnavailableError();
+    const expectedExternalUserId = this.#conversationUsers.get(prompt.conversationId);
+    if (!expectedExternalUserId) throw new QqReplyTargetUnavailableError();
+
+    this.#stopTypingSession(prompt.conversationId);
+    const text = approvalPromptText(prompt);
+    const keyboard = approvalKeyboard(prompt.approvalId);
+
+    try {
+      await this.#sequenceOutbound(prompt.conversationId, () => withTimeout(
+        bot.sendTextWithKeyboard(
+          {
+            ...cached.target,
+            msgId: cached.messageId,
+          },
+          text,
+          keyboard,
+        ),
+        this.options.outboundTimeoutMs,
+        "QQ interactive approval",
+      ));
+      this.#rememberApprovalInteractionRoute(
+        prompt.approvalId,
+        prompt.conversationId,
+        expectedExternalUserId,
+        prompt.ttlMs,
+      );
+      this.#diagnostics = {
+        ...this.#diagnostics,
+        interactiveApprovalPrompts: this.#diagnostics.interactiveApprovalPrompts + 1,
+      };
+      process.stderr.write("qq.transport.approval_keyboard=sent scope=c2c\n");
+    } catch (error) {
+      this.#diagnostics = {
+        ...this.#diagnostics,
+        deliveryFailures: this.#diagnostics.deliveryFailures + 1,
+        lastErrorType: safeErrorType(error),
+      };
+      process.stderr.write(
+        `qq.transport.approval_keyboard_error=${safeErrorType(error)} reason=${safeErrorMessage(error)}\n`,
+      );
+      throw error;
+    }
+  }
+
   async setConversationActivity(
     conversationId: string,
     state: ConversationActivityState,
@@ -327,10 +433,12 @@ export class QqTransport implements ChatTransport, ConversationActivityTransport
   async stop(): Promise<void> {
     if (this.#diagnostics.state === "stopped") return;
     this.#stopAllTypingSessions();
+    this.#clearApprovalInteractionRoutes();
     this.#abortController?.abort();
     const bot = this.#bot;
     this.#bot = undefined;
     this.#replyTargets.clear();
+    this.#conversationUsers.clear();
 
     await Promise.allSettled([
       bot?.stop(),
@@ -440,6 +548,103 @@ export class QqTransport implements ChatTransport, ConversationActivityTransport
     }
   }
 
+  #rememberConversationUser(conversationId: string, externalUserId: string): void {
+    this.#conversationUsers.delete(conversationId);
+    this.#conversationUsers.set(conversationId, externalUserId);
+    while (this.#conversationUsers.size > this.options.replyTargetCacheEntries) {
+      const oldest = this.#conversationUsers.keys().next().value as string | undefined;
+      if (!oldest) break;
+      this.#conversationUsers.delete(oldest);
+    }
+  }
+
+  #rememberApprovalInteractionRoute(
+    approvalId: string,
+    conversationId: string,
+    expectedExternalUserId: string,
+    ttlMs: number,
+  ): void {
+    const normalizedId = approvalId.trim().toUpperCase();
+    const existing = this.#approvalInteractionRoutes.get(normalizedId);
+    if (existing) clearTimeout(existing.timer);
+    const timer = setTimeout(() => {
+      const current = this.#approvalInteractionRoutes.get(normalizedId);
+      if (current?.timer === timer) this.#approvalInteractionRoutes.delete(normalizedId);
+    }, ttlMs);
+    timer.unref?.();
+    this.#approvalInteractionRoutes.set(normalizedId, {
+      conversationId,
+      expectedExternalUserId,
+      timer,
+    });
+  }
+
+  #clearApprovalInteractionRoutes(): void {
+    for (const route of this.#approvalInteractionRoutes.values()) {
+      clearTimeout(route.timer);
+    }
+    this.#approvalInteractionRoutes.clear();
+  }
+
+  async #handleInteraction(
+    event: InteractionEvent,
+    onMessage: (message: IncomingMessage) => Promise<void>,
+  ): Promise<void> {
+    const bot = this.#bot;
+    const interactionId = event.id?.trim();
+    if (!interactionId || !bot) return;
+
+    await withTimeout(
+      bot.acknowledgeInteraction(interactionId),
+      Math.min(this.options.outboundTimeoutMs, 2_000),
+      "QQ interaction acknowledgement",
+    ).catch((error) => {
+      process.stderr.write(
+        `qq.transport.interaction_ack_error=${safeErrorType(error)} reason=${safeErrorMessage(error)}\n`,
+      );
+    });
+
+    const buttonData = event.data?.resolved?.button_data?.trim() ?? "";
+    const action = parseApprovalButtonData(buttonData);
+    if (!action) return;
+
+    const route = this.#approvalInteractionRoutes.get(action.approvalId);
+    if (!route) {
+      process.stderr.write("qq.transport.interaction_ignored=unknown-approval\n");
+      return;
+    }
+
+    const externalUserId = resolveInteractionUserId(event);
+    if (!externalUserId) {
+      process.stderr.write("qq.transport.interaction_ignored=missing-user\n");
+      return;
+    }
+    if (externalUserId !== route.expectedExternalUserId) {
+      process.stderr.write("qq.transport.interaction_ignored=user-mismatch\n");
+      return;
+    }
+
+    this.#diagnostics = {
+      ...this.#diagnostics,
+      interactionCallbacks: this.#diagnostics.interactionCallbacks + 1,
+    };
+    process.stderr.write(
+      `qq.transport.approval_interaction=received decision=${action.decision}\n`,
+    );
+
+    await onMessage({
+      id: `qq-interaction:${interactionId}`,
+      identity: {
+        transport: "qq",
+        botId: this.options.appId,
+        externalUserId,
+        conversationId: route.conversationId,
+      },
+      text: `/${action.decision} ${action.approvalId}`,
+      receivedAt: new Date(),
+    });
+  }
+
   async #handleInbound(
     message: QQBotInboundMessage,
     onMessage: (message: IncomingMessage) => Promise<void>,
@@ -464,6 +669,7 @@ export class QqTransport implements ChatTransport, ConversationActivityTransport
       message.replyTarget,
       messageId,
     );
+    this.#rememberConversationUser(conversationId, externalUserId);
     this.#diagnostics = {
       ...this.#diagnostics,
       inboundMessages: this.#diagnostics.inboundMessages + 1,
@@ -509,6 +715,91 @@ export class QqTransport implements ChatTransport, ConversationActivityTransport
       logger: createRedactedLogger(),
     });
   }
+}
+
+function approvalPromptText(prompt: InteractiveApprovalPrompt): string {
+  const seconds = Math.max(1, Math.ceil(prompt.ttlMs / 1_000));
+  const action = prompt.capability === "files.write"
+    ? "FLORAL 想修改工作区文件。"
+    : "FLORAL 请求执行一个需要确认的操作。";
+  return [
+    "需要你的确认",
+    "",
+    action,
+    boundedApprovalSummary(prompt.summary),
+    "",
+    `有效期：${seconds} 秒`,
+  ].join("\n");
+}
+
+function approvalKeyboard(approvalId: string): InlineKeyboard {
+  const makeButton = (
+    id: string,
+    label: string,
+    visitedLabel: string,
+    decision: "approve" | "deny",
+    style: 0 | 1 | 3 | 4,
+  ) => ({
+    id,
+    render_data: {
+      label,
+      visited_label: visitedLabel,
+      style,
+    },
+    action: {
+      type: 1 as const,
+      data: `floral-approval:${approvalId}:${decision}`,
+      permission: { type: 2 as const },
+      click_limit: 1 as const,
+    },
+    group_id: "floral-approval",
+  });
+
+  return {
+    content: {
+      rows: [{
+        buttons: [
+          makeButton("allow-once", "✅ 允许一次", "已允许", "approve", 1),
+          makeButton("deny", "❌ 拒绝", "已拒绝", "deny", 0),
+        ],
+      }],
+    },
+  };
+}
+
+function parseApprovalButtonData(value: string):
+  | { approvalId: string; decision: "approve" | "deny" }
+  | undefined {
+  const match = /^floral-approval:([A-Z0-9]{6,24}):(approve|deny)$/u.exec(value);
+  if (!match) return undefined;
+  return {
+    approvalId: match[1]!,
+    decision: match[2] as "approve" | "deny",
+  };
+}
+
+function resolveInteractionUserId(event: InteractionEvent): string | undefined {
+  const record = event as InteractionEvent & {
+    user_openid?: string | undefined;
+    openid?: string | undefined;
+  };
+  const resolved = event.data?.resolved as
+    | ({ user_id?: string; user_openid?: string } & Record<string, unknown>)
+    | undefined;
+  const candidate = record.user_openid
+    ?? resolved?.user_openid
+    ?? resolved?.user_id
+    ?? record.openid;
+  return candidate?.trim() || undefined;
+}
+
+function boundedApprovalSummary(value: string): string {
+  const normalized = value
+    .replace(/[\u0000-\u001f\u007f]+/gu, " ")
+    .replace(/\s+/gu, " ")
+    .trim();
+  if (!normalized) return "请求详情不可用。";
+  return normalized.length <= 220 ? normalized : `${normalized.slice(0, 217)}...`;
 }
 
 function validateSdkRuntimePolicy(policy: QqSdkRuntimePolicy): void {

@@ -116,10 +116,12 @@ corepack pnpm policy:status
 corepack pnpm policy:check
 ```
 
-Remote approval commands are `/approve <id>` and `/deny <id>`. Grants expire,
-are bound to the current owner and conversation, are consumed once, and vanish
-on service restart. Opaque Codex command escalation and system administration
-remain Mac-local only. See `docs/PHASE5_AUTHORIZATION_APPROVAL_AUTHORITY.md`.
+Remote file-change approvals are owner/conversation-bound one-shot grants. On QQ,
+Phase 5.4B presents those existing grants as native `[允许一次] [拒绝]` callback
+buttons; `/approve <id>` and `/deny <id>` remain a command fallback if interactive
+delivery is unavailable. Grants expire, are consumed once, and vanish on service
+restart. Opaque Codex command escalation and system administration remain Mac-local
+only. See `docs/PHASE5_AUTHORIZATION_APPROVAL_AUTHORITY.md`.
 
 Phase 5.3 activates Codex deterministic user-reviewed approval handling with a
 cwd-only, network-disabled workspace-write turn sandbox while retaining the
@@ -158,8 +160,10 @@ typing and text delivery; FLORAL does not create a parallel REST sender or own
 text replies retain inbound `msgId`, while typing receives the bare `ReplyTarget`
 and uses a short keepalive cadence. The custom-provider bridge also preserves
 assistant-content-plus-tool-call history and refuses to surface pre-tool
-commentary as a terminal answer. Native Markdown and inline approval keyboards
-remain the 5.4B follow-up. See `docs/PHASE5_QQ_CONVERSATION_UX.md`.
+commentary as a terminal answer. Phase 5.4B adds QQ Inline Keyboard buttons for
+remote one-shot approvals without moving authorization into the transport; native
+Markdown remains a separate rendering follow-up. See
+`docs/PHASE5_QQ_CONVERSATION_UX.md`.
 
 ## Prepare the Mac mini
 

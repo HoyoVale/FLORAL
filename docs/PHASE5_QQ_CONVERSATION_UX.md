@@ -45,11 +45,30 @@ The same validation exposed a deeper custom-provider tool-loop issue. Responses 
 
 The runtime adoption wrapper forwards conversation activity only when the active transport supports it. Mock and non-QQ transports therefore remain valid without gaining QQ-specific behavior.
 
-## Deliberately deferred to 5.4B
+## Phase 5.4B — Native one-shot approval buttons
 
-Native Markdown templates and inline approval keyboards remain separate from typing. They add new rendering/callback surfaces and will be connected to the existing approval authority only after their identity and expiry contracts are independently tested.
+Remote approvals now keep `QqApprovalBroker` as the sole authorization owner while the QQ transport adds an optional interactive presentation surface. For an approval that the authority has already classified as remote-confirmable, QQ sends a native Inline Keyboard with exactly two callback actions: `[允许一次]` and `[拒绝]`. The visible prompt omits the public approval ID and slash-command instructions.
 
-In particular, approval buttons must remain UI only. They may resolve an existing `QqApprovalBroker` request, but they must never widen `files.write`, authorize shell commands remotely, or bypass Mac-local confirmation.
+The callback path deliberately reuses the existing gateway command and identity pipeline instead of resolving a broker entry inside the transport:
+
+1. `QqApprovalBroker` creates the same expiring owner/conversation-bound one-shot request as before.
+2. `GatewayService` asks the transport to present that request interactively only when the transport advertises the optional capability.
+3. `QqTransport` sends `QQBot.sendTextWithKeyboard(...)` using the cached passive-reply target and triggering `msgId`.
+4. The callback button contains only a bounded opaque approval token plus `approve` or `deny`; the transport acknowledges `INTERACTION_CREATE`, resolves the originating C2C conversation from its short-lived approval route, and emits a synthetic `/approve <id>` or `/deny <id>` inbound message.
+5. The normal Gateway identity lookup and `QqApprovalBroker.resolve(...)` checks still enforce owner role, user binding, conversation binding, expiry, and one-shot consumption. QQ button permissions are UX hints, never the authorization boundary.
+
+The route used to map an interaction back to its originating conversation is kept only for the approval TTL and is cleared on transport shutdown. Unknown, malformed, expired, or unrelated interaction payloads are acknowledged and ignored.
+
+Interactive delivery is fail-safe rather than mandatory. If `sendTextWithKeyboard` rejects or the active runtime transport does not expose the capability, the broker falls back to the existing text prompt containing the approval ID plus `/approve` and `/deny`. This preserves operability without weakening authorization.
+
+The high-risk boundary is unchanged:
+
+- concrete remote-confirmable file changes may receive the QQ one-shot keyboard;
+- `shell.execute` and other local-confirmation capabilities never receive a QQ approval keyboard and remain Mac-local;
+- system administration remains denied;
+- service restart/cancellation still invalidates pending grants.
+
+Native Markdown remains separate from this approval callback work. It can be evaluated independently without coupling message rendering to authorization.
 
 ## Acceptance
 
@@ -70,6 +89,17 @@ In particular, approval buttons must remain UI only. They may resolve an existin
 4. Trigger two outbound sends concurrently in tests. The second send must not enter the SDK before the first send completes.
 5. Simulate `sendTyping` failure. Final text delivery must still succeed.
 6. Re-run the Phase 5.3 one-shot file-change approval smoke test to confirm authorization semantics are unchanged.
+
+### 5.4B
+
+1. Trigger a concrete `files.write` request. QQ should show one approval prompt with `[允许一次] [拒绝]` and no visible approval ID or slash commands.
+2. Tap `[允许一次]`. The existing pending request must resolve exactly once, the requested file change must complete, and a second callback/replayed `/approve` must not grant anything.
+3. Trigger another file change and tap `[拒绝]`. The file must not be changed.
+4. A callback from a different QQ identity or a mismatched conversation must not resolve the pending approval.
+5. Let a button expire, or restart the service before tapping it. The stale interaction must fail closed.
+6. Force native keyboard delivery failure in tests. The old text approval prompt must appear as a fallback and remain usable.
+7. Trigger `shell.execute`. QQ must still show the Mac-local confirmation notice, never remote approval buttons.
+8. `qq:sdk:check` must confirm `sendTextWithKeyboard` and `acknowledgeInteraction` exist in the pinned SDK contract.
 
 ## Phase 5.4A-2.3 — Native typing visibility isolation
 

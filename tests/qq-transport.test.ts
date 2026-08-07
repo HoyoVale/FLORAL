@@ -9,11 +9,18 @@ import {
 class FakeBot {
   readonly listeners = new Map<string, Array<(...args: unknown[]) => unknown>>();
   readonly sent: Array<{ target: Record<string, unknown>; text: string }> = [];
+  readonly keyboards: Array<{
+    target: Record<string, unknown>;
+    text: string;
+    keyboard: Record<string, unknown>;
+  }> = [];
+  readonly acknowledgements: string[] = [];
   readonly typing: Array<Record<string, unknown>> = [];
   readonly started = deferred<void>();
   readonly stopped = deferred<void>();
   signal: AbortSignal | undefined;
   sendError: Error | undefined;
+  keyboardError: Error | undefined;
   typingError: Error | undefined;
   nextSendGate: Promise<void> | undefined;
 
@@ -43,6 +50,20 @@ class FakeBot {
     this.nextSendGate = undefined;
     if (gate) await gate;
     return { id: `reply-${this.sent.length}` };
+  }
+
+  async sendTextWithKeyboard(
+    target: Record<string, unknown>,
+    text: string,
+    keyboard: Record<string, unknown>,
+  ): Promise<Record<string, unknown>> {
+    if (this.keyboardError) throw this.keyboardError;
+    this.keyboards.push({ target, text, keyboard });
+    return { id: `keyboard-${this.keyboards.length}` };
+  }
+
+  async acknowledgeInteraction(id: string): Promise<void> {
+    this.acknowledgements.push(id);
   }
 
   async sendTyping(target: Record<string, unknown>): Promise<void> {
@@ -165,6 +186,203 @@ describe("QqTransport", () => {
       },
       text: "reply",
     }]);
+    await transport.stop();
+  });
+
+  it("sends a native one-shot approval keyboard without exposing the approval ID", async () => {
+    const fake = new FakeBot();
+    const transport = createTransport(fake);
+    const starting = transport.start(async () => undefined);
+    await fake.started.promise;
+    fake.emit("ready");
+    await starting;
+
+    await fake.emitAsync("message", {}, inbound({
+      messageId: "approval-source",
+      senderId: "owner-openid",
+      targetId: "owner-openid",
+      content: "modify file",
+    }));
+
+    await transport.sendInteractiveApprovalPrompt({
+      conversationId: "owner-openid",
+      approvalId: "APPROVE123",
+      capability: "files.write",
+      summary: "Codex 请求修改工作区文件: phase54b-test.txt",
+      ttlMs: 60_000,
+    });
+
+    expect(fake.keyboards).toHaveLength(1);
+    const sent = fake.keyboards[0]!;
+    expect(sent.target).toEqual({
+      scope: "c2c",
+      targetId: "owner-openid",
+      msgId: "approval-source",
+    });
+    expect(sent.text).toContain("需要你的确认");
+    expect(sent.text).toContain("phase54b-test.txt");
+    expect(sent.text).not.toContain("APPROVE123");
+    expect(JSON.stringify(sent.keyboard)).toContain("✅ 允许一次");
+    expect(JSON.stringify(sent.keyboard)).toContain("❌ 拒绝");
+    expect(JSON.stringify(sent.keyboard)).toContain(
+      "floral-approval:APPROVE123:approve",
+    );
+    expect(JSON.stringify(sent.keyboard)).toContain(
+      "floral-approval:APPROVE123:deny",
+    );
+    expect(transport.snapshot().interactiveApprovalPrompts).toBe(1);
+    await transport.stop();
+  });
+
+  it("maps a native approval interaction back through the existing gateway command path", async () => {
+    const fake = new FakeBot();
+    const transport = createTransport(fake);
+    const received: IncomingMessage[] = [];
+    const starting = transport.start(async (message) => {
+      received.push(message);
+    });
+    await fake.started.promise;
+    fake.emit("ready");
+    await starting;
+    await fake.emitAsync("message", {}, inbound({
+      messageId: "interaction-source",
+      senderId: "owner-openid",
+      targetId: "conversation-openid",
+      content: "modify file",
+    }));
+    received.length = 0;
+    await transport.sendInteractiveApprovalPrompt({
+      conversationId: "conversation-openid",
+      approvalId: "APPROVE123",
+      capability: "files.write",
+      summary: "write",
+      ttlMs: 60_000,
+    });
+
+    await fake.emitAsync("interaction", {}, {
+      id: "interaction-1",
+      type: 11,
+      version: 1,
+      user_openid: "owner-openid",
+      data: {
+        type: 0,
+        resolved: {
+          button_data: "floral-approval:APPROVE123:approve",
+        },
+      },
+    });
+
+    expect(fake.acknowledgements).toEqual(["interaction-1"]);
+    expect(received).toHaveLength(1);
+    expect(received[0]).toMatchObject({
+      id: "qq-interaction:interaction-1",
+      identity: {
+        transport: "qq",
+        botId: "app-id",
+        externalUserId: "owner-openid",
+        conversationId: "conversation-openid",
+      },
+      text: "/approve APPROVE123",
+    });
+    expect(transport.snapshot()).toMatchObject({
+      interactionCallbacks: 1,
+      interactionFailures: 0,
+    });
+    await transport.stop();
+  });
+
+  it("rejects a native approval callback from a different QQ identity", async () => {
+    const fake = new FakeBot();
+    const transport = createTransport(fake);
+    const received: IncomingMessage[] = [];
+    const starting = transport.start(async (message) => {
+      received.push(message);
+    });
+    await fake.started.promise;
+    fake.emit("ready");
+    await starting;
+    await fake.emitAsync("message", {}, inbound({
+      messageId: "owner-source",
+      senderId: "owner-openid",
+      targetId: "owner-conversation",
+      content: "modify file",
+    }));
+    received.length = 0;
+    await transport.sendInteractiveApprovalPrompt({
+      conversationId: "owner-conversation",
+      approvalId: "SECURE123",
+      capability: "files.write",
+      summary: "write",
+      ttlMs: 60_000,
+    });
+
+    await fake.emitAsync("interaction", {}, {
+      id: "interaction-attacker",
+      type: 11,
+      version: 1,
+      user_openid: "attacker-openid",
+      data: {
+        type: 0,
+        resolved: {
+          button_data: "floral-approval:SECURE123:approve",
+        },
+      },
+    });
+
+    expect(fake.acknowledgements).toEqual(["interaction-attacker"]);
+    expect(received).toHaveLength(0);
+    expect(transport.snapshot().interactionCallbacks).toBe(0);
+    await transport.stop();
+  });
+
+  it("acknowledges but ignores unrelated or malformed interaction callbacks", async () => {
+    const fake = new FakeBot();
+    const transport = createTransport(fake);
+    const received: IncomingMessage[] = [];
+    const starting = transport.start(async (message) => {
+      received.push(message);
+    });
+    await fake.started.promise;
+    fake.emit("ready");
+    await starting;
+
+    await fake.emitAsync("interaction", {}, {
+      id: "interaction-other",
+      type: 11,
+      version: 1,
+      user_openid: "owner-openid",
+      data: { type: 0, resolved: { button_data: "something-else" } },
+    });
+
+    expect(fake.acknowledgements).toEqual(["interaction-other"]);
+    expect(received).toHaveLength(0);
+    expect(transport.snapshot().interactionCallbacks).toBe(0);
+    await transport.stop();
+  });
+
+  it("surfaces native keyboard delivery failure so the broker can fall back to commands", async () => {
+    const fake = new FakeBot();
+    fake.keyboardError = new Error("keyboard unavailable");
+    const transport = createTransport(fake);
+    const starting = transport.start(async () => undefined);
+    await fake.started.promise;
+    fake.emit("ready");
+    await starting;
+    await fake.emitAsync("message", {}, inbound({
+      messageId: "approval-source",
+      senderId: "owner-openid",
+      targetId: "owner-openid",
+      content: "modify file",
+    }));
+
+    await expect(transport.sendInteractiveApprovalPrompt({
+      conversationId: "owner-openid",
+      approvalId: "APPROVE123",
+      capability: "files.write",
+      summary: "write",
+      ttlMs: 60_000,
+    })).rejects.toThrow("keyboard unavailable");
+    expect(transport.snapshot().deliveryFailures).toBe(1);
     await transport.stop();
   });
 

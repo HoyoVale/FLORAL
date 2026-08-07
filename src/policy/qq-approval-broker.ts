@@ -5,6 +5,7 @@ import type {
   AuditEventInput,
   GatewayRole,
 } from "../core/types.js";
+import type { InteractiveApprovalPrompt } from "../core/contracts.js";
 import type { AuthorizationAuthority } from "./authorization-authority.js";
 import type { LocalConfirmationBroker } from "./local-confirmation-broker.js";
 
@@ -21,6 +22,7 @@ export interface QqApprovalBrokerOptions {
   ownerOnly: boolean;
   authority: AuthorizationAuthority;
   send: (conversationId: string, text: string) => Promise<void>;
+  sendInteractive?: ((prompt: InteractiveApprovalPrompt) => Promise<void>) | undefined;
   audit: (event: AuditEventInput) => Promise<void>;
   now?: (() => number) | undefined;
   createPublicId?: (() => string) | undefined;
@@ -162,13 +164,37 @@ export class QqApprovalBroker {
     });
 
     try {
-      await this.options.send(
-        scope.deliveryConversationId,
-        approvalPrompt(publicId, request, this.options.ttlMs),
-      );
+      let presentation: "interactive" | "command-fallback" = "command-fallback";
+      if (this.options.sendInteractive) {
+        try {
+          await this.options.sendInteractive({
+            conversationId: scope.deliveryConversationId,
+            approvalId: publicId,
+            capability: request.capability,
+            summary: boundedSummary(request.summary),
+            ttlMs: this.options.ttlMs,
+          });
+          presentation = "interactive";
+        } catch (error) {
+          await this.#audit(
+            scope,
+            "authorization.approval_interactive_delivery_failed",
+            request,
+            { errorType: error instanceof Error ? error.name : "unknown" },
+          );
+        }
+      }
+
+      if (presentation === "command-fallback") {
+        await this.options.send(
+          scope.deliveryConversationId,
+          approvalPrompt(publicId, request, this.options.ttlMs),
+        );
+      }
       await this.#audit(scope, "authorization.approval_requested", request, {
         approvalId: publicId,
         ttlMs: this.options.ttlMs,
+        presentation,
       });
     } catch {
       this.#finish(publicId, "deny");
