@@ -140,6 +140,13 @@ corepack pnpm approval:local:deny -- <id>
 No approval is promoted to session scope. See
 `docs/PHASE5_CONTROLLED_CAPABILITY_ACTIVATION.md`.
 
+Phase 5.3E also installs a private Codex `model_catalog_json` sidecar for the
+custom DeepSeek model. This prevents Codex fallback metadata from silently
+omitting the freeform `apply_patch` tool, and the bridge logs only
+`bridge.tool_surface.apply_patch=custom|missing` so real tool exposure can be
+verified before approval debugging. DeepSeek V4 thinking-mode tool requests omit
+the normal `tool_choice` field and replay required tool-call context.
+
 ## Prepare the Mac mini
 
 Copy or clone the project onto the Mac and run:

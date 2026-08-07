@@ -157,7 +157,7 @@ describe("Responses request translation", () => {
     expect(translated.messages).toEqual([
       {
         role: "assistant",
-        content: null,
+        content: "",
         tool_calls: [{
           id: "call_1",
           type: "function",

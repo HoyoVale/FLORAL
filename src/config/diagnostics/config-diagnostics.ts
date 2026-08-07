@@ -30,6 +30,7 @@ import {
   CODEX_BRIDGE_BASE_URL_PLACEHOLDER,
   renderCodexConfig,
 } from "../adapters/codex-native-config.js";
+import { CODEX_MODEL_CATALOG_PATH_PLACEHOLDER } from "../codex/codex-model-catalog.js";
 import {
   renderNativeConfigBundle,
 } from "../adapters/native-config-bundle.js";
@@ -1115,10 +1116,15 @@ function normalizeCodexInstalledConfig(value: string): string {
   const normalized = normalizeNativeConfigText(value)
     .split("\n")
     .filter((line) => !line.trimStart().startsWith("#"))
-    .map((line) => line.replace(
-      /^base_url\s*=\s*.+$/u,
-      `base_url = ${JSON.stringify(CODEX_BRIDGE_BASE_URL_PLACEHOLDER)}`,
-    ))
+    .map((line) => {
+      if (/^base_url\s*=\s*.+$/u.test(line)) {
+        return `base_url = ${JSON.stringify(CODEX_BRIDGE_BASE_URL_PLACEHOLDER)}`;
+      }
+      if (/^model_catalog_json\s*=\s*.+$/u.test(line)) {
+        return `model_catalog_json = ${JSON.stringify(CODEX_MODEL_CATALOG_PATH_PLACEHOLDER)}`;
+      }
+      return line;
+    })
     .filter((line, index, lines) => line !== "" || (index > 0 && lines[index - 1] !== ""))
     .join("\n")
     .trim();

@@ -302,14 +302,15 @@ describe("ResponsesBridgeServer", () => {
     });
     await second.text();
 
-    expect(upstreamBodies[0]?.tool_choice).toBe("auto");
+    expect(upstreamBodies[0]?.tool_choice).toBeUndefined();
     expect(upstreamBodies[1]?.tool_choice).toEqual({
       type: "function",
       function: { name: "mcp__floral_search__searxng_web_search" },
     });
-    expect(upstreamBodies[2]?.tool_choice).toBe("auto");
+    expect(upstreamBodies[2]?.tool_choice).toBeUndefined();
     expect(upstreamBodies[2]?.messages?.[0]).toMatchObject({
       role: "assistant",
+      content: "",
       reasoning_content: "search before answering",
       tool_calls: [{
         id: "call_search",

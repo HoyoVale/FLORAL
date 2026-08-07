@@ -7,6 +7,11 @@ import { buildCodexDeepSeekConfig } from "../src/agent/codex-deepseek-config.js"
 import { CodexRuntimeError } from "../src/agent/codex-errors.js";
 import { createResponsesBridge } from "../src/agent/bridge/bridge-factory.js";
 import { loadEnv } from "../src/config/env.js";
+import {
+  CODEX_MODEL_CATALOG_RUNTIME_FILENAME,
+  materializeCodexModelCatalogPath,
+  renderCodexModelCatalog,
+} from "../src/config/codex/codex-model-catalog.js";
 import { loadProjectEnv } from "../src/config/load-project-env.js";
 import { createProjectDeepSeekCostGuard } from "../src/runtime/cost/cost-guard-factory.js";
 
@@ -27,10 +32,16 @@ const config = buildCodexDeepSeekConfig({
   bridgeBaseUrl: address.baseUrl,
   streamIdleTimeoutMs: env.DEEPSEEK_REQUEST_TIMEOUT_MS,
 });
-await writeFile(join(codexHome, "config.toml"), config, {
+const modelCatalogPath = join(codexHome, CODEX_MODEL_CATALOG_RUNTIME_FILENAME);
+await writeFile(modelCatalogPath, renderCodexModelCatalog(env.DEEPSEEK_MODEL), {
   encoding: "utf8",
   mode: 0o600,
 });
+await writeFile(
+  join(codexHome, "config.toml"),
+  materializeCodexModelCatalogPath(config, modelCatalogPath),
+  { encoding: "utf8", mode: 0o600 },
+);
 
 const childEnv: NodeJS.ProcessEnv = {
   ...process.env,

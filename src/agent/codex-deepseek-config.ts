@@ -1,3 +1,5 @@
+import { CODEX_MODEL_CATALOG_PATH_PLACEHOLDER } from "../config/codex/codex-model-catalog.js";
+
 export interface CodexDeepSeekSearchMcpOptions {
   searxngUrl: string;
   packageSpec: string;
@@ -18,6 +20,7 @@ export function buildCodexDeepSeekConfig(
   const lines = [
     `model = ${tomlString(options.model)}`,
     `model_provider = "floral-deepseek"`,
+    `model_catalog_json = ${tomlString(CODEX_MODEL_CATALOG_PATH_PLACEHOLDER)}`,
     `model_reasoning_effort = "high"`,
     `web_search = "disabled"`,
     ``,

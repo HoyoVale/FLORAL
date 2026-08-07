@@ -150,3 +150,33 @@ The production Mac acceptance test should additionally prove:
 4. a command escalation cannot be approved by QQ and creates a Mac-local ID;
 5. local approval is consumed once and disappears after resolution/restart;
 6. Cost Guard remains idle when no user-triggered run is active.
+
+## Phase 5.3E custom-model tool metadata
+
+The production provider model `deepseek-v4-flash` is a custom model slug from
+Codex's perspective. Pinned Codex 0.146.1 fallback metadata sets
+`apply_patch_tool_type` to `None`, so a turn can have correct workspace-write and
+approval settings while never receiving an `apply_patch` tool. Unit tests that
+manually inject `item/fileChange/requestApproval` do not prove the real model
+was given that tool.
+
+FLORAL therefore renders a private `model-catalog.json` for the active custom
+model and points managed `config.toml` at it with `model_catalog_json`. The
+catalog enables only the pinned freeform apply-patch surface, keeps Responses
+Lite and multi-agent metadata disabled for the third-party provider, disables
+parallel tool calls for conservative side-effect ordering, and records the
+official 1M DeepSeek V4 context window. The runtime catalog is mode 0600 and is
+removed with the ephemeral managed Codex config on clean shutdown.
+
+The Responses bridge also applies the current DeepSeek V4 thinking-mode tool
+compatibility requirements: normal production requests omit `tool_choice`,
+reasoning content is replayed for tool-call history, and assistant tool-call
+history carries an empty string rather than a null content field. The bridge
+emits only the bounded capability diagnostic:
+
+```text
+bridge.tool_surface.apply_patch=custom
+```
+
+A value of `missing` means the real Codex turn did not expose apply_patch and
+Phase 5.3 acceptance must stop before debugging the QQ approval broker.

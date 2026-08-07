@@ -12,6 +12,10 @@ import {
   resolveCodexReasoningEffort,
 } from "../src/config/adapters/codex-native-config.js";
 import {
+  CODEX_MODEL_CATALOG_PATH_PLACEHOLDER,
+  renderCodexModelCatalog,
+} from "../src/config/codex/codex-model-catalog.js";
+import {
   renderSearxngCompose,
   renderSearxngSettings,
 } from "../src/config/adapters/searxng-native-config.js";
@@ -44,7 +48,7 @@ async function loadAuthority() {
 }
 
 describe("native configuration adapters", () => {
-  it("renders a deterministic six-artifact bundle", async () => {
+  it("renders a deterministic seven-artifact bundle", async () => {
     const authority = await loadAuthority();
     const first = renderNativeConfigBundle(authority);
     const second = renderNativeConfigBundle(authority);
@@ -52,6 +56,7 @@ describe("native configuration adapters", () => {
     expect(first).toEqual(second);
     expect(first.artifacts.map((artifact) => artifact.relativePath)).toEqual([
       "codex/config.toml",
+      "codex/model-catalog.json",
       "codex/requirements.toml",
       "mcp/manifest.json",
       "qq/sdk-options.json",
@@ -72,6 +77,7 @@ describe("native configuration adapters", () => {
     expect(output).toContain('model_reasoning_effort = "xhigh"');
     expect(output).toContain('model_reasoning_summary = "concise"');
     expect(output).toContain(`base_url = "${CODEX_BRIDGE_BASE_URL_PLACEHOLDER}"`);
+    expect(output).toContain(`model_catalog_json = "${CODEX_MODEL_CATALOG_PATH_PLACEHOLDER}"`);
     expect(output).toContain("[mcp_servers.floral_search]");
     expect(output).toContain('default_tools_approval_mode = "approve"');
     expect(output).toContain('[mcp_servers.floral_search.tools.searxng_web_search]');
@@ -81,6 +87,25 @@ describe("native configuration adapters", () => {
     config.deepseek.reasoning_effort = "max";
     expect(resolveCodexReasoningEffort(config)).toBe("xhigh");
     expect(renderCodexConfig(config)).toContain('model_reasoning_effort = "xhigh"');
+  });
+
+
+  it("renders pinned custom-model metadata with the freeform apply_patch surface", async () => {
+    const catalog = JSON.parse(renderCodexModelCatalog("deepseek-v4-flash")) as {
+      models: Array<Record<string, unknown>>;
+    };
+    expect(catalog.models).toHaveLength(1);
+    expect(catalog.models[0]).toMatchObject({
+      slug: "deepseek-v4-flash",
+      apply_patch_tool_type: "freeform",
+      shell_type: "shell_command",
+      supports_parallel_tool_calls: false,
+      supports_reasoning_summary_parameter: false,
+      default_reasoning_summary: "none",
+      context_window: 1_000_000,
+      use_responses_lite: false,
+    });
+    expect(String(catalog.models[0]?.base_instructions)).toContain("*** Begin Patch");
   });
 
   it("keeps checked-in SearXNG native templates equal to renderer output", async () => {
@@ -134,7 +159,7 @@ describe("native configuration adapters", () => {
 
     expect(rewrittenPaths).toEqual(paths);
     await expect(readFile(stalePath, "utf8")).rejects.toMatchObject({ code: "ENOENT" });
-    expect(paths.artifacts).toHaveLength(6);
+    expect(paths.artifacts).toHaveLength(7);
     const manifest = await readFile(paths.manifest, "utf8");
     expect(JSON.parse(manifest)).toMatchObject({
       bundleFingerprint: bundle.bundleFingerprint,

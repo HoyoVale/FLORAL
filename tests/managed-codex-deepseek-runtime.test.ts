@@ -7,6 +7,11 @@ import {
   createPersistentCodexWorkspace,
 } from "../src/agent/managed-codex-deepseek-runtime.js";
 import { compareCodexShadowConfigs } from "../src/config/adoption/codex-shadow-adoption.js";
+import {
+  CODEX_MODEL_CATALOG_PATH_PLACEHOLDER,
+  CODEX_MODEL_CATALOG_RUNTIME_FILENAME,
+  renderCodexModelCatalog,
+} from "../src/config/codex/codex-model-catalog.js";
 import { resolveConfigurationAuthority } from "../src/config/federation/config-authority.js";
 import { buildMcpRuntimeRegistry } from "../src/config/mcp/mcp-runtime-registry.js";
 import { loadEnv } from "../src/config/env.js";
@@ -234,6 +239,28 @@ describe("ManagedCodexDeepSeekRuntime", () => {
     await managed.start();
     expect(workspaceConfig).toContain('model_reasoning_effort = "high"');
     await managed.stop();
+  });
+
+
+  it("installs a private model catalog and materializes its absolute path into Codex config", async () => {
+    const root = await mkdtemp(join(tmpdir(), "floral-codex-model-catalog-test-"));
+    const codexHome = join(root, "codex-home");
+    const catalog = renderCodexModelCatalog("deepseek-v4-flash");
+    const config = `model_catalog_json = ${JSON.stringify(CODEX_MODEL_CATALOG_PATH_PLACEHOLDER)}\n`;
+    try {
+      const workspace = await createPersistentCodexWorkspace(codexHome, config, { modelCatalog: catalog });
+      const catalogPath = join(codexHome, CODEX_MODEL_CATALOG_RUNTIME_FILENAME);
+      expect(await readFile(catalogPath, "utf8")).toBe(catalog);
+      expect(await readFile(join(codexHome, "config.toml"), "utf8"))
+        .toBe(`model_catalog_json = ${JSON.stringify(catalogPath)}\n`);
+      if (process.platform !== "win32") {
+        expect((await stat(catalogPath)).mode & 0o777).toBe(0o600);
+      }
+      await workspace.cleanup();
+      await expect(stat(catalogPath)).rejects.toThrow();
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
   });
 
   it("preserves Codex thread state while removing the ephemeral bridge config", async () => {

@@ -5,6 +5,10 @@ import {
   type McpRuntimeRegistry,
 } from "../mcp/mcp-runtime-registry.js";
 import { createNativeConfigArtifact, type NativeConfigArtifact } from "./native-config-types.js";
+import {
+  CODEX_MODEL_CATALOG_PATH_PLACEHOLDER,
+  renderCodexModelCatalog,
+} from "../codex/codex-model-catalog.js";
 
 export const CODEX_BRIDGE_BASE_URL_PLACEHOLDER = "__FLORAL_BRIDGE_BASE_URL__";
 
@@ -16,8 +20,20 @@ export function renderCodexNativeArtifacts(config: EffectiveConfig): NativeConfi
       mediaType: "application/toml",
       purpose: "Deterministic FLORAL-managed Codex config.toml preview.",
       active: config.codex.mode === "real",
-      runtimePlaceholders: [CODEX_BRIDGE_BASE_URL_PLACEHOLDER],
+      runtimePlaceholders: [
+        CODEX_BRIDGE_BASE_URL_PLACEHOLDER,
+        CODEX_MODEL_CATALOG_PATH_PLACEHOLDER,
+      ],
       content: renderCodexConfig(config),
+    }),
+    createNativeConfigArtifact({
+      component: "codex",
+      relativePath: "codex/model-catalog.json",
+      mediaType: "application/json",
+      purpose: "Managed model metadata for custom Codex providers, including the apply_patch tool surface.",
+      active: config.codex.mode === "real",
+      runtimePlaceholders: [],
+      content: renderCodexModelCatalog(config.codex.model.trim() || config.deepseek.model),
     }),
     createNativeConfigArtifact({
       component: "codex",
@@ -42,6 +58,7 @@ export function renderCodexConfig(
     generatedHeader("Codex config.toml", config),
     `model = ${tomlString(model)}`,
     `model_provider = ${tomlString(native.provider_id)}`,
+    `model_catalog_json = ${tomlString(CODEX_MODEL_CATALOG_PATH_PLACEHOLDER)}`,
     `model_reasoning_effort = ${tomlString(resolveCodexReasoningEffort(config))}`,
     `model_reasoning_summary = ${tomlString(native.reasoning_summary)}`,
     `web_search = ${tomlString(native.web_search)}`,

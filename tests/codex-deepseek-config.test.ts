@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { buildCodexDeepSeekConfig } from "../src/agent/codex-deepseek-config.js";
+import { CODEX_MODEL_CATALOG_PATH_PLACEHOLDER } from "../src/config/codex/codex-model-catalog.js";
 
 describe("Codex DeepSeek configuration", () => {
   it("disables the incompatible hosted web search tool", () => {
@@ -10,6 +11,7 @@ describe("Codex DeepSeek configuration", () => {
     });
 
     expect(config).toContain('web_search = "disabled"');
+    expect(config).toContain(`model_catalog_json = "${CODEX_MODEL_CATALOG_PATH_PLACEHOLDER}"`);
     expect(config.indexOf('web_search = "disabled"'))
       .toBeLessThan(config.indexOf("[model_providers.floral-deepseek]"));
   });

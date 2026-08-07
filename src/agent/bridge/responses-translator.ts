@@ -328,7 +328,10 @@ function appendAssistantToolCall(
   }
   messages.push({
     role: "assistant",
-    content: null,
+    // DeepSeek V4 agent integrations require a present assistant content field
+    // when replaying tool-call history. Empty text preserves Codex semantics
+    // without inventing user-visible content.
+    content: "",
     ...(reasoningContent ? { reasoning_content: reasoningContent } : {}),
     tool_calls: [call],
   });

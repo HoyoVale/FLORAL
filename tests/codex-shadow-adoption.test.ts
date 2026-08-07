@@ -65,6 +65,18 @@ describe("Codex unified shadow adoption", () => {
     )));
   });
 
+
+  it("keeps runtime model-catalog installation paths outside the Phase 4 semantic fingerprint", () => {
+    const withoutCatalog = 'model = "deepseek-v4-flash"\n';
+    const withCatalog = [
+      'model = "deepseek-v4-flash"',
+      'model_catalog_json = "/tmp/floral/model-catalog.json"',
+      '',
+    ].join("\n");
+    expect(fingerprintCodexConfigSemantics(withCatalog))
+      .toBe(fingerprintCodexConfigSemantics(withoutCatalog));
+  });
+
   it("detects a real reasoning-effort difference without exposing values", async () => {
     const resolved = await authority({ DEEPSEEK_REASONING_EFFORT: "max" });
     const comparison = compareCodexShadowConfigs({

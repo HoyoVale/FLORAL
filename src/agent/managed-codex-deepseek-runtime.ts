@@ -29,6 +29,12 @@ import { checkSearxng } from "../search/searxng.js";
 import { createProjectDeepSeekCostGuard } from "../runtime/cost/cost-guard-factory.js";
 import { ProviderActivityGate } from "../runtime/cost/provider-activity-gate.js";
 import { createResponsesBridge } from "./bridge/bridge-factory.js";
+import {
+  CODEX_MODEL_CATALOG_RUNTIME_FILENAME,
+  codexModelCatalogFingerprint,
+  materializeCodexModelCatalogPath,
+  renderCodexModelCatalog,
+} from "../config/codex/codex-model-catalog.js";
 import { CodexAppServerRuntime } from "./codex-app-server.js";
 import { buildCodexDeepSeekConfig } from "./codex-deepseek-config.js";
 
@@ -55,7 +61,10 @@ export interface ManagedCodexDeepSeekDependencies {
   createWorkspace?: ((
     config: string,
     codexHome: string,
-    options?: { fallbackConfig?: string | undefined },
+    options?: {
+      fallbackConfig?: string | undefined;
+      modelCatalog?: string | undefined;
+    },
   ) => Promise<ManagedWorkspace>) | undefined;
   createRuntime?: ((options: {
     codexHome: string;
@@ -202,12 +211,16 @@ export class ManagedCodexDeepSeekRuntime implements AgentRuntime {
     token: string,
   ): Promise<void> {
     const managedCodexHome = resolve(this.env.CODEX_MANAGED_HOME);
+    const modelCatalog = renderCodexModelCatalog(this.env.DEEPSEEK_MODEL);
     let workspace = await this.#createWorkspace(
       adoption.productionConfig,
       managedCodexHome,
       adoption.fallbackConfig,
+      modelCatalog,
     );
     process.stderr.write("agent.stack.codex_home=persistent\n");
+    process.stderr.write(`agent.stack.codex_model_catalog.fingerprint=${codexModelCatalogFingerprint(modelCatalog)}\n`);
+    process.stderr.write("agent.stack.codex_model_catalog=active\n");
     let runtime = this.#createRuntime(workspace.codexHome, token);
 
     try {
@@ -243,6 +256,8 @@ export class ManagedCodexDeepSeekRuntime implements AgentRuntime {
           workspace = await this.#createWorkspace(
             adoption.fallbackConfig,
             managedCodexHome,
+            undefined,
+            modelCatalog,
           );
         }
         runtime = this.#createRuntime(workspace.codexHome, token);
@@ -319,16 +334,14 @@ export class ManagedCodexDeepSeekRuntime implements AgentRuntime {
     config: string,
     codexHome: string,
     fallbackConfig?: string,
+    modelCatalog = renderCodexModelCatalog(this.env.DEEPSEEK_MODEL),
   ): Promise<ManagedWorkspace> {
-    return await (this.dependencies.createWorkspace?.(
-      config,
-      codexHome,
-      fallbackConfig ? { fallbackConfig } : undefined,
-    ) ?? createPersistentCodexWorkspace(
-      codexHome,
-      config,
-      fallbackConfig ? { fallbackConfig } : undefined,
-    ));
+    const options = {
+      ...(fallbackConfig ? { fallbackConfig } : {}),
+      modelCatalog,
+    };
+    return await (this.dependencies.createWorkspace?.(config, codexHome, options)
+      ?? createPersistentCodexWorkspace(codexHome, config, options));
   }
 
   #createRuntime(codexHome: string, bridgeToken: string): AgentRuntime {
@@ -445,25 +458,36 @@ export class ManagedCodexDeepSeekRuntime implements AgentRuntime {
 export async function createPersistentCodexWorkspace(
   codexHome: string,
   config: string,
-  options: { fallbackConfig?: string | undefined } = {},
+  options: {
+    fallbackConfig?: string | undefined;
+    modelCatalog?: string | undefined;
+  } = {},
 ): Promise<ManagedWorkspace> {
   const resolvedHome = resolve(codexHome);
   const configPath = join(resolvedHome, "config.toml");
   const fallbackPath = join(resolvedHome, "config.legacy-fallback.toml");
+  const modelCatalogPath = join(resolvedHome, CODEX_MODEL_CATALOG_RUNTIME_FILENAME);
+  const materializeConfig = (value: string): string =>
+    materializeCodexModelCatalogPath(value, modelCatalogPath);
 
   await mkdir(resolvedHome, { recursive: true, mode: 0o700 });
   await chmod(resolvedHome, 0o700).catch(() => undefined);
+  if (options.modelCatalog) {
+    await writeAtomicPrivateText(modelCatalogPath, options.modelCatalog);
+  } else {
+    await rm(modelCatalogPath, { force: true });
+  }
   if (options.fallbackConfig) {
-    await writeAtomicPrivateText(fallbackPath, options.fallbackConfig);
+    await writeAtomicPrivateText(fallbackPath, materializeConfig(options.fallbackConfig));
   } else {
     await rm(fallbackPath, { force: true });
   }
-  await writeAtomicPrivateText(configPath, config);
+  await writeAtomicPrivateText(configPath, materializeConfig(config));
 
   return {
     codexHome: resolvedHome,
     replaceConfig: async (replacement) => {
-      await writeAtomicPrivateText(configPath, replacement);
+      await writeAtomicPrivateText(configPath, materializeConfig(replacement));
     },
     cleanup: async () => {
       // Keep Codex thread/session state across FLORAL restarts, but remove the
@@ -472,6 +496,7 @@ export async function createPersistentCodexWorkspace(
       await Promise.all([
         rm(configPath, { force: true }),
         rm(fallbackPath, { force: true }),
+        rm(modelCatalogPath, { force: true }),
       ]);
     },
   };

@@ -13,6 +13,11 @@ import { CodexAppServerRuntime } from "../src/agent/codex-app-server.js";
 import { buildCodexDeepSeekConfig } from "../src/agent/codex-deepseek-config.js";
 import { CodexRuntimeError } from "../src/agent/codex-errors.js";
 import { loadEnv } from "../src/config/env.js";
+import {
+  CODEX_MODEL_CATALOG_RUNTIME_FILENAME,
+  materializeCodexModelCatalogPath,
+  renderCodexModelCatalog,
+} from "../src/config/codex/codex-model-catalog.js";
 import { loadProjectEnv } from "../src/config/load-project-env.js";
 import { createProjectDeepSeekCostGuard } from "../src/runtime/cost/cost-guard-factory.js";
 import { checkSearxng } from "../src/search/searxng.js";
@@ -75,10 +80,16 @@ const config = buildCodexDeepSeekConfig({
     toolTimeoutSec: env.SEARXNG_MCP_TOOL_TIMEOUT_SEC,
   },
 });
-await writeFile(join(codexHome, "config.toml"), config, {
+const modelCatalogPath = join(codexHome, CODEX_MODEL_CATALOG_RUNTIME_FILENAME);
+await writeFile(modelCatalogPath, renderCodexModelCatalog(env.DEEPSEEK_MODEL), {
   encoding: "utf8",
   mode: 0o600,
 });
+await writeFile(
+  join(codexHome, "config.toml"),
+  materializeCodexModelCatalogPath(config, modelCatalogPath),
+  { encoding: "utf8", mode: 0o600 },
+);
 
 const childEnv: NodeJS.ProcessEnv = {
   ...process.env,

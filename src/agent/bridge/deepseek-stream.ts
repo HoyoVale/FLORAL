@@ -57,9 +57,13 @@ export async function* streamDeepSeekChat(
           ...(request.tools.length > 0
             ? {
                 tools: request.tools,
-                tool_choice: options.forcedToolName
-                  ? { type: "function", function: { name: options.forcedToolName } }
-                  : "auto",
+                // DeepSeek V4 thinking mode rejects tool_choice. Production
+                // requests therefore rely on the provider's default auto
+                // selection. A forced name remains available only to explicit
+                // compatibility probes.
+                ...(options.forcedToolName
+                  ? { tool_choice: { type: "function", function: { name: options.forcedToolName } } }
+                  : {}),
                 parallel_tool_calls: request.parallelToolCalls,
               }
             : {}),

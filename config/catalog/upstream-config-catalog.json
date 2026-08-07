@@ -140,6 +140,7 @@
           "knownKeys": [
             "model",
             "model_provider",
+            "model_catalog_json",
             "model_reasoning_effort",
             "model_providers.*.name",
             "model_providers.*.base_url",
@@ -219,7 +220,8 @@
         "codex --version",
         "app-server generated schemas",
         "managed CODEX_HOME config path",
-        "rendered config fingerprint"
+        "rendered config fingerprint",
+        "managed model catalog fingerprint"
       ]
     },
     {
@@ -1008,6 +1010,14 @@
       "file": "src/policy/local-confirmation-broker.ts",
       "needle": "mode: 0o700",
       "risk": "Mac-local decisions must remain private, process-session bound, expiring, and one-shot; stale decision files must not survive service restart."
+    },
+    {
+      "id": "codex.custom-model-catalog-apply-patch",
+      "component": "codex",
+      "classification": "floral-owned",
+      "file": "src/config/codex/codex-model-catalog.ts",
+      "needle": "apply_patch_tool_type: \"freeform\"",
+      "risk": "Unknown custom model slugs fall back to Codex metadata without apply_patch; FLORAL must pin a private startup model catalog so concrete file changes can reach the approval broker."
     }
   ],
   "environmentKeyPolicies": {

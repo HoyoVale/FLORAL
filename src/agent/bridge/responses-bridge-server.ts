@@ -80,6 +80,7 @@ export class ResponsesBridgeServer {
   readonly #reasoningByCallId = new Map<string, string>();
   readonly #requestControllers = new Set<AbortController>();
   #pendingForcedToolName: string | undefined;
+  #lastApplyPatchSurface: "custom" | "missing" | undefined;
   #server: Server | undefined;
   #stopping = false;
   #retryCount = 0;
@@ -157,6 +158,20 @@ export class ResponsesBridgeServer {
       server.close((error) => error ? reject(error) : resolve());
       server.closeAllConnections();
     });
+  }
+
+  #reportApplyPatchSurface(
+    request: ReturnType<typeof parseResponsesRequest>,
+  ): void {
+    const surface = request.tools?.some((value) => {
+      const tool = typeof value === "object" && value !== null
+        ? value as Record<string, unknown>
+        : undefined;
+      return tool?.type === "custom" && tool.name === "apply_patch";
+    }) ? "custom" : "missing";
+    if (surface === this.#lastApplyPatchSurface) return;
+    this.#lastApplyPatchSurface = surface;
+    process.stderr.write(`bridge.tool_surface.apply_patch=${surface}\n`);
   }
 
   #selectForcedTool(
@@ -295,6 +310,7 @@ export class ResponsesBridgeServer {
         this.#options.deepSeek.model,
         { reasoningByCallId: this.#reasoningByCallId },
       );
+      this.#reportApplyPatchSurface(responsesRequest);
       const forcedToolName = this.#selectForcedTool(
         responsesRequest,
         translated.toolMap,

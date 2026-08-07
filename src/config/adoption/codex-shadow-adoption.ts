@@ -204,6 +204,10 @@ export function assessCodexShadowReport(
 
 export function fingerprintCodexConfigSemantics(value: string): string {
   const assignments = [...parseTomlAssignments(value).entries()]
+    // model_catalog_json is a managed runtime sidecar path. It is deliberately
+    // excluded so existing Phase 4 shadow/cutover evidence remains scoped to
+    // behavioral Codex settings rather than an installation location.
+    .filter(([path]) => path !== "model_catalog_json")
     .map(([path, assignment]) => [
       path,
       isDynamicBridgeBaseUrlAssignment(path)

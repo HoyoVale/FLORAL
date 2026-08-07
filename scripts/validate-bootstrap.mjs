@@ -16,6 +16,7 @@ const required = [
   "src/config/adoption/qq-runtime-options-adoption.ts",
   "src/config/adoption/searxng-runtime-preparation-adoption.ts",
   "src/config/mcp/mcp-runtime-registry.ts",
+  "src/config/codex/codex-model-catalog.ts",
   "src/config/qq/qq-runtime-options.ts",
   "src/config/search/searxng-runtime-preparation.ts",
   "src/search/searxng-runtime-observation.ts",

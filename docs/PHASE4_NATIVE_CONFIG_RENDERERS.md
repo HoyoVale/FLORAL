@@ -120,6 +120,7 @@ The output is written through a staged directory swap with private permissions:
 ```text
 data/config/native/
   codex/config.toml
+  codex/model-catalog.json
   codex/requirements.toml
   searxng/compose.yaml
   searxng/settings.yml

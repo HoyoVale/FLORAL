@@ -242,6 +242,8 @@
 - route opaque command escalation to a private Mac-local one-shot confirmation mailbox, never to QQ `/approve`;
 - bind local decisions to the current service session and exact private request fingerprint, with restart cleanup and expiry;
 - never return `acceptForSession` or a persistent permission grant.
+- install a private Codex custom-model catalog for DeepSeek so the real turn exposes freeform `apply_patch` instead of fallback metadata with no patch tool;
+- enforce DeepSeek V4 thinking-mode tool compatibility in the Responses bridge and emit a bounded apply-patch tool-surface diagnostic.
 
 ## Phase 6 — macOS GUI and visual MCP
 
