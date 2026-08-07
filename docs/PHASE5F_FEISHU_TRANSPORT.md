@@ -316,3 +316,17 @@ corepack pnpm service:stop
 corepack pnpm feishu:media:probe -- --image=/absolute/path/test.png
 corepack pnpm feishu:media:probe -- --file=/absolute/path/report.md
 ```
+
+
+### Node SDK upload response shape
+
+The official Node SDK semantic client returns upload API `data` directly rather
+than preserving the outer HTTP response envelope. Consequently:
+
+```text
+client.im.v1.image.create(...) -> { image_key: "..." }
+client.im.v1.file.create(...)  -> { file_key: "..." }
+```
+
+FLORAL reads those top-level keys and retains nested `data.image_key` /
+`data.file_key` only as a compatibility fallback for injected/custom clients.

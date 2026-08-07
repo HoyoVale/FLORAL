@@ -83,14 +83,12 @@ function options(input: {
           },
           image: {
             create: input.imageCreate ?? (async () => ({
-              code: 0,
-              data: { image_key: "img_test" },
+              image_key: "img_test",
             })),
           },
           file: {
             create: input.fileCreate ?? (async () => ({
-              code: 0,
-              data: { file_key: "file_test" },
+              file_key: "file_test",
             })),
           },
         },
@@ -252,11 +250,11 @@ describe("FeishuTransport", () => {
         },
         imageCreate: async (request) => {
           imageUploads.push(request);
-          return { code: 0, data: { image_key: "img_native" } };
+          return { image_key: "img_native" };
         },
         fileCreate: async (request) => {
           fileUploads.push(request);
-          return { code: 0, data: { file_key: "file_native" } };
+          return { file_key: "file_native" };
         },
       }));
       await startTransport(transport, worker);
@@ -294,6 +292,47 @@ describe("FeishuTransport", () => {
         file_key: "file_native",
       });
       expect(captionMessage.data?.msg_type).toBe("post");
+
+      await transport.stop();
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("accepts a nested upload envelope from an injected client as a defensive fallback", async () => {
+    const worker = new FakeWorker();
+    const messageRequests: unknown[] = [];
+    const dir = await mkdtemp(join(tmpdir(), "floral-feishu-nested-media-"));
+    const imagePath = join(dir, "screen.png");
+    await writeFile(imagePath, Buffer.from([0x89, 0x50, 0x4e, 0x47]));
+
+    try {
+      const transport = new FeishuTransport(options({
+        worker,
+        create: async (request) => {
+          messageRequests.push(request);
+          return { code: 0 };
+        },
+        imageCreate: async () => ({
+          code: 0,
+          data: { image_key: "img_nested" },
+        }),
+      }));
+      await startTransport(transport, worker);
+
+      await transport.sendMedia({
+        conversationId: "oc_chat",
+        kind: "image",
+        localPath: imagePath,
+      });
+
+      const imageMessage = messageRequests[0] as {
+        data?: { msg_type?: unknown; content?: string };
+      };
+      expect(imageMessage.data?.msg_type).toBe("image");
+      expect(JSON.parse(imageMessage.data?.content ?? "{}")).toEqual({
+        image_key: "img_nested",
+      });
 
       await transport.stop();
     } finally {

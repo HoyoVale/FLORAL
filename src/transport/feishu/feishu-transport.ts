@@ -645,15 +645,26 @@ function requireFeishuResponseKey(
   if (typeof value !== "object" || value === null) {
     throw new Error(`Feishu upload response missing ${key}`);
   }
-  const data = (value as { data?: unknown }).data;
-  if (typeof data !== "object" || data === null) {
-    throw new Error(`Feishu upload response missing ${key}`);
+
+  // @larksuiteoapi/node-sdk's generated semantic client strips the outer
+  // HTTP envelope and returns `response.data` directly for upload APIs.
+  // Therefore image_key/file_key are normally top-level fields. Keep the
+  // nested form as a defensive fallback for injected/custom clients.
+  const record = value as Record<string, unknown>;
+  const direct = record[key];
+  if (typeof direct === "string" && direct.trim()) {
+    return direct.trim();
   }
-  const candidate = (data as Record<string, unknown>)[key];
-  if (typeof candidate !== "string" || !candidate.trim()) {
-    throw new Error(`Feishu upload response missing ${key}`);
+
+  const data = record.data;
+  if (typeof data === "object" && data !== null) {
+    const nested = (data as Record<string, unknown>)[key];
+    if (typeof nested === "string" && nested.trim()) {
+      return nested.trim();
+    }
   }
-  return candidate.trim();
+
+  throw new Error(`Feishu upload response missing ${key}`);
 }
 
 function normalizeFeishuOutgoingText(value: string): string {
