@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "reviewedAt": "2026-08-07",
-  "purpose": "Phase 4 configuration federation plus Phase 5.1 runtime cost-guard inventory for FLORAL-owned, upstream-managed, passthrough, observed-only, and locked configuration surfaces.",
+  "purpose": "Phase 4 configuration federation, Phase 4.0E5 SearXNG runtime adoption, and Phase 5.1 runtime cost-guard inventory for FLORAL-owned, upstream-managed, passthrough, observed-only, and locked configuration surfaces.",
   "classifications": [
     "floral-owned",
     "upstream-managed",
@@ -67,14 +67,14 @@
         {
           "id": "runtime-adoption",
           "classification": "floral-owned",
-          "coverage": "typed",
+          "coverage": "typed-runtime-enforced",
           "knownKeys": [
             "runtime.adoption.codex.mode",
-            "runtime.adoption.qq_sdk.mode"
+            "runtime.adoption.qq_sdk.mode",
+            "runtime.adoption.searxng.mode"
           ],
           "futureKeys": [
-            "runtime.adoption.mcp.mode",
-            "runtime.adoption.searxng.mode"
+            "runtime.adoption.mcp.mode"
           ]
         },
         {
@@ -295,7 +295,7 @@
         {
           "id": "container-runtime",
           "classification": "upstream-managed",
-          "coverage": "typed-renderer-preview",
+          "coverage": "typed-runtime-enforced",
           "knownKeys": [
             "image digest",
             "restart policy",
@@ -926,6 +926,14 @@
       "file": "config/floral.toml",
       "needle": "[runtime.adoption.qq_sdk]",
       "risk": "QQ runtime options adoption must remain observable and support explicit emergency rollback."
+    },
+    {
+      "id": "searxng.runtime-adoption-mode",
+      "component": "searxng",
+      "classification": "floral-owned",
+      "file": "config/floral.toml",
+      "needle": "[runtime.adoption.searxng]",
+      "risk": "SearXNG unified preparation must keep reviewed-image validation, bounded runtime observation, and explicit legacy recovery."
     }
   ],
   "environmentKeyPolicies": {

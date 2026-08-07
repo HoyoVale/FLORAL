@@ -50,6 +50,7 @@ describe("configuration federation authority", () => {
     expect(authority.effective.codex.mode).toBe("real");
     expect(authority.effective.deepseek.reasoning_effort).toBe("max");
     expect(authority.effective.runtime.adoption.codex.mode).toBe("unified");
+    expect(authority.effective.runtime.adoption.searxng.mode).toBe("unified");
     expect(authority.effective.runtime.cost_guard.enabled).toBe(true);
     expect(authority.effective.runtime.cost_guard.pricing.input_cache_hit_cny_per_million).toBe(0.02);
     expect(authority.effective.codex.args).toEqual(["app-server", "--flag", "two words"]);
@@ -73,6 +74,7 @@ describe("configuration federation authority", () => {
     }
     expect(output).toContain("config.secret.deepseek_api_key=present");
     expect(output).toContain("config.runtime.adoption.codex=unified");
+    expect(output).toContain("config.runtime.adoption.searxng=unified");
   });
 
   it("rejects locked-field overrides and unknown keys before runtime adoption", async () => {

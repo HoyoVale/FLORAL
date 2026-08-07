@@ -132,6 +132,9 @@ export const requestedConfigSchema = z.object({
       qq_sdk: z.object({
         mode: z.enum(["legacy", "unified"]),
       }).strict(),
+      searxng: z.object({
+        mode: z.enum(["legacy", "unified"]),
+      }).strict(),
     }).strict(),
     cost_guard: z.object({
       enabled: z.boolean(),
@@ -311,6 +314,9 @@ export interface RequestedConfig {
       qq_sdk: {
         mode: "legacy" | "unified";
       };
+      searxng: {
+        mode: "legacy" | "unified";
+      };
     };
     cost_guard: {
       enabled: boolean;
@@ -485,6 +491,9 @@ export const DEFAULT_REQUESTED_CONFIG: RequestedConfig = {
         mode: "unified",
       },
       qq_sdk: {
+        mode: "unified",
+      },
+      searxng: {
         mode: "unified",
       },
     },

@@ -22,6 +22,11 @@ import {
   readQqRuntimeAdoptionReport,
 } from "../adoption/qq-runtime-options-adoption.js";
 import {
+  assessSearxngRuntimeAdoptionReport,
+  readSearxngRuntimeAdoptionReport,
+  searxngRuntimeAdoptionReportPath,
+} from "../adoption/searxng-runtime-preparation-adoption.js";
+import {
   CODEX_BRIDGE_BASE_URL_PLACEHOLDER,
   renderCodexConfig,
 } from "../adapters/codex-native-config.js";
@@ -40,7 +45,12 @@ import type {
 import { buildConfigurationInventory } from "../inventory/config-inventory.js";
 import { buildMcpRuntimeRegistry } from "../mcp/mcp-runtime-registry.js";
 import { buildQqRuntimeOptionsContract } from "../qq/qq-runtime-options.js";
-import { assertLoopbackSearxngUrl } from "../../search/searxng.js";
+import { buildSearxngRuntimePreparationContract } from "../search/searxng-runtime-preparation.js";
+import {
+  observeSearxngRuntime,
+  skippedSearxngRuntime,
+  type SearxngRuntimeObservation,
+} from "../../search/searxng-runtime-observation.js";
 
 
 export type DiagnosticLayer =
@@ -101,16 +111,6 @@ export interface QqSdkInstallationObservation {
   declarationFileCount: number;
 }
 
-export interface SearxngRuntimeObservation {
-  endpoint: string;
-  status: "observed" | "unavailable" | "invalid" | "skipped";
-  topLevelKeys: string[];
-  engines: string[];
-  plugins: string[];
-  categories: string[];
-  fingerprint?: string | undefined;
-  errorType?: string | undefined;
-}
 
 export interface CodexRuntimeObservation {
   command: string;
@@ -154,6 +154,15 @@ export interface QqRuntimeAdoptionObservation {
   fallbackUsed?: boolean | undefined;
 }
 
+export interface SearxngRuntimeAdoptionObservation {
+  path: string;
+  status: "active" | "rolled-back" | "failed" | "drift" | "missing" | "invalid" | "disabled";
+  reportFingerprint?: string | undefined;
+  runtimeFingerprint?: string | undefined;
+  observedConfigFingerprint?: string | undefined;
+  fallbackUsed?: boolean | undefined;
+}
+
 export interface ConfigurationCutoverGate {
   status: "ready" | "blocked";
   blockerCodes: string[];
@@ -189,6 +198,7 @@ export interface ConfigurationDiagnosticsReport {
     codexCutover: CodexCutoverObservation;
     mcpRegistry: McpRegistryAdoptionObservation;
     qqRuntime: QqRuntimeAdoptionObservation;
+    searxngRuntime: SearxngRuntimeAdoptionObservation;
   };
   findings: ConfigDiagnosticFinding[];
   cutoverGate: ConfigurationCutoverGate;
@@ -273,6 +283,11 @@ export async function buildConfigurationDiagnostics(
     observedQqSdkVersion,
     !includeRuntimeProbes,
   );
+  const searxngAdoption = await observeSearxngRuntimeAdoption(
+    repositoryRoot,
+    options.authority,
+    searxngRuntime,
+  );
   const codexRuntime = observeCodexRuntime(
     options.authority.effective.codex.command,
     inventory.runtime.codex.available,
@@ -295,6 +310,7 @@ export async function buildConfigurationDiagnostics(
     codexCutover,
     mcpRegistry,
     qqRuntime,
+    searxngAdoption,
   });
   const blockerCodes = findings
     .filter((finding) => finding.blocksCutover)
@@ -334,6 +350,7 @@ export async function buildConfigurationDiagnostics(
       codexCutover,
       mcpRegistry,
       qqRuntime,
+      searxngRuntime: searxngAdoption,
     },
     findings: findings.sort(compareFindings),
     cutoverGate: {
@@ -379,6 +396,9 @@ export function renderConfigurationDiagnostics(report: ConfigurationDiagnosticsR
     `config.diagnostics.qq_runtime=${report.adoption.qqRuntime.status}`,
     `config.diagnostics.qq_runtime_fingerprint=${report.adoption.qqRuntime.runtimeFingerprint ?? "unavailable"}`,
     `config.diagnostics.qq_runtime_fallback=${String(report.adoption.qqRuntime.fallbackUsed ?? false)}`,
+    `config.diagnostics.searxng_adoption=${report.adoption.searxngRuntime.status}`,
+    `config.diagnostics.searxng_adoption_fingerprint=${report.adoption.searxngRuntime.runtimeFingerprint ?? "unavailable"}`,
+    `config.diagnostics.searxng_adoption_fallback=${String(report.adoption.searxngRuntime.fallbackUsed ?? false)}`,
     `config.diagnostics.findings=${String(report.findings.length)}`,
     `config.cutover.status=${report.cutoverGate.status}`,
     `config.cutover.blockers=${String(report.cutoverGate.blockerCodes.length)}`,
@@ -454,8 +474,12 @@ export async function loadRuntimeCompatibilityCatalog(
   if (parsed.schemaVersion !== 1) {
     throw new Error(`Unsupported runtime compatibility schema: ${String(parsed.schemaVersion)}`);
   }
-  if (parsed.codex.validatedVersions.length === 0 || parsed.qqSdk.validatedVersions.length === 0) {
-    throw new Error("Runtime compatibility catalog must validate at least one Codex and QQ SDK version");
+  if (
+    parsed.codex.validatedVersions.length === 0
+    || parsed.qqSdk.validatedVersions.length === 0
+    || parsed.searxng.validatedImages.length === 0
+  ) {
+    throw new Error("Runtime compatibility catalog must validate Codex, QQ SDK, and SearXNG runtime versions");
   }
   return parsed;
 }
@@ -597,55 +621,6 @@ function observeCodexRuntime(
   };
 }
 
-async function observeSearxngRuntime(
-  baseUrl: string,
-  timeoutMs: number,
-  endpointPath: string,
-  fetchImpl: typeof fetch = fetch,
-): Promise<SearxngRuntimeObservation> {
-  const base = assertLoopbackSearxngUrl(baseUrl);
-  const endpoint = new URL(endpointPath, ensureTrailingSlash(base));
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), timeoutMs);
-  try {
-    const response = await fetchImpl(endpoint, {
-      method: "GET",
-      headers: {
-        accept: "application/json",
-        "user-agent": "FLORAL-Config-Diagnostics/0.1",
-      },
-      signal: controller.signal,
-    });
-    if (!response.ok) {
-      return emptySearxngRuntime(endpoint.toString(), "invalid", `HTTP_${String(response.status)}`);
-    }
-    const body = await response.json() as unknown;
-    if (!isRecord(body)) return emptySearxngRuntime(endpoint.toString(), "invalid", "InvalidJsonShape");
-    const engines = extractNamedEntries(body.engines);
-    const plugins = extractNamedEntries(body.plugins);
-    const categories = extractNamedEntries(body.categories);
-    const safe = {
-      topLevelKeys: Object.keys(body).sort(),
-      engines,
-      plugins,
-      categories,
-    };
-    return {
-      endpoint: endpoint.toString(),
-      status: "observed",
-      ...safe,
-      fingerprint: fingerprint(safe),
-    };
-  } catch (error) {
-    return emptySearxngRuntime(
-      endpoint.toString(),
-      "unavailable",
-      controller.signal.aborted ? "Timeout" : safeErrorType(error),
-    );
-  } finally {
-    clearTimeout(timer);
-  }
-}
 
 function buildFindings(input: {
   authority: ResolvedConfigurationAuthority;
@@ -661,6 +636,7 @@ function buildFindings(input: {
   codexCutover: CodexCutoverObservation;
   mcpRegistry: McpRegistryAdoptionObservation;
   qqRuntime: QqRuntimeAdoptionObservation;
+  searxngAdoption: SearxngRuntimeAdoptionObservation;
 }): ConfigDiagnosticFinding[] {
   const findings: ConfigDiagnosticFinding[] = [];
   if (input.nativeInstallation.manifestStatus !== "match") {
@@ -932,6 +908,30 @@ function buildFindings(input: {
       "SearXNG inherits upstream defaults but the observed /config response exposed no engine names",
     ));
   }
+  if (
+    input.authority.effective.mcp.search.enabled
+    && input.authority.effective.runtime.adoption.searxng.mode === "unified"
+    && input.searxngAdoption.status !== "active"
+  ) {
+    const code = input.searxngAdoption.status === "missing"
+      ? "searxng-adoption-report-missing"
+      : input.searxngAdoption.status === "rolled-back"
+        ? "searxng-adoption-rolled-back"
+        : input.searxngAdoption.status === "failed"
+          ? "searxng-adoption-failed"
+          : input.searxngAdoption.status === "invalid"
+            ? "searxng-adoption-report-invalid"
+            : "searxng-adoption-drift";
+    findings.push(finding(
+      code,
+      "searxng",
+      "observed",
+      "warning",
+      true,
+      `SearXNG unified runtime preparation is ${input.searxngAdoption.status}`,
+      input.searxngAdoption.path,
+    ));
+  }
   if (input.bundle.artifacts.some((artifact) => !artifact.active)) {
     findings.push(finding(
       "preview-artifacts-not-adopted",
@@ -1077,6 +1077,40 @@ async function observeQqRuntimeAdoption(
   }
 }
 
+async function observeSearxngRuntimeAdoption(
+  repositoryRoot: string,
+  authority: ResolvedConfigurationAuthority,
+  observation: SearxngRuntimeObservation,
+): Promise<SearxngRuntimeAdoptionObservation> {
+  const path = searxngRuntimeAdoptionReportPath(repositoryRoot);
+  if (
+    !authority.effective.mcp.search.enabled
+    || authority.effective.runtime.adoption.searxng.mode !== "unified"
+  ) {
+    return { path, status: "disabled" };
+  }
+  try {
+    const report = await readSearxngRuntimeAdoptionReport(repositoryRoot);
+    if (!report) return { path, status: "missing" };
+    const contract = buildSearxngRuntimePreparationContract(authority.effective);
+    const status = assessSearxngRuntimeAdoptionReport(
+      report,
+      contract,
+      observation.status === "skipped" ? undefined : observation,
+    );
+    return {
+      path,
+      status,
+      reportFingerprint: report.reportFingerprint,
+      runtimeFingerprint: report.targetRuntimeFingerprint,
+      observedConfigFingerprint: report.observedConfigFingerprint,
+      fallbackUsed: report.fallbackUsed,
+    };
+  } catch {
+    return { path, status: "invalid" };
+  }
+}
+
 function normalizeCodexInstalledConfig(value: string): string {
   const normalized = normalizeNativeConfigText(value)
     .split("\n")
@@ -1111,52 +1145,6 @@ function normalizeCodexVersion(raw: string, prefix: string): string | undefined 
   if (!firstLine) return undefined;
   if (firstLine.startsWith(prefix)) return firstLine.slice(prefix.length).trim();
   return firstLine.match(/\d+\.\d+\.\d+(?:[-+][A-Za-z0-9.-]+)?/u)?.[0];
-}
-
-function skippedSearxngRuntime(baseUrl: string): SearxngRuntimeObservation {
-  return {
-    endpoint: baseUrl,
-    status: "skipped",
-    topLevelKeys: [],
-    engines: [],
-    plugins: [],
-    categories: [],
-  };
-}
-
-function emptySearxngRuntime(
-  endpoint: string,
-  status: "unavailable" | "invalid",
-  errorType: string,
-): SearxngRuntimeObservation {
-  return {
-    endpoint,
-    status,
-    topLevelKeys: [],
-    engines: [],
-    plugins: [],
-    categories: [],
-    errorType,
-  };
-}
-
-function extractNamedEntries(value: unknown): string[] {
-  if (isRecord(value)) return Object.keys(value).sort().slice(0, 300);
-  if (!Array.isArray(value)) return [];
-  const names = new Set<string>();
-  for (const item of value) {
-    if (typeof item === "string" && item.trim() !== "") names.add(item.trim());
-    else if (isRecord(item)) {
-      for (const key of ["name", "id", "engine", "category"]) {
-        const candidate = item[key];
-        if (typeof candidate === "string" && candidate.trim() !== "") {
-          names.add(candidate.trim());
-          break;
-        }
-      }
-    }
-  }
-  return [...names].sort().slice(0, 300);
 }
 
 function inferRenderedArtifacts(path: string, bundle: NativeConfigBundle): string[] {
@@ -1257,13 +1245,6 @@ function slug(value: string): string {
   return value.toLowerCase().replace(/[^a-z0-9]+/gu, "-").replace(/^-|-$/gu, "");
 }
 
-function ensureTrailingSlash(url: URL): URL {
-  const copy = new URL(url);
-  if (!copy.pathname.endsWith("/")) copy.pathname += "/";
-  copy.search = "";
-  copy.hash = "";
-  return copy;
-}
 
 function fingerprint(value: unknown): string {
   return createHash("sha256").update(stableStringify(value)).digest("hex");

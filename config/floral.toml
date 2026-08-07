@@ -143,6 +143,12 @@ mode = "unified"
 # options from the unified authority. "legacy" remains an emergency fallback.
 mode = "unified"
 
+[runtime.adoption.searxng]
+# Phase 4.0E5 prepares SearXNG settings from the unified authority, verifies
+# the reviewed image digest, observes /config after startup, and falls back to
+# the checked-in infrastructure template if unified preparation fails.
+mode = "unified"
+
 [runtime.cost_guard]
 # Phase 5.1 fail-closed protection against runaway provider loops. Request and
 # token limits use rolling windows. Pricing is an operator-reviewed estimate;

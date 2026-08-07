@@ -219,6 +219,7 @@ export function renderConfigurationAuthority(
     `config.codex.native.web_search=${authority.effective.codex.native.web_search}`,
     `config.runtime.adoption.codex=${authority.effective.runtime.adoption.codex.mode}`,
     `config.runtime.adoption.qq_sdk=${authority.effective.runtime.adoption.qq_sdk.mode}`,
+    `config.runtime.adoption.searxng=${authority.effective.runtime.adoption.searxng.mode}`,
     `config.runtime.cost_guard.enabled=${String(authority.effective.runtime.cost_guard.enabled)}`,
     `config.runtime.cost_guard.max_requests_per_hour=${String(authority.effective.runtime.cost_guard.max_requests_per_hour)}`,
     `config.runtime.cost_guard.max_tokens_per_day=${String(authority.effective.runtime.cost_guard.max_tokens_per_day)}`,

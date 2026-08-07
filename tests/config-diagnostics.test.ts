@@ -19,6 +19,10 @@ import {
   createQqRuntimeAdoptionReport,
   writeQqRuntimeAdoptionReport,
 } from "../src/config/adoption/qq-runtime-options-adoption.js";
+import {
+  createSearxngRuntimeAdoptionReport,
+  writeSearxngRuntimeAdoptionReport,
+} from "../src/config/adoption/searxng-runtime-preparation-adoption.js";
 import { renderCodexConfig } from "../src/config/adapters/codex-native-config.js";
 import { renderNativeConfigBundle } from "../src/config/adapters/native-config-bundle.js";
 import {
@@ -31,6 +35,7 @@ import { writeConfigurationDiagnostics } from "../src/config/federation/diagnost
 import { writeNativeConfigBundle } from "../src/config/federation/native-config-writer.js";
 import { buildMcpRuntimeRegistry } from "../src/config/mcp/mcp-runtime-registry.js";
 import { buildLegacyQqRuntimeOptionsContract, buildQqRuntimeOptionsContract } from "../src/config/qq/qq-runtime-options.js";
+import { buildSearxngRuntimePreparationContract } from "../src/config/search/searxng-runtime-preparation.js";
 import { loadEnv } from "../src/config/env.js";
 
 const repositoryRoot = resolve(".");
@@ -293,6 +298,25 @@ describe("configuration drift diagnostics", () => {
       fallbackUsed: false,
       reasonCode: "unified-ready",
     }));
+    const searxngContract = buildSearxngRuntimePreparationContract(authority.effective);
+    await writeSearxngRuntimeAdoptionReport(root, createSearxngRuntimeAdoptionReport({
+      status: "active",
+      activePreparation: "unified",
+      effectiveFingerprint: authority.effectiveFingerprint,
+      target: searxngContract,
+      active: searxngContract,
+      observation: {
+        endpoint: "http://127.0.0.1:8888/config",
+        status: "observed",
+        topLevelKeys: ["engines"],
+        engines: ["google"],
+        plugins: [],
+        categories: ["general"],
+        fingerprint: "a".repeat(64),
+      },
+      fallbackUsed: false,
+      reasonCode: "unified-observed",
+    }));
     const configPath = join(root, "data/codex-runtime/config.toml");
     await mkdir(dirname(configPath), { recursive: true });
     await writeFile(configPath, unified, "utf8");
@@ -307,10 +331,12 @@ describe("configuration drift diagnostics", () => {
     expect(report.adoption.codexCutover.status).toBe("active");
     expect(report.adoption.mcpRegistry.status).toBe("active");
     expect(report.adoption.qqRuntime.status).toBe("active");
+    expect(report.adoption.searxngRuntime.status).toBe("active");
     expect(report.adoption.qqRuntime.installedSdkVersion).toBe("1.0.4");
     expect(report.cutoverGate.blockerCodes).not.toContain("mcp-registry-adoption-report-missing");
     expect(report.cutoverGate.blockerCodes).not.toContain("codex-cutover-report-missing");
     expect(report.cutoverGate.blockerCodes).not.toContain("codex-cutover-drift");
+    expect(report.cutoverGate.blockerCodes).not.toContain("searxng-adoption-report-missing");
   });
 
   it("captures a bounded SearXNG effective configuration observation", async () => {

@@ -205,13 +205,14 @@
 - retry exactly once with established legacy options after unified startup/report failure;
 - fold QQ runtime adoption into the global configuration cutover gate.
 
-### Phase 4.0E5 — SearXNG runtime preparation adoption (deferred until Phase 5.1)
+### Phase 4.0E5 — SearXNG runtime preparation adoption
 
 - move container preparation and effective `settings.yml` installation behind the unified authority;
-- verify the pinned image digest before startup;
-- capture the bounded `/config` engine/plugin observation as an adoption report;
-- preserve a rollback path to the checked-in infrastructure templates;
-- resume this migration only after the provider cost guard has passed idle and live-message validation.
+- verify the pinned image digest against the reviewed compatibility catalog before startup;
+- require checked-in compose/settings projections to match the unified renderer;
+- capture the bounded `/config` engine/plugin/category observation as a tamper-evident adoption report;
+- retry once through the checked-in infrastructure template after unified preparation/startup failure;
+- fold SearXNG runtime adoption into the global configuration cutover gate.
 
 ## Phase 5 — agent safety and cost control
 
