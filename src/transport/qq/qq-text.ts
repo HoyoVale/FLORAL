@@ -5,6 +5,7 @@ export interface QqTextChunkOptions {
 }
 
 const DEFAULT_TRUNCATION_SUFFIX = "\n\n[回复过长，后续内容已截断]";
+const DEFAULT_SOFT_CHUNK_CHARACTERS = 1_000;
 
 export function splitQqText(
   text: string,
@@ -25,13 +26,21 @@ export function splitQqText(
 
   const source = Array.from(normalized);
   const chunks: string[] = [];
+  const preferredCharacters = preferredChunkCharacters(
+    source.length,
+    maxCharacters,
+    maxChunks,
+  );
   let offset = 0;
 
   while (offset < source.length && chunks.length < maxChunks) {
     const remainingSlots = maxChunks - chunks.length;
     const remaining = source.length - offset;
 
-    if (remaining <= maxCharacters) {
+    if (
+      remaining <= preferredCharacters
+      || (remainingSlots === 1 && remaining <= maxCharacters)
+    ) {
       chunks.push(source.slice(offset).join(""));
       break;
     }
@@ -46,8 +55,23 @@ export function splitQqText(
       break;
     }
 
-    const tentativeEnd = offset + maxCharacters;
-    const breakAt = findNaturalBreak(source, offset, tentativeEnd);
+    const remainingCapacity = remainingSlots * maxCharacters;
+    const minimumForThisChunk = remaining <= remainingCapacity
+      ? Math.max(1, remaining - ((remainingSlots - 1) * maxCharacters))
+      : 1;
+    const tentativeEnd = Math.min(
+      source.length,
+      offset + Math.min(
+        maxCharacters,
+        Math.max(preferredCharacters, minimumForThisChunk),
+      ),
+    );
+    const breakAt = findNaturalBreak(
+      source,
+      offset,
+      tentativeEnd,
+      minimumForThisChunk,
+    );
     chunks.push(source.slice(offset, breakAt).join("").trimEnd());
     offset = skipWhitespace(source, breakAt);
   }
@@ -59,8 +83,18 @@ function findNaturalBreak(
   characters: string[],
   start: number,
   end: number,
+  minimumLength: number,
 ): number {
-  const minimum = start + Math.floor((end - start) * 0.65);
+  const minimum = Math.max(
+    start + minimumLength,
+    start + Math.floor((end - start) * 0.65),
+  );
+
+  for (let index = end; index > minimum; index -= 1) {
+    const current = characters[index - 1];
+    const previous = characters[index - 2];
+    if (current === "\n" && previous === "\n") return index;
+  }
 
   for (let index = end; index > minimum; index -= 1) {
     const previous = characters[index - 1];
@@ -69,10 +103,33 @@ function findNaturalBreak(
 
   for (let index = end; index > minimum; index -= 1) {
     const previous = characters[index - 1];
+    if (previous && /[。！？.!?]/u.test(previous)) return index;
+  }
+
+  for (let index = end; index > minimum; index -= 1) {
+    const previous = characters[index - 1];
     if (previous && /\s/u.test(previous)) return index;
   }
 
   return end;
+}
+
+function preferredChunkCharacters(
+  totalCharacters: number,
+  maxCharacters: number,
+  maxChunks: number,
+): number {
+  if (totalCharacters <= DEFAULT_SOFT_CHUNK_CHARACTERS) {
+    return maxCharacters;
+  }
+  const desiredChunks = Math.min(
+    maxChunks,
+    Math.ceil(totalCharacters / DEFAULT_SOFT_CHUNK_CHARACTERS),
+  );
+  return Math.min(
+    maxCharacters,
+    Math.max(1, Math.ceil(totalCharacters / desiredChunks)),
+  );
 }
 
 function skipWhitespace(characters: string[], offset: number): number {

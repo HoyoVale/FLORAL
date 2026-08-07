@@ -3,7 +3,8 @@ import { timingSafeEqual } from "node:crypto";
 export type GatewayCommand =
   | { type: "pair"; code: string | undefined }
   | { type: "new" }
-  | { type: "status" }
+  | { type: "status"; debug: boolean }
+  | { type: "help" }
   | { type: "stop" }
   | { type: "approve"; approvalId: string | undefined }
   | { type: "deny"; approvalId: string | undefined };
@@ -18,7 +19,9 @@ export function parseGatewayCommand(text: string): GatewayCommand | undefined {
     };
   }
   if (/^\/new$/i.test(trimmed)) return { type: "new" };
-  if (/^\/status$/i.test(trimmed)) return { type: "status" };
+  const status = /^\/status(?:\s+(--debug|-d))?$/i.exec(trimmed);
+  if (status) return { type: "status", debug: Boolean(status[1]) };
+  if (/^\/help$/i.test(trimmed)) return { type: "help" };
   if (/^\/stop$/i.test(trimmed)) return { type: "stop" };
   const approve = /^\/approve(?:\s+([A-Za-z0-9]+))?$/i.exec(trimmed);
   if (approve) {

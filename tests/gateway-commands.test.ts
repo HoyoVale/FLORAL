@@ -274,17 +274,26 @@ describe("GatewayService identity and commands", () => {
     await transport.receive(incoming({ id: "c-2", text: "/status", ...base }));
 
     const status = transport.sent.at(-1)?.text ?? "";
-    expect(status).toContain("thread=active");
-    expect(status).toContain("run=idle");
-    expect(status).toContain("cost_guard=ready");
-    expect(status).toContain("cost_24h=¥0.100/10.00");
+    expect(status).toContain("FLORAL 正常运行");
+    expect(status).toContain("状态：空闲");
+    expect(status).toContain("会话：已建立");
+    expect(status).toContain("成本守卫：正常");
+    expect(status).toContain("今日成本：¥0.100 / ¥10.00");
     expect(status).not.toContain("thread-1");
+    expect(status).not.toContain("transport=");
 
-    await transport.receive(incoming({ id: "c-3", text: "/new", ...base }));
-    expect(transport.sent.at(-1)?.text).toContain("新的会话上下文");
+    await transport.receive(incoming({ id: "c-3", text: "/status --debug", ...base }));
+    const debugStatus = transport.sent.at(-1)?.text ?? "";
+    expect(debugStatus).toContain("thread=active");
+    expect(debugStatus).toContain("run=idle");
+    expect(debugStatus).toContain("cost_guard=ready");
+    expect(debugStatus).toContain("cost_24h=¥0.100/10.00");
 
-    await transport.receive(incoming({ id: "c-4", text: "/status", ...base }));
-    expect(transport.sent.at(-1)?.text).toContain("thread=none");
+    await transport.receive(incoming({ id: "c-4", text: "/new", ...base }));
+    expect(transport.sent.at(-1)?.text).toContain("新会话已建立");
+
+    await transport.receive(incoming({ id: "c-5", text: "/status", ...base }));
+    expect(transport.sent.at(-1)?.text).toContain("会话：未建立");
     await gateway.stop();
   });
 
@@ -394,6 +403,31 @@ describe("GatewayService identity and commands", () => {
     expect(store.auditEvents().some((event) =>
       event.eventType === "transport.delivery_failed"
     )).toBe(true);
+    await gateway.stop();
+  });
+
+  it("provides compact QQ-style help without running the agent", async () => {
+    const transport = new TestTransport();
+    const agent = new TestAgent();
+    const gateway = new GatewayService(
+      transport,
+      agent,
+      new MemoryThreadStore(),
+      { cwd: ".", trustMockOwner: true },
+    );
+    await gateway.start();
+
+    await transport.receive(incoming({
+      id: "help-1",
+      transport: "mock",
+      text: "/help",
+    }));
+
+    const help = transport.sent.at(-1)?.text ?? "";
+    expect(help).toContain("直接发送消息即可开始对话");
+    expect(help).toContain("/status   查看运行状态");
+    expect(help).not.toContain("/approve");
+    expect(agent.requests).toHaveLength(0);
     await gateway.stop();
   });
 

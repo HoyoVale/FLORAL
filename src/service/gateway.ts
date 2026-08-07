@@ -17,6 +17,7 @@ import {
 import type { AuthorizationAuthority } from "../policy/authorization-authority.js";
 import { QqApprovalBroker } from "../policy/qq-approval-broker.js";
 import type { LocalConfirmationBroker } from "../policy/local-confirmation-broker.js";
+import { formatGatewayStatus, gatewayHelpText } from "./gateway-status.js";
 
 export interface GatewayOptions {
   cwd: string;
@@ -256,25 +257,34 @@ export class GatewayService {
           userId: resolved.userId,
           conversationId: resolved.conversationId,
           eventType: "command.status",
+          payload: { debug: command.debug },
         });
         const runtimeLines = this.options.runtimeStatusLines
           ? await this.options.runtimeStatusLines().catch(() => ["cost_guard=error"])
           : [];
         await this.#send(
           message.identity.conversationId,
-          [
-            "FLORAL 状态",
-            `transport=${this.transport.name}`,
-            `agent=${this.agent.name}`,
-            `role=${resolved.role}`,
-            `thread=${threadId ? "active" : "none"}`,
-            `run=${active ? "active" : "idle"}`,
-            `approvals_pending=${String(this.#approvalBroker?.pendingCount(resolved.conversationId) ?? 0)}`,
-            ...runtimeLines,
-          ].join("\n"),
+          formatGatewayStatus({
+            transport: this.transport.name,
+            agent: this.agent.name,
+            role: resolved.role,
+            threadActive: Boolean(threadId),
+            runActive: active,
+            pendingApprovals: this.#approvalBroker?.pendingCount(resolved.conversationId) ?? 0,
+            runtimeLines,
+          }, command.debug),
         );
         return;
       }
+
+      case "help":
+        await this.store.appendAudit({
+          userId: resolved.userId,
+          conversationId: resolved.conversationId,
+          eventType: "command.help",
+        });
+        await this.#send(message.identity.conversationId, gatewayHelpText());
+        return;
 
       case "new":
         if (this.#activeRuns.has(resolved.conversationId)) {
@@ -292,7 +302,7 @@ export class GatewayService {
         });
         await this.#send(
           message.identity.conversationId,
-          "已创建新的会话上下文；下一条消息会启动新的 Codex thread。",
+          "新会话已建立。下一条消息会从新的上下文开始。",
         );
         return;
 
@@ -370,7 +380,7 @@ export class GatewayService {
     if (this.#activeRuns.has(resolved.conversationId)) {
       await this.#send(
         message.identity.conversationId,
-        "当前会话已有任务运行。使用 /status 查看状态，或使用 /stop 中断。",
+        "正在处理上一条消息。使用 /status 查看状态，或使用 /stop 停止。",
       );
       return;
     }

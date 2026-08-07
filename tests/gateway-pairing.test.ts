@@ -16,7 +16,10 @@ describe("gateway command parsing and pairing security", () => {
       code: undefined,
     });
     expect(parseGatewayCommand("/new")).toEqual({ type: "new" });
-    expect(parseGatewayCommand("/status")).toEqual({ type: "status" });
+    expect(parseGatewayCommand("/status")).toEqual({ type: "status", debug: false });
+    expect(parseGatewayCommand("/status --debug")).toEqual({ type: "status", debug: true });
+    expect(parseGatewayCommand("/status -d")).toEqual({ type: "status", debug: true });
+    expect(parseGatewayCommand("/help")).toEqual({ type: "help" });
     expect(parseGatewayCommand("/stop")).toEqual({ type: "stop" });
     expect(parseGatewayCommand("/status now")).toBeUndefined();
     expect(parseGatewayCommand("hello")).toBeUndefined();

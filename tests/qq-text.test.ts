@@ -41,4 +41,27 @@ describe("QQ text chunking", () => {
       maxChunks: 1,
     })).toEqual(["（空回复）"]);
   });
+  it("uses semantic paragraph boundaries for mobile-sized long replies", () => {
+    const paragraphA = "甲".repeat(760);
+    const paragraphB = "乙".repeat(760);
+    const chunks = splitQqText(`${paragraphA}\n\n${paragraphB}`, {
+      maxCharacters: 1_800,
+      maxChunks: 4,
+    });
+
+    expect(chunks).toEqual([paragraphA, paragraphB]);
+  });
+
+  it("keeps full configured capacity when a reply really needs all chunks", () => {
+    const text = "字".repeat(6_900);
+    const chunks = splitQqText(text, {
+      maxCharacters: 1_800,
+      maxChunks: 4,
+    });
+
+    expect(chunks).toHaveLength(4);
+    expect(chunks.every((chunk) => Array.from(chunk).length <= 1_800)).toBe(true);
+    expect(chunks.join("")).toBe(text);
+  });
+
 });

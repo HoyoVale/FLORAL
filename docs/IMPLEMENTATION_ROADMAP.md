@@ -245,6 +245,13 @@
 - install a private Codex custom-model catalog for DeepSeek so the real turn exposes freeform `apply_patch` instead of fallback metadata with no patch tool;
 - enforce DeepSeek V4 thinking-mode tool compatibility in the Responses bridge and emit a bounded apply-patch tool-surface diagnostic.
 
+
+### Phase 5.4 — QQ Conversation UX
+
+- 5.4A: presentation fallback, semantic mobile chunking, user-facing status/help.
+- 5.4B: native QQ typing/Markdown/inline approval interactions after passive-reply sequence ownership is verified.
+- Authorization semantics remain owned by the existing policy and approval layers.
+
 ## Phase 6 — macOS GUI and visual MCP
 
 - MiMo-backed read-only visual analysis;

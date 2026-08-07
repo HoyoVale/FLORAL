@@ -12,6 +12,7 @@ import {
 import type { ChatTransport } from "../../core/contracts.js";
 import type { IncomingMessage, OutgoingMessage } from "../../core/types.js";
 import { ReplyTargetCache } from "./reply-target-cache.js";
+import { presentQqText } from "./qq-presentation.js";
 import { splitQqText } from "./qq-text.js";
 
 interface QqBotClient {
@@ -240,7 +241,8 @@ export class QqTransport implements ChatTransport {
     const cached = this.#replyTargets.get(message.conversationId);
     if (!cached) throw new QqReplyTargetUnavailableError();
 
-    const chunks = splitQqText(message.text, {
+    const presentedText = presentQqText(message.text);
+    const chunks = splitQqText(presentedText, {
       maxCharacters: this.options.textChunkCharacters,
       maxChunks: this.options.maxReplyChunks,
     });

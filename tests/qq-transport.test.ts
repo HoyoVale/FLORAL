@@ -157,6 +157,31 @@ describe("QqTransport", () => {
     await transport.stop();
   });
 
+  it("presents Markdown as readable plain text before delivery", async () => {
+    const fake = new FakeBot();
+    const transport = createTransport(fake);
+    const starting = transport.start(async () => undefined);
+    await fake.started.promise;
+    fake.emit("ready");
+    await starting;
+
+    await fake.emitAsync("message", {}, inbound({
+      messageId: "source-markdown",
+      senderId: "user",
+      targetId: "conversation",
+      content: "hello",
+    }));
+    await transport.send({
+      conversationId: "conversation",
+      text: "## **标题**\n\n- 使用 `Codex`",
+    });
+
+    expect(fake.sent.map((entry) => entry.text).join("\n")).toBe(
+      "标题\n\n• 使用 Codex",
+    );
+    await transport.stop();
+  });
+
   it("sends long replies sequentially in bounded chunks", async () => {
     const fake = new FakeBot();
     const transport = createTransport(fake, {
