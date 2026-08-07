@@ -240,7 +240,7 @@ describe("configuration drift diagnostics", () => {
   });
 
 
-  it("recognizes an active controlled Codex cutover for the current unified config", async () => {
+  it("recognizes active controlled runtime adoptions without fresh runtime probes", async () => {
     const root = await createRepositoryFixture();
     const authority = await resolveConfigurationAuthority({
       repositoryRoot: root,
@@ -307,6 +307,7 @@ describe("configuration drift diagnostics", () => {
     expect(report.adoption.codexCutover.status).toBe("active");
     expect(report.adoption.mcpRegistry.status).toBe("active");
     expect(report.adoption.qqRuntime.status).toBe("active");
+    expect(report.adoption.qqRuntime.installedSdkVersion).toBe("1.0.4");
     expect(report.cutoverGate.blockerCodes).not.toContain("mcp-registry-adoption-report-missing");
     expect(report.cutoverGate.blockerCodes).not.toContain("codex-cutover-report-missing");
     expect(report.cutoverGate.blockerCodes).not.toContain("codex-cutover-drift");

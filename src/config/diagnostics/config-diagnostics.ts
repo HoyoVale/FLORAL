@@ -40,7 +40,6 @@ import type {
 import { buildConfigurationInventory } from "../inventory/config-inventory.js";
 import { buildMcpRuntimeRegistry } from "../mcp/mcp-runtime-registry.js";
 import { buildQqRuntimeOptionsContract } from "../qq/qq-runtime-options.js";
-import { resolveInstalledQqSdkVersion } from "../../transport/qq/qq-sdk-contract.js";
 import { assertLoopbackSearxngUrl } from "../../search/searxng.js";
 
 
@@ -240,7 +239,6 @@ export async function buildConfigurationDiagnostics(
     codexShadow,
     codexCutover,
     mcpRegistry,
-    qqRuntime,
   ] = await Promise.all([
     observeNativeInstallation(repositoryRoot, bundle),
     observeCodexInstallation(repositoryRoot, options.authority, bundle),
@@ -263,10 +261,18 @@ export async function buildConfigurationDiagnostics(
     observeCodexShadowAdoption(repositoryRoot, options.authority),
     observeCodexControlledCutover(repositoryRoot, options.authority),
     observeMcpRegistryAdoption(repositoryRoot, options.authority),
-    observeQqRuntimeAdoption(repositoryRoot, options.authority),
   ]);
 
   const qqSdk = observeQqSdkInstallation(options.authority, inventory.runtime.qqSdk);
+  const observedQqSdkVersion = inventory.runtime.qqSdk.status === "observed"
+    ? inventory.runtime.qqSdk.packageVersion
+    : undefined;
+  const qqRuntime = await observeQqRuntimeAdoption(
+    repositoryRoot,
+    options.authority,
+    observedQqSdkVersion,
+    !includeRuntimeProbes,
+  );
   const codexRuntime = observeCodexRuntime(
     options.authority.effective.codex.command,
     inventory.runtime.codex.available,
@@ -1033,6 +1039,8 @@ async function observeMcpRegistryAdoption(
 async function observeQqRuntimeAdoption(
   repositoryRoot: string,
   authority: ResolvedConfigurationAuthority,
+  observedSdkVersion: string | undefined,
+  allowReportVersionFallback: boolean,
 ): Promise<QqRuntimeAdoptionObservation> {
   const path = join(repositoryRoot, "data/config/adoption/qq-runtime-options.json");
   if (
@@ -1045,12 +1053,12 @@ async function observeQqRuntimeAdoption(
     const report = await readQqRuntimeAdoptionReport(repositoryRoot);
     if (!report) return { path, status: "missing" };
     const contract = buildQqRuntimeOptionsContract(authority.effective);
-    let installedSdkVersion = "unavailable";
-    try {
-      installedSdkVersion = await resolveInstalledQqSdkVersion();
-    } catch {
-      // The package installation observation reports the detailed failure.
-    }
+    // Runtime probes already inventory the installed package using the repository-aware
+    // pnpm/symlink resolver. In no-probe mode, the startup report is the only grounded
+    // version observation available, so retain it instead of inventing "unavailable"
+    // and turning a valid active report into a false drift.
+    const installedSdkVersion = observedSdkVersion
+      ?? (allowReportVersionFallback ? report.installedSdkVersion : "unavailable");
     const status = assessQqRuntimeAdoptionReport(
       report,
       contract,
