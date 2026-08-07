@@ -1,3 +1,4 @@
+import { isAbsolute } from "node:path";
 import { createInterface } from "node:readline";
 
 const scenario = process.argv[2] ?? "normal";
@@ -49,26 +50,16 @@ lines.on("line", (line) => {
   }
 
   if (message.method === "thread/start") {
-    if (scenario === "on-request-file-approval" && message.params?.approvalPolicy !== "untrusted") {
-      send({
-        id: message.id,
-        error: { code: -32602, message: `invalid thread approval policy: ${String(message.params?.approvalPolicy)}` },
-      });
-      return;
-    }
-    if (scenario === "on-request-file-approval" && message.params?.sandbox !== "workspaceWrite") {
-      send({
-        id: message.id,
-        error: {
-          code: -32602,
-          message: `invalid thread sandbox: ${String(message.params?.sandbox)}`,
-        },
-      });
-      return;
-    }
-    if (scenario === "on-request-file-approval" && message.params?.approvalsReviewer !== "user") {
-      send({ id: message.id, error: { code: -32602, message: "thread approval reviewer must be user" } });
-      return;
+    if (scenario === "on-request-file-approval") {
+      const capabilityFields = ["approvalPolicy", "approvalsReviewer", "sandbox"];
+      if (capabilityFields.some((key) => key in (message.params ?? {}))) {
+        send({ id: message.id, error: { code: -32602, message: "thread bootstrap must stay capability-neutral" } });
+        return;
+      }
+      if (typeof message.params?.cwd !== "string" || !isAbsolute(message.params.cwd)) {
+        send({ id: message.id, error: { code: -32602, message: "thread cwd must be absolute" } });
+        return;
+      }
     }
     activeThreadId = "thr_new";
     send({ id: message.id, result: { thread: { id: activeThreadId } } });
@@ -82,6 +73,16 @@ lines.on("line", (line) => {
         error: {
           code: -32602,
           message: `thread not found: ${String(message.params?.threadId)}`,
+        },
+      });
+      return;
+    }
+    if (scenario === "resume-config-error") {
+      send({
+        id: message.id,
+        error: {
+          code: -32600,
+          message: "failed to load configuration: /tmp/config.toml:12:1: invalid type",
         },
       });
       return;
@@ -116,8 +117,15 @@ lines.on("line", (line) => {
     }
     if (scenario === "on-request-file-approval") {
       const roots = message.params?.sandboxPolicy?.writableRoots;
-      if (!Array.isArray(roots) || roots.length !== 1 || message.params?.sandboxPolicy?.networkAccess !== false) {
-        send({ id: message.id, error: { code: -32602, message: "workspaceWrite must be cwd-only and network-disabled" } });
+      if (
+        typeof message.params?.cwd !== "string"
+        || !isAbsolute(message.params.cwd)
+        || !Array.isArray(roots)
+        || roots.length !== 1
+        || roots[0] !== message.params.cwd
+        || message.params?.sandboxPolicy?.networkAccess !== false
+      ) {
+        send({ id: message.id, error: { code: -32602, message: "workspaceWrite must be absolute cwd-only and network-disabled" } });
         return;
       }
     }

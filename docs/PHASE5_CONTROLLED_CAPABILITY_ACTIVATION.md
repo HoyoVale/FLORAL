@@ -10,9 +10,11 @@ active app-server turn receives a separately bounded workspace-write policy.
 ## Runtime policy
 
 The checked-in Codex native configuration remains the conservative fail-safe
-configuration used by the configuration-federation/cutover chain. At runtime,
-FLORAL explicitly starts app-server threads/turns with the following logical
-policy:
+configuration used by the configuration-federation/cutover chain. Phase 5.3F
+keeps `thread/start` and `thread/resume` capability-neutral and applies the
+reviewed execution policy on every `turn/start`. This avoids app-server's
+thread-bootstrap project-trust/config mutation path while keeping the actual
+side-effecting turn bounded by FLORAL policy:
 
 ```text
 FLORAL approval policy = untrusted
@@ -23,15 +25,16 @@ network access          = false
 ```
 
 For the pinned Codex app-server 0.146.1 protocol FLORAL sends
-`approvalPolicy = untrusted`. App-server v2 keeps its camelCase sandbox wire
-values: `sandbox = workspaceWrite` for thread start/resume and
-`sandboxPolicy.type = workspaceWrite` for turn start. Phase 5.3A incorrectly
-followed a stale README example for the approval enum and sent the internal
-variant-style `unlessTrusted`; Phase 5.3D corrects only that approval wire
-contract against the generated schema/protocol while preserving the valid
-sandbox encoding. The native generated `config.toml` stays `approval_policy = never` and
-`sandbox_mode = read-only` as a fail-safe if FLORAL fails to supply its runtime
-overrides. `danger-full-access` is never activated.
+`approvalPolicy = untrusted` and `sandboxPolicy.type = workspaceWrite` on
+`turn/start`. Thread bootstrap sends only the resolved absolute `cwd` plus the
+selected model; it does not carry approval, reviewer, or sandbox overrides.
+Phase 5.3A incorrectly followed a stale README example for the approval enum and
+sent the internal variant-style `unlessTrusted`; Phase 5.3D corrected that wire
+contract, and Phase 5.3F narrows policy overrides to the turn where side effects
+can actually occur. The native generated `config.toml` stays
+`approval_policy = never` and `sandbox_mode = read-only` as a fail-safe if
+FLORAL fails to supply its runtime overrides. `danger-full-access` is never
+activated.
 
 ## Concrete file-change flow
 
@@ -180,3 +183,10 @@ bridge.tool_surface.apply_patch=custom
 
 A value of `missing` means the real Codex turn did not expose apply_patch and
 Phase 5.3 acceptance must stop before debugging the QQ approval broker.
+
+Phase 5.3F also preserves a bounded, redacted JSON-RPC error message in the
+service diagnostic line. Codex app-server currently reuses error code `-32600`
+for multiple failures, so `method` plus the redacted `reason` is required before
+deciding whether a failure is stale-thread recovery, configuration loading, or
+request-shape incompatibility. Secret-like assignments, query parameters, and
+Bearer tokens are redacted before logging.

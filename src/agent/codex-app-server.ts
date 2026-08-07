@@ -144,9 +144,10 @@ export class CodexAppServerRuntime implements AgentRuntime {
   async run(request: AgentRunRequest, onEvent?: (event: AgentEvent) => void): Promise<AgentRunResult> {
     this.#ensureStarted();
 
+    const cwd = resolve(request.cwd);
     const threadId = request.threadId
-      ? await this.#resumeOrRecoverThread(request)
-      : await this.#startThread(request);
+      ? await this.#resumeOrRecoverThread(request, cwd)
+      : await this.#startThread(request, cwd);
 
     onEvent?.({ type: "run.started", threadId });
     if (onEvent) this.#eventHandlers.set(threadId, onEvent);
@@ -267,10 +268,10 @@ export class CodexAppServerRuntime implements AgentRuntime {
       const turnParams: Record<string, unknown> = {
         threadId,
         input: [{ type: "text", text: request.text }],
-        cwd: request.cwd,
+        cwd,
         approvalPolicy: toAppServerApprovalPolicy(this.#approvalPolicy),
         approvalsReviewer: this.#approvalsReviewer,
-        sandboxPolicy: buildTurnSandboxPolicy(this.#sandboxMode, request.cwd),
+        sandboxPolicy: buildTurnSandboxPolicy(this.#sandboxMode, cwd),
       };
       const model = request.model ?? this.#defaultModel;
       if (model) turnParams.model = model;
@@ -362,9 +363,9 @@ export class CodexAppServerRuntime implements AgentRuntime {
     await this.#client.stop();
   }
 
-  async #resumeOrRecoverThread(request: AgentRunRequest): Promise<string> {
+  async #resumeOrRecoverThread(request: AgentRunRequest, cwd: string): Promise<string> {
     const requestedThreadId = request.threadId;
-    if (!requestedThreadId) return await this.#startThread(request);
+    if (!requestedThreadId) return await this.#startThread(request, cwd);
 
     try {
       return await this.#resumeThread(requestedThreadId);
@@ -374,17 +375,16 @@ export class CodexAppServerRuntime implements AgentRuntime {
       // No turn has started yet, so replacing a missing local thread cannot
       // duplicate provider or tool side effects. The caller persists the new ID.
       process.stderr.write("codex.thread_resume=stale_reset\n");
-      return await this.#startThread(request);
+      return await this.#startThread(request, cwd);
     }
   }
 
-  async #startThread(request: AgentRunRequest): Promise<string> {
-    const params: Record<string, unknown> = {
-      cwd: request.cwd,
-      approvalPolicy: toAppServerApprovalPolicy(this.#approvalPolicy),
-      approvalsReviewer: this.#approvalsReviewer,
-      sandbox: toAppServerThreadSandbox(this.#sandboxMode),
-    };
+  async #startThread(request: AgentRunRequest, cwd: string): Promise<string> {
+    // Keep thread bootstrap capability-neutral. The real approval and sandbox
+    // ceiling is applied immediately before every turn via turn/start below.
+    // This avoids app-server's thread/start project-trust/config mutation path
+    // while preserving one-turn-at-a-time FLORAL authorization semantics.
+    const params: Record<string, unknown> = { cwd };
     const model = request.model ?? this.#defaultModel;
     if (model) params.model = model;
 
@@ -399,12 +399,9 @@ export class CodexAppServerRuntime implements AgentRuntime {
   async #resumeThread(threadId: string): Promise<string> {
     if (this.#loadedThreads.has(threadId)) return threadId;
 
-    const response = await this.#client.request<ThreadResponse>("thread/resume", {
-      threadId,
-      approvalPolicy: toAppServerApprovalPolicy(this.#approvalPolicy),
-      approvalsReviewer: this.#approvalsReviewer,
-      sandbox: toAppServerThreadSandbox(this.#sandboxMode),
-    });
+    // Resuming only restores conversation history. Current approval/sandbox
+    // policy is always re-applied by the following turn/start request.
+    const response = await this.#client.request<ThreadResponse>("thread/resume", { threadId });
     const resumedId = response.thread?.id;
     if (!resumedId) {
       throw codexProtocolError("thread/resume returned no thread id");
@@ -533,13 +530,6 @@ function toAppServerApprovalPolicy(
   return policy;
 }
 
-function toAppServerThreadSandbox(
-  mode: "read-only" | "workspace-write",
-): "readOnly" | "workspaceWrite" {
-  // app-server v2 exposes SandboxMode as a camelCase string enum.
-  return mode === "workspace-write" ? "workspaceWrite" : "readOnly";
-}
-
 
 function buildTurnSandboxPolicy(
   mode: "read-only" | "workspace-write",
@@ -631,9 +621,14 @@ function isUnavailableThreadResume(error: unknown): boolean {
   if (!(error instanceof CodexRuntimeError)) return false;
   if (error.method !== "thread/resume") return false;
 
-  return error.kind === "bad_request"
-    || error.kind === "protocol"
-    || error.kind === "unknown";
+  // Codex currently overloads JSON-RPC -32600 for both genuinely stale
+  // rollouts and unrelated failures such as malformed configuration. Only
+  // reset the persisted thread when the bounded server message actually says
+  // the rollout/thread is unavailable; otherwise preserve the original error.
+  const message = error.message.toLowerCase();
+  return message.includes("thread not loaded")
+    || message.includes("thread not found")
+    || message.includes("no rollout found");
 }
 
 function readMcpToolEvent(

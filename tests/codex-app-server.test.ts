@@ -76,6 +76,24 @@ describe("CodexAppServerRuntime", () => {
     }
   });
 
+  it("does not reset a thread when -32600 is a configuration failure", async () => {
+    const runtime = createRuntime("resume-config-error");
+    try {
+      await runtime.start();
+      await expect(runtime.run({
+        threadId: "thr_existing",
+        text: "continue",
+        cwd: process.cwd(),
+      })).rejects.toMatchObject({
+        name: "CodexRuntimeError",
+        method: "thread/resume",
+        code: -32600,
+      });
+    } finally {
+      await runtime.stop();
+    }
+  });
+
   it("declines approvals by default", async () => {
     const runtime = createRuntime("approval");
     const events: AgentEvent[] = [];
@@ -130,7 +148,7 @@ describe("CodexAppServerRuntime", () => {
 
 
 
-  it("uses Codex 0.146.1 approval and sandbox wire values", async () => {
+  it("keeps thread bootstrap minimal and applies approval/sandbox at turn scope", async () => {
     const runtime = createRuntime("on-request-file-approval", 5_000, {
       approvalPolicy: "untrusted",
       sandboxMode: "workspace-write",
@@ -140,7 +158,7 @@ describe("CodexAppServerRuntime", () => {
       await runtime.start();
       const result = await runtime.run({
         text: "edit one file",
-        cwd: process.cwd(),
+        cwd: ".",
         approvalHandler: async (request) => {
           expect(request).toMatchObject({
             kind: "file-change",

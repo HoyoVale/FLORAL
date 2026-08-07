@@ -554,7 +554,20 @@ function formatSafeAgentFailure(error: unknown): string {
   const kind = typeof record?.kind === "string" ? record.kind : "unknown";
   const method = typeof record?.method === "string" ? record.method : "unknown";
   const code = typeof record?.code === "number" ? String(record.code) : "none";
-  return `agent.run_failed.type=${safeLogToken(type)} kind=${safeLogToken(kind)} method=${safeLogToken(method)} code=${safeLogToken(code)}`;
+  const reason = error instanceof Error ? safeLogMessage(error.message) : '"unknown"';
+  return `agent.run_failed.type=${safeLogToken(type)} kind=${safeLogToken(kind)} method=${safeLogToken(method)} code=${safeLogToken(code)} reason=${reason}`;
+}
+
+function safeLogMessage(value: string): string {
+  const redacted = value
+    .replace(/[\u0000-\u001f\u007f]+/gu, " ")
+    .replace(/((?:api[_-]?key|token|secret|password)\s*[=:]\s*)[^\s,;]+/giu, "$1<redacted>")
+    .replace(/([?&](?:api[_-]?key|token|secret|password)=)[^&\s]+/giu, "$1<redacted>")
+    .replace(/Bearer\s+[^\s,;]+/giu, "Bearer <redacted>")
+    .replace(/\s+/gu, " ")
+    .trim()
+    .slice(0, 320);
+  return JSON.stringify(redacted || "unknown");
 }
 
 function safeLogToken(value: string): string {
