@@ -4,7 +4,9 @@ export type GatewayCommand =
   | { type: "pair"; code: string | undefined }
   | { type: "new" }
   | { type: "status" }
-  | { type: "stop" };
+  | { type: "stop" }
+  | { type: "approve"; approvalId: string | undefined }
+  | { type: "deny"; approvalId: string | undefined };
 
 export function parseGatewayCommand(text: string): GatewayCommand | undefined {
   const trimmed = text.trim();
@@ -18,6 +20,14 @@ export function parseGatewayCommand(text: string): GatewayCommand | undefined {
   if (/^\/new$/i.test(trimmed)) return { type: "new" };
   if (/^\/status$/i.test(trimmed)) return { type: "status" };
   if (/^\/stop$/i.test(trimmed)) return { type: "stop" };
+  const approve = /^\/approve(?:\s+([A-Za-z0-9]+))?$/i.exec(trimmed);
+  if (approve) {
+    return { type: "approve", approvalId: approve[1]?.trim().toUpperCase() || undefined };
+  }
+  const deny = /^\/deny(?:\s+([A-Za-z0-9]+))?$/i.exec(trimmed);
+  if (deny) {
+    return { type: "deny", approvalId: deny[1]?.trim().toUpperCase() || undefined };
+  }
   return undefined;
 }
 

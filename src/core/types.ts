@@ -1,6 +1,44 @@
 export type TransportKind = "qq" | "mock";
 export type GatewayRole = "owner" | "operator" | "viewer";
 
+export type Capability =
+  | "machine.status.read"
+  | "screen.capture"
+  | "files.read"
+  | "files.write"
+  | "files.delete"
+  | "shell.execute"
+  | "software.install"
+  | "application.open"
+  | "application.control"
+  | "browser.submit"
+  | "message.send"
+  | "web.search"
+  | "system.restart"
+  | "system.admin";
+
+export type AgentApprovalKind =
+  | "command-execution"
+  | "file-change"
+  | "permission-profile"
+  | "mcp-tool";
+
+export type AgentApprovalDecision = "approve" | "deny";
+
+export interface AgentApprovalRequest {
+  requestId: string;
+  kind: AgentApprovalKind;
+  capability: Capability;
+  summary: string;
+  source: "codex" | "mcp" | "floral";
+  mcpServerId?: string | undefined;
+  mcpToolName?: string | undefined;
+}
+
+export type AgentApprovalHandler = (
+  request: AgentApprovalRequest,
+) => Promise<AgentApprovalDecision>;
+
 export interface ExternalIdentity {
   transport: TransportKind;
   botId: string;
@@ -26,7 +64,13 @@ export type AgentEvent =
   | { type: "assistant.delta"; text: string }
   | { type: "tool.started"; name: string; detail?: unknown }
   | { type: "tool.completed"; name: string; detail?: unknown }
-  | { type: "approval.requested"; requestId: string; detail: unknown }
+  | {
+      type: "approval.requested";
+      requestId: string;
+      capability: Capability;
+      kind: AgentApprovalKind;
+      detail?: unknown;
+    }
   | { type: "run.completed"; threadId: string; finalText: string }
   | { type: "run.failed"; threadId?: string; message: string };
 
@@ -35,6 +79,7 @@ export interface AgentRunRequest {
   text: string;
   cwd: string;
   model?: string;
+  approvalHandler?: AgentApprovalHandler;
 }
 
 export interface AgentRunResult {

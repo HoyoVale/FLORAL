@@ -228,10 +228,11 @@
 
 ### Phase 5.2 — authorization and approval authority
 
-- bind capability checks to actual tool execution;
-- add owner-scoped one-shot QQ approvals;
-- add expiry, requester/session binding, and restart invalidation;
-- require local confirmation for system-administration operations.
+- bind Codex approval-bound execution and every active MCP tool to explicit FLORAL capabilities;
+- add owner-scoped one-shot QQ `/approve` and `/deny` commands;
+- add expiry, requester/conversation/request binding, run cleanup, and restart invalidation;
+- require local confirmation for system administration and opaque Codex command escalation;
+- keep production Codex read-only/never-approve until a later controlled capability activation.
 
 ## Phase 6 — macOS GUI and visual MCP
 

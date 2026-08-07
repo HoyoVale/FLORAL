@@ -149,6 +149,14 @@ mode = "unified"
 # the checked-in infrastructure template if unified preparation fails.
 mode = "unified"
 
+[runtime.authorization]
+# Phase 5.2 authorization authority. Remote approvals are one-shot, owner and
+# conversation scoped, expire quickly, and are invalidated by service restart.
+enabled = true
+approval_ttl_ms = 60000
+max_pending_approvals = 8
+owner_only_remote_approval = true
+
 [runtime.cost_guard]
 # Phase 5.1 fail-closed protection against runaway provider loops. Request and
 # token limits use rolling windows. Pricing is an operator-reviewed estimate;

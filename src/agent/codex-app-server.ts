@@ -1,5 +1,11 @@
 import type { AgentRuntime } from "../core/contracts.js";
-import type { AgentEvent, AgentRunRequest, AgentRunResult } from "../core/types.js";
+import type {
+  AgentApprovalHandler,
+  AgentApprovalRequest,
+  AgentEvent,
+  AgentRunRequest,
+  AgentRunResult,
+} from "../core/types.js";
 import {
   CodexRuntimeError,
   classifyCodexFailure,
@@ -81,6 +87,7 @@ export class CodexAppServerRuntime implements AgentRuntime {
   readonly #loadedThreads = new Set<string>();
   readonly #activeTurns = new Map<string, string>();
   readonly #eventHandlers = new Map<string, (event: AgentEvent) => void>();
+  readonly #approvalHandlers = new Map<string, AgentApprovalHandler>();
   #started = false;
 
   constructor(options: CodexAppServerOptions) {
@@ -94,7 +101,12 @@ export class CodexAppServerRuntime implements AgentRuntime {
     this.#defaultModel = options.defaultModel;
     this.#turnTimeoutMs = options.requestTimeoutMs;
     this.#client.on("serverRequest", (request: CodexServerRequest) => {
-      this.#handleServerRequest(request);
+      void this.#handleServerRequest(request).catch(() => {
+        this.#respondSafely(request.id, undefined, {
+          code: -32603,
+          message: "FLORAL rejected an approval request after an internal authorization error",
+        });
+      });
     });
   }
 
@@ -124,6 +136,7 @@ export class CodexAppServerRuntime implements AgentRuntime {
 
     onEvent?.({ type: "run.started", threadId });
     if (onEvent) this.#eventHandlers.set(threadId, onEvent);
+    if (request.approvalHandler) this.#approvalHandlers.set(threadId, request.approvalHandler);
 
     let streamedText = "";
     let authoritativeText = "";
@@ -297,6 +310,7 @@ export class CodexAppServerRuntime implements AgentRuntime {
       this.#client.off("exit", exitListener);
       this.#activeTurns.delete(threadId);
       this.#eventHandlers.delete(threadId);
+      this.#approvalHandlers.delete(threadId);
     }
   }
 
@@ -318,6 +332,7 @@ export class CodexAppServerRuntime implements AgentRuntime {
     this.#loadedThreads.clear();
     this.#activeTurns.clear();
     this.#eventHandlers.clear();
+    this.#approvalHandlers.clear();
     await this.#client.stop();
   }
 
@@ -369,7 +384,7 @@ export class CodexAppServerRuntime implements AgentRuntime {
     return threadId;
   }
 
-  #handleServerRequest(request: CodexServerRequest): void {
+  async #handleServerRequest(request: CodexServerRequest): Promise<void> {
     const params = asRecord(request.params);
     const threadId = readString(params?.threadId);
     const onEvent = threadId ? this.#eventHandlers.get(threadId) : undefined;
@@ -383,21 +398,41 @@ export class CodexAppServerRuntime implements AgentRuntime {
       request.method === "item/commandExecution/requestApproval"
       || request.method === "item/fileChange/requestApproval"
     ) {
+      const approval = buildCodexApprovalRequest(request);
       onEvent?.({
         type: "approval.requested",
-        requestId: String(request.id),
-        detail: { method: request.method, params: request.params, decision: "decline" },
+        requestId: approval.requestId,
+        capability: approval.capability,
+        kind: approval.kind,
+        detail: { summary: approval.summary },
       });
-      this.#respondSafely(request.id, { decision: "decline" });
+
+      const handler = threadId ? this.#approvalHandlers.get(threadId) : undefined;
+      const decision = handler
+        ? await handler(approval).catch(() => "deny" as const)
+        : "deny";
+      this.#respondSafely(request.id, { decision: decision === "approve" ? "accept" : "decline" });
       return;
     }
 
     if (request.method === "item/permissions/requestApproval") {
+      const approval: AgentApprovalRequest = {
+        requestId: String(request.id),
+        kind: "permission-profile",
+        capability: "system.admin",
+        summary: "Codex 请求扩大当前沙箱权限范围。",
+        source: "codex",
+      };
       onEvent?.({
         type: "approval.requested",
-        requestId: String(request.id),
-        detail: { method: request.method, params: request.params, permissions: {} },
+        requestId: approval.requestId,
+        capability: approval.capability,
+        kind: approval.kind,
+        detail: { summary: approval.summary },
       });
+      // Granular permission grants are deliberately not remotely delegable in
+      // Phase 5.2. Returning an empty subset is fail-closed and keeps the
+      // stronger local-confirmation boundary intact.
       this.#respondSafely(request.id, { scope: "turn", permissions: {} });
       return;
     }
@@ -444,6 +479,48 @@ export class CodexAppServerRuntime implements AgentRuntime {
   }
 }
 
+
+function buildCodexApprovalRequest(request: CodexServerRequest): AgentApprovalRequest {
+  const params = asRecord(request.params);
+  const reason = redactApprovalText(readString(params?.reason));
+  if (request.method === "item/fileChange/requestApproval") {
+    return {
+      requestId: String(request.id),
+      kind: "file-change",
+      capability: "files.write",
+      summary: reason
+        ? `Codex 请求修改工作区文件：${reason}`
+        : "Codex 请求修改工作区文件。",
+      source: "codex",
+    };
+  }
+
+  const command = redactApprovalText(readString(params?.command));
+  return {
+    requestId: String(request.id),
+    kind: "command-execution",
+    capability: "shell.execute",
+    summary: command
+      ? `Codex 请求执行需要额外权限的命令：${command}`
+      : reason
+        ? `Codex 请求执行需要额外权限的命令：${reason}`
+        : "Codex 请求执行一个需要额外权限的命令。",
+    source: "codex",
+  };
+}
+
+function redactApprovalText(value: string | undefined): string | undefined {
+  if (!value) return undefined;
+  const normalized = value
+    .replace(/[\u0000-\u001F\u007F]+/gu, " ")
+    .replace(/\b(api[_-]?key|token|secret|password)\s*[:=]\s*[^\s]+/giu, "$1=<redacted>")
+    .replace(/(--?(?:api[_-]?key|token|secret|password))\s+(?!<redacted>)[^\s]+/giu, "$1 <redacted>")
+    .replace(/\bbearer\s+[A-Za-z0-9._~+\/=-]+/giu, "Bearer <redacted>")
+    .replace(/\s+/gu, " ")
+    .trim();
+  if (!normalized) return undefined;
+  return normalized.length <= 240 ? normalized : `${normalized.slice(0, 237)}...`;
+}
 
 function isUnavailableThreadResume(error: unknown): boolean {
   if (!(error instanceof CodexRuntimeError)) return false;

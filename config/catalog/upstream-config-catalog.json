@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "reviewedAt": "2026-08-07",
-  "purpose": "Phase 4 configuration federation, Phase 4.0E5 SearXNG runtime adoption, and Phase 5.1 runtime cost-guard inventory for FLORAL-owned, upstream-managed, passthrough, observed-only, and locked configuration surfaces.",
+  "purpose": "Phase 4 configuration federation, Phase 4.0E5 SearXNG runtime adoption, Phase 5.1 runtime cost-guard inventory, and Phase 5.2 authorization/approval authority inventory.",
   "classifications": [
     "floral-owned",
     "upstream-managed",
@@ -40,18 +40,23 @@
         {
           "id": "identity-policy",
           "classification": "floral-owned",
-          "coverage": "partial",
+          "coverage": "typed-runtime-enforced",
           "knownKeys": [
             "MOCK_TRUST_OWNER",
             "AUTH_MODE",
-            "OWNER_PAIRING_CODE"
+            "OWNER_PAIRING_CODE",
+            "runtime.authorization.enabled",
+            "runtime.authorization.approval_ttl_ms",
+            "runtime.authorization.max_pending_approvals",
+            "runtime.authorization.owner_only_remote_approval",
+            "/approve <id>",
+            "/deny <id>"
           ],
           "futureKeys": [
-            "approval_ttl_ms",
-            "approval_owner_scope",
-            "local_confirmation_policy",
+            "local_confirmation_ui",
             "audit_retention"
-          ]
+          ],
+          "notes": "Remote approvals are owner/conversation/request scoped, one-shot, short-lived, and in-memory so restart invalidates them. System administration and opaque Codex command escalation remain Mac-local only."
         },
         {
           "id": "security-invariants",
@@ -61,7 +66,9 @@
             "loopback-only app-server and MCP exposure",
             "no unrestricted sudo",
             "no Keychain access",
-            "model is not an authorization boundary"
+            "model is not an authorization boundary",
+            "remote approvals cannot satisfy local confirmation",
+            "active MCP tools require a FLORAL capability mapping"
           ]
         },
         {
@@ -141,14 +148,14 @@
         {
           "id": "sandbox-approval-trust",
           "classification": "locked",
-          "coverage": "hardcoded-safe-baseline",
+          "coverage": "policy-broker-ready-native-never",
           "knownKeys": [
             "approvalPolicy",
             "sandboxPolicy",
             "project trust",
             "permission profiles"
           ],
-          "notes": "Phase 4P will make approved subsets configurable; current production behavior remains read-only and never-approve."
+          "notes": "Phase 5.2 routes app-server command/file approval requests through FLORAL capability policy when they occur. Production Codex remains read-only with approvalPolicy=never until a later controlled sandbox/approval activation phase."
         },
         {
           "id": "mcp-client",
@@ -541,12 +548,13 @@
         {
           "id": "elicitation-and-approval",
           "classification": "locked",
-          "coverage": "decline-only-baseline",
+          "coverage": "authorization-boundary-ready",
           "knownKeys": [
             "MCP elicitation",
             "tool approval requests",
             "QQ approval authority"
-          ]
+          ],
+          "notes": "Active MCP tools must have a FLORAL capability mapping. Search remains auto-approved and read-only; MCP elicitation forms and granular permission grants remain fail-closed until their dedicated adapters are implemented."
         }
       ],
       "runtimeIntrospection": [
@@ -757,7 +765,7 @@
       "classification": "locked",
       "file": "src/agent/codex-deepseek-config.ts",
       "needle": "default_tools_approval_mode = \"approve\"",
-      "risk": "Codex's MCP approval setting is separate from FLORAL's future QQ approval authority."
+      "risk": "Codex MCP auto-approval is allowed only for an active allowlisted tool with a FLORAL capability mapping; future side-effecting MCPs must not inherit this setting."
     },
     {
       "id": "codex.turn.approval-never",
@@ -765,7 +773,7 @@
       "classification": "locked",
       "file": "src/agent/codex-app-server.ts",
       "needle": "approvalPolicy: \"never\"",
-      "risk": "All Codex approval requests are closed in the current safety baseline."
+      "risk": "Native Codex approval prompting remains closed while Phase 5.2 establishes the FLORAL broker; a later controlled activation must change this only with sandbox and policy evidence."
     },
     {
       "id": "codex.turn.sandbox-read-only",
@@ -909,7 +917,7 @@
       "classification": "locked",
       "file": "src/config/mcp/mcp-runtime-registry.ts",
       "needle": "Planned MCP server cannot be enabled before an active adapter exists",
-      "risk": "Vision and macOS MCPs must remain disabled until their transports and authorization boundaries are implemented."
+      "risk": "Vision and macOS MCP transports remain disabled until their adapters are implemented even though the Phase 5.2 authorization boundary now exists."
     },
     {
       "id": "mcp.registry.parent-environment-forbidden",
@@ -934,6 +942,38 @@
       "file": "config/floral.toml",
       "needle": "[runtime.adoption.searxng]",
       "risk": "SearXNG unified preparation must keep reviewed-image validation, bounded runtime observation, and explicit legacy recovery."
+    },
+    {
+      "id": "authorization.remote-owner-only",
+      "component": "floral",
+      "classification": "locked",
+      "file": "src/config/federation/config-schema.ts",
+      "needle": "\"runtime.authorization.owner_only_remote_approval\": true",
+      "risk": "Remote approval must never be delegated to an operator/viewer by configuration drift."
+    },
+    {
+      "id": "authorization.codex-command-local",
+      "component": "floral",
+      "classification": "locked",
+      "file": "src/policy/authorization-authority.ts",
+      "needle": "request.source === \"codex-command\"",
+      "risk": "Opaque Codex command escalation cannot be safely classified as a bounded remote capability yet, so QQ approval must not authorize it."
+    },
+    {
+      "id": "authorization.permission-profile-local",
+      "component": "codex",
+      "classification": "locked",
+      "file": "src/agent/codex-app-server.ts",
+      "needle": "Granular permission grants are deliberately not remotely delegable",
+      "risk": "Granular filesystem/network permission profiles can widen the sandbox and therefore remain fail-closed for remote approval."
+    },
+    {
+      "id": "authorization.mcp-capability-coverage",
+      "component": "mcp",
+      "classification": "locked",
+      "file": "src/policy/authorization-authority.ts",
+      "needle": "Active MCP tool has no FLORAL capability mapping",
+      "risk": "An enabled MCP tool must not bypass role and approval policy merely because it appears in the upstream allowlist."
     }
   ],
   "environmentKeyPolicies": {

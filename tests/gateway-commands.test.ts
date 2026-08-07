@@ -11,6 +11,8 @@ import type {
   OutgoingMessage,
 } from "../src/core/types.js";
 import { GatewayService } from "../src/service/gateway.js";
+import { AuthorizationAuthority } from "../src/policy/authorization-authority.js";
+import type { McpRuntimeRegistry } from "../src/config/mcp/mcp-runtime-registry.js";
 import { MemoryThreadStore } from "../src/storage/memory-thread-store.js";
 
 class TestTransport implements ChatTransport {
@@ -62,6 +64,37 @@ class TestAgent implements AgentRuntime {
 }
 
 
+
+class ApprovalAgent implements AgentRuntime {
+  readonly name = "approval-agent";
+  readonly approvalRequested = deferred<void>();
+
+  async start(): Promise<void> {}
+
+  async run(
+    request: AgentRunRequest,
+    onEvent?: (event: AgentEvent) => void,
+  ): Promise<AgentRunResult> {
+    const threadId = "thread-approval";
+    onEvent?.({ type: "run.started", threadId });
+    const handler = request.approvalHandler;
+    if (!handler) throw new Error("approval handler missing");
+    this.approvalRequested.resolve(undefined);
+    const decision = await handler({
+      requestId: "private-agent-request-id",
+      kind: "file-change",
+      capability: "files.write",
+      summary: "修改一个工作区文件",
+      source: "codex",
+    });
+    const finalText = decision === "approve" ? "approved-work" : "denied-work";
+    onEvent?.({ type: "run.completed", threadId, finalText });
+    return { threadId, finalText };
+  }
+
+  async interrupt(): Promise<void> {}
+  async stop(): Promise<void> {}
+}
 
 class FailingTransport extends TestTransport {
   override async send(_message: OutgoingMessage): Promise<void> {
@@ -283,6 +316,60 @@ describe("GatewayService identity and commands", () => {
     expect(agent.interrupts).toEqual(["thread-running"]);
     expect(transport.sent.some((entry) => entry.text.includes("停止请求"))).toBe(true);
     expect(transport.sent.some((entry) => entry.text === "当前任务已停止。")).toBe(true);
+    await gateway.stop();
+  });
+
+  it("resolves an owner-scoped one-shot approval through /approve", async () => {
+    const transport = new TestTransport();
+    const agent = new ApprovalAgent();
+    const store = new MemoryThreadStore();
+    const registry: McpRuntimeRegistry = {
+      schemaVersion: 1,
+      authorityVersion: 1,
+      profile: "test",
+      registryFingerprint: "test-only",
+      servers: [],
+    };
+    const gateway = new GatewayService(transport, agent, store, {
+      cwd: ".",
+      trustMockOwner: true,
+      authorization: {
+        authority: new AuthorizationAuthority({
+          enabled: true,
+          sandboxMode: "workspace-write",
+          mcpRegistry: registry,
+        }),
+        approvalTtlMs: 5_000,
+        maxPendingApprovals: 4,
+        ownerOnlyRemoteApproval: true,
+      },
+    });
+    await gateway.start();
+
+    const runPromise = transport.receive(incoming({
+      id: "a-1",
+      transport: "mock",
+      text: "please edit",
+    }));
+    await agent.approvalRequested.promise;
+    await new Promise((resolve) => setImmediate(resolve));
+
+    const prompt = transport.sent.find((entry) => entry.text.includes("FLORAL 请求一次性授权"));
+    expect(prompt?.text).toContain("能力=files.write");
+    expect(prompt?.text).not.toContain("private-agent-request-id");
+    const approvalId = /审批编号=([A-Z0-9]+)/u.exec(prompt?.text ?? "")?.[1];
+    expect(approvalId).toBeTruthy();
+
+    await transport.receive(incoming({
+      id: "a-2",
+      transport: "mock",
+      text: `/approve ${approvalId}`,
+    }));
+    await runPromise;
+
+    expect(transport.sent.some((entry) => entry.text === "一次性授权已批准。")).toBe(true);
+    expect(transport.sent.some((entry) => entry.text === "approved-work")).toBe(true);
+    expect(store.auditEvents().some((event) => event.eventType === "authorization.approval_granted")).toBe(true);
     await gateway.stop();
   });
 

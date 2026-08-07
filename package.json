@@ -84,7 +84,9 @@
     "config:qq-adoption:check": "tsx scripts/qq-runtime-adoption.ts check",
     "cost:status": "tsx scripts/cost-guard.ts show",
     "cost:json": "tsx scripts/cost-guard.ts json",
-    "cost:check": "tsx scripts/cost-guard.ts check"
+    "cost:check": "tsx scripts/cost-guard.ts check",
+    "policy:status": "tsx scripts/authorization-policy.ts",
+    "policy:check": "tsx scripts/authorization-policy.ts --check"
   },
   "dependencies": {
     "@tencent-connect/qqbot-nodejs": "1.0.4",

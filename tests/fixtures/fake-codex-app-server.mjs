@@ -127,7 +127,7 @@ lines.on("line", (line) => {
             threadId: activeThreadId,
             turnId: activeTurnId,
             itemId: "command_1",
-            command: "echo unsafe",
+            command: "echo unsafe --token supersecret",
             cwd: process.cwd(),
             reason: "fixture approval",
           },
@@ -209,6 +209,8 @@ lines.on("line", (line) => {
     const decision = message.result?.decision;
     if (decision === "decline") {
       sendSuccess(activeThreadId, activeTurnId, "approval declined safely");
+    } else if (decision === "accept") {
+      sendSuccess(activeThreadId, activeTurnId, "approval accepted safely");
     } else {
       const error = { message: `unexpected approval decision: ${String(decision)}`, codexErrorInfo: "Other" };
       send({

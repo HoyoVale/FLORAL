@@ -107,6 +107,20 @@ The guard enforces rolling request/token/estimated-cost budgets and duplicate
 request limits before another provider attempt is allowed. See
 `docs/PHASE5_AGENT_COST_GUARD.md`.
 
+Phase 5.2 adds the FLORAL-owned authorization authority and owner-scoped,
+one-shot QQ approval broker without relaxing the production read-only Codex
+sandbox:
+
+```bash
+corepack pnpm policy:status
+corepack pnpm policy:check
+```
+
+Remote approval commands are `/approve <id>` and `/deny <id>`. Grants expire,
+are bound to the current owner and conversation, are consumed once, and vanish
+on service restart. Opaque Codex command escalation and system administration
+remain Mac-local only. See `docs/PHASE5_AUTHORIZATION_APPROVAL_AUTHORITY.md`.
+
 ## Prepare the Mac mini
 
 Copy or clone the project onto the Mac and run:

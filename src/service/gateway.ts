@@ -14,6 +14,8 @@ import {
   parseGatewayCommand,
   type GatewayCommand,
 } from "./gateway-commands.js";
+import type { AuthorizationAuthority } from "../policy/authorization-authority.js";
+import { QqApprovalBroker } from "../policy/qq-approval-broker.js";
 
 export interface GatewayOptions {
   cwd: string;
@@ -21,6 +23,12 @@ export interface GatewayOptions {
   ownerPairingCode?: string;
   trustMockOwner?: boolean;
   runtimeStatusLines?: (() => Promise<string[]>) | undefined;
+  authorization?: {
+    authority: AuthorizationAuthority;
+    approvalTtlMs: number;
+    maxPendingApprovals: number;
+    ownerOnlyRemoteApproval: boolean;
+  } | undefined;
 }
 
 interface ActiveRun {
@@ -32,6 +40,7 @@ interface ActiveRun {
 export class GatewayService {
   readonly #activeRuns = new Map<string, ActiveRun>();
   readonly #pairingLimiter = new PairingAttemptLimiter();
+  readonly #approvalBroker: QqApprovalBroker | undefined;
   #started = false;
   #stopped = false;
 
@@ -40,7 +49,19 @@ export class GatewayService {
     private readonly agent: AgentRuntime,
     private readonly store: GatewayStore,
     private readonly options: GatewayOptions,
-  ) {}
+  ) {
+    const authorization = options.authorization;
+    this.#approvalBroker = authorization
+      ? new QqApprovalBroker({
+          ttlMs: authorization.approvalTtlMs,
+          maxPending: authorization.maxPendingApprovals,
+          ownerOnly: authorization.ownerOnlyRemoteApproval,
+          authority: authorization.authority,
+          send: (conversationId, text) => this.#send(conversationId, text),
+          audit: (event) => this.store.appendAudit(event),
+        })
+      : undefined;
+  }
 
   async start(): Promise<void> {
     if (this.#started) return;
@@ -63,6 +84,7 @@ export class GatewayService {
   async stop(): Promise<void> {
     if (this.#stopped) return;
     this.#stopped = true;
+    this.#approvalBroker?.cancelAll();
     await Promise.allSettled([this.transport.stop(), this.agent.stop()]);
     this.#activeRuns.clear();
     await this.store.close();
@@ -244,6 +266,7 @@ export class GatewayService {
             `role=${resolved.role}`,
             `thread=${threadId ? "active" : "none"}`,
             `run=${active ? "active" : "idle"}`,
+            `approvals_pending=${String(this.#approvalBroker?.pendingCount(resolved.conversationId) ?? 0)}`,
             ...runtimeLines,
           ].join("\n"),
         );
@@ -270,6 +293,41 @@ export class GatewayService {
         );
         return;
 
+      case "approve":
+      case "deny": {
+        if (!command.approvalId) {
+          await this.#send(
+            message.identity.conversationId,
+            `用法：/${command.type} <审批编号>`,
+          );
+          return;
+        }
+        if (!this.#approvalBroker) {
+          await this.#send(message.identity.conversationId, "远程审批功能未启用。");
+          return;
+        }
+        const outcome = await this.#approvalBroker.resolve(
+          {
+            userId: resolved.userId,
+            role: resolved.role,
+            conversationId: resolved.conversationId,
+          },
+          command.approvalId,
+          command.type === "approve" ? "approve" : "deny",
+        );
+        await this.store.appendAudit({
+          userId: resolved.userId,
+          conversationId: resolved.conversationId,
+          eventType: `command.${command.type}`,
+          payload: { outcome },
+        });
+        await this.#send(
+          message.identity.conversationId,
+          approvalCommandReply(command.type, outcome),
+        );
+        return;
+      }
+
       case "stop": {
         const active = this.#activeRuns.get(resolved.conversationId);
         if (!active) {
@@ -281,6 +339,7 @@ export class GatewayService {
         }
 
         active.stopRequested = true;
+        this.#approvalBroker?.cancelConversation(resolved.conversationId);
         if (active.threadId && !active.interruptSent) {
           await this.#interruptRun(resolved, active);
         }
@@ -334,6 +393,17 @@ export class GatewayService {
           text: message.text,
           cwd: this.options.cwd,
           ...(this.options.model ? { model: this.options.model } : {}),
+          ...(this.#approvalBroker ? {
+            approvalHandler: (request) => this.#approvalBroker!.request(
+              {
+                userId: resolved.userId,
+                role: resolved.role,
+                conversationId: resolved.conversationId,
+                deliveryConversationId: message.identity.conversationId,
+              },
+              request,
+            ),
+          } : {}),
         },
         (event) => this.#handleAgentEvent(resolved, active, event),
       );
@@ -370,6 +440,7 @@ export class GatewayService {
         "agent_failure",
       );
     } finally {
+      this.#approvalBroker?.cancelConversation(resolved.conversationId);
       if (this.#activeRuns.get(resolved.conversationId) === active) {
         this.#activeRuns.delete(resolved.conversationId);
       }
@@ -403,7 +474,8 @@ export class GatewayService {
       void this.store.appendAudit({
         userId: resolved.userId,
         conversationId: resolved.conversationId,
-        eventType: "agent.approval_declined",
+        eventType: "agent.approval_requested",
+        payload: { capability: event.capability, kind: event.kind },
       }).catch(() => undefined);
     }
   }
@@ -459,4 +531,13 @@ export class GatewayService {
   async #send(conversationId: string, text: string): Promise<void> {
     await this.transport.send({ conversationId, text });
   }
+}
+
+function approvalCommandReply(
+  _command: "approve" | "deny",
+  outcome: "approved" | "denied" | "not-found" | "not-authorized",
+): string {
+  if (outcome === "approved") return "一次性授权已批准。";
+  if (outcome === "denied") return "一次性授权已拒绝。";
+  return "未找到可由当前会话处理的有效审批，可能已处理、过期或不属于当前会话。";
 }

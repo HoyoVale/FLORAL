@@ -4,10 +4,12 @@ import { MockAgentRuntime } from "./agent/mock-agent.js";
 import { loadEnv } from "./config/env.js";
 import { resolveConfigurationAuthority } from "./config/federation/config-authority.js";
 import { loadProjectEnv } from "./config/load-project-env.js";
+import { buildMcpRuntimeRegistry } from "./config/mcp/mcp-runtime-registry.js";
 import type { AgentRuntime, ChatTransport } from "./core/contracts.js";
 import { acquireProcessLock } from "./runtime/process-lock.js";
 import { createServiceStateWriter } from "./runtime/service-state.js";
 import { readDeepSeekCostGuardSnapshot } from "./runtime/cost/deepseek-cost-guard.js";
+import { AuthorizationAuthority } from "./policy/authorization-authority.js";
 import { GatewayService } from "./service/gateway.js";
 import { SqliteGatewayStore } from "./storage/sqlite.js";
 import { MockQqTransport } from "./transport/qq/mock-qq-transport.js";
@@ -44,6 +46,11 @@ const agent: AgentRuntime = env.CODEX_MODE === "real"
   : new MockAgentRuntime();
 
 const store = await SqliteGatewayStore.open(resolve(env.DATABASE_PATH));
+const authorizationAuthority = new AuthorizationAuthority({
+  enabled: authority.effective.runtime.authorization.enabled,
+  sandboxMode: authority.effective.codex.sandbox.mode,
+  mcpRegistry: buildMcpRuntimeRegistry(authority.effective),
+});
 const gateway = new GatewayService(
   transport,
   agent,
@@ -55,6 +62,12 @@ const gateway = new GatewayService(
       ? { ownerPairingCode: env.OWNER_PAIRING_CODE }
       : {}),
     trustMockOwner: env.MOCK_TRUST_OWNER,
+    authorization: {
+      authority: authorizationAuthority,
+      approvalTtlMs: authority.effective.runtime.authorization.approval_ttl_ms,
+      maxPendingApprovals: authority.effective.runtime.authorization.max_pending_approvals,
+      ownerOnlyRemoteApproval: authority.effective.runtime.authorization.owner_only_remote_approval,
+    },
     runtimeStatusLines: async () => {
       const snapshot = await readDeepSeekCostGuardSnapshot(
         repositoryRoot,

@@ -46,3 +46,12 @@ QQ AppSecret, DeepSeek API key, Better Auth secret, and any future OAuth tokens 
 - Managed Codex home is mode 0700 and ignored by Git; its per-run configuration is mode 0600 and deleted during clean shutdown.
 - Codex thread/session state is retained locally across restarts and must be included in backup/incident-response policy.
 - Full-chain acceptance logs only bounded milestones and never user or provider content.
+
+## Phase 5.2 authorization authority
+
+- Every active MCP tool must have an explicit FLORAL capability mapping.
+- Role checks, sandbox ceilings, MCP allowlists, capability policy, and approval grants are independent checks; model output cannot override them.
+- QQ approvals are owner-only, conversation-bound, one-shot, short-lived, and held only in memory.
+- `/stop`, run completion, gateway stop, and service restart invalidate pending approvals.
+- Opaque Codex command escalation, granular permission-profile expansion, `system.admin`, and `system.restart` cannot be approved remotely.
+- Approval audit payloads never persist raw command bodies, diffs, prompts, tool results, or Codex private request IDs.

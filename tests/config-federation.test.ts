@@ -51,6 +51,9 @@ describe("configuration federation authority", () => {
     expect(authority.effective.deepseek.reasoning_effort).toBe("max");
     expect(authority.effective.runtime.adoption.codex.mode).toBe("unified");
     expect(authority.effective.runtime.adoption.searxng.mode).toBe("unified");
+    expect(authority.effective.runtime.authorization.enabled).toBe(true);
+    expect(authority.effective.runtime.authorization.approval_ttl_ms).toBe(60_000);
+    expect(authority.effective.runtime.authorization.owner_only_remote_approval).toBe(true);
     expect(authority.effective.runtime.cost_guard.enabled).toBe(true);
     expect(authority.effective.runtime.cost_guard.pricing.input_cache_hit_cny_per_million).toBe(0.02);
     expect(authority.effective.codex.args).toEqual(["app-server", "--flag", "two words"]);
@@ -75,6 +78,8 @@ describe("configuration federation authority", () => {
     expect(output).toContain("config.secret.deepseek_api_key=present");
     expect(output).toContain("config.runtime.adoption.codex=unified");
     expect(output).toContain("config.runtime.adoption.searxng=unified");
+    expect(output).toContain("config.runtime.authorization.enabled=true");
+    expect(output).toContain("config.runtime.authorization.owner_only_remote_approval=true");
   });
 
   it("rejects locked-field overrides and unknown keys before runtime adoption", async () => {

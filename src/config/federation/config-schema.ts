@@ -136,6 +136,12 @@ export const requestedConfigSchema = z.object({
         mode: z.enum(["legacy", "unified"]),
       }).strict(),
     }).strict(),
+    authorization: z.object({
+      enabled: z.boolean(),
+      approval_ttl_ms: z.number().int().min(5_000).max(10 * 60_000),
+      max_pending_approvals: z.number().int().min(1).max(32),
+      owner_only_remote_approval: z.boolean(),
+    }).strict(),
     cost_guard: z.object({
       enabled: z.boolean(),
       state_path: z.string().trim().min(1),
@@ -318,6 +324,12 @@ export interface RequestedConfig {
         mode: "legacy" | "unified";
       };
     };
+    authorization: {
+      enabled: boolean;
+      approval_ttl_ms: number;
+      max_pending_approvals: number;
+      owner_only_remote_approval: boolean;
+    };
     cost_guard: {
       enabled: boolean;
       state_path: string;
@@ -497,6 +509,12 @@ export const DEFAULT_REQUESTED_CONFIG: RequestedConfig = {
         mode: "unified",
       },
     },
+    authorization: {
+      enabled: true,
+      approval_ttl_ms: 60_000,
+      max_pending_approvals: 8,
+      owner_only_remote_approval: true,
+    },
     cost_guard: {
       enabled: true,
       state_path: "./data/cost-guard/deepseek.json",
@@ -555,6 +573,8 @@ export const DEFAULT_REQUESTED_CONFIG: RequestedConfig = {
 };
 
 export const LOCKED_CONFIG_VALUES = {
+  "runtime.authorization.enabled": true,
+  "runtime.authorization.owner_only_remote_approval": true,
   "codex.native_web_search": false,
   "codex.sandbox.mode": "read-only",
   "codex.native.provider_id": "floral-deepseek",

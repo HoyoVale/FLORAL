@@ -84,6 +84,41 @@ describe("CodexAppServerRuntime", () => {
     }
   });
 
+  it("forwards a bounded approval request to the run-scoped handler", async () => {
+    const runtime = createRuntime("approval");
+    const events: AgentEvent[] = [];
+    try {
+      await runtime.start();
+      const result = await runtime.run(
+        {
+          text: "run command",
+          cwd: process.cwd(),
+          approvalHandler: async (request) => {
+            expect(request).toMatchObject({
+              kind: "command-execution",
+              capability: "shell.execute",
+              source: "codex",
+            });
+            expect(request.summary).toContain("echo unsafe");
+            expect(request.summary).toContain("--token <redacted>");
+            expect(request.summary).not.toContain("supersecret");
+            return "approve";
+          },
+        },
+        (event) => events.push(event),
+      );
+
+      expect(result.finalText).toBe("approval accepted safely");
+      expect(events).toContainEqual(expect.objectContaining({
+        type: "approval.requested",
+        capability: "shell.execute",
+        kind: "command-execution",
+      }));
+    } finally {
+      await runtime.stop();
+    }
+  });
+
 
   it("emits bounded MCP tool lifecycle events", async () => {
     const runtime = createRuntime("mcp-tool");
