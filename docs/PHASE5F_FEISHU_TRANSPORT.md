@@ -170,3 +170,57 @@ chain passes.
 7. `shell.execute` must still require the Mac-local approval mailbox.
 8. Stopping/restarting the service must terminate and recreate the Feishu worker
    without leaving an orphan long-connection process.
+
+
+## Phase 5F.3A — native approval card isolation probe
+
+Before native cards are exposed to the production authorization broker, FLORAL
+isolates the Feishu card surface with a direct SDK probe:
+
+```text
+private text message
+  -> WSClient / im.message.receive_v1
+  -> send JSON 2.0 interactive card
+  -> [允许一次] / [拒绝]
+  -> card.action.trigger over the same long connection
+  -> validate app_id + operator.open_id + open_chat_id + approval_id
+```
+
+The probe deliberately bypasses Gateway, Codex, DeepSeek, and the authorization
+broker. It verifies only the platform/SDK rendering and callback contract.
+
+The card uses object-valued callback `behaviors`, matching the Feishu callback
+SDK contract. The callback handler returns a UI toast immediately and never
+treats that toast as an authorization decision.
+
+Developer Console prerequisites:
+
+1. Keep event subscription on **long connection** with
+   `im.message.receive_v1`.
+2. Under **Events and Callbacks -> Callback configuration**, select
+   **Receive callbacks through long connection**.
+3. Add the new callback **card.action.trigger** (card interaction).
+4. Publish the application version if the console requires a version update.
+
+Validation on Mac with the production service stopped:
+
+```bash
+corepack pnpm service:stop
+corepack pnpm feishu:card:probe
+```
+
+Send one private text message to the bot. A native approval card must appear.
+Click either button. The terminal must report:
+
+```text
+feishu.card_probe.card=sent
+feishu.card_probe.callback=received
+feishu.card_probe.operator_open_id=match
+feishu.card_probe.chat_id=match
+feishu.card_probe.approval_id=match
+feishu.card_probe.result=ok
+```
+
+Only after this probe passes does 5F.3B expose Feishu native cards to
+`InteractiveApprovalTransport`; `files.write` will then use the native card while
+`shell.execute` remains Mac-local and `system.admin` remains denied.
