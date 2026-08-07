@@ -250,6 +250,7 @@
 
 - 5.4A: presentation fallback, semantic mobile chunking, user-facing status/help.
 - 5.4A-2: SDK-native typing indicator plus one per-conversation outbound sequencer; real-device correction keeps `msgId` only on passive text replies, sends typing with a bare `ReplyTarget`, uses a short keepalive cadence, preserves assistant+tool-call history across the DeepSeek bridge, and rejects pre-tool commentary as a terminal answer.
+- 5.4A-2.3: direct QQ SDK typing visibility probe; isolates client/platform rendering from FLORAL runtime when the SDK reports success but mobile QQ shows no indicator.
 - 5.4B: native Markdown/inline approval interactions, reusing the existing approval authority rather than changing authorization semantics.
 - Authorization semantics remain owned by the existing policy and approval layers.
 

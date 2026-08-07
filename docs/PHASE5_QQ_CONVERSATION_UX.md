@@ -70,3 +70,48 @@ In particular, approval buttons must remain UI only. They may resolve an existin
 4. Trigger two outbound sends concurrently in tests. The second send must not enter the SDK before the first send completes.
 5. Simulate `sendTyping` failure. Final text delivery must still succeed.
 6. Re-run the Phase 5.3 one-shot file-change approval smoke test to confirm authorization semantics are unchanged.
+
+## Phase 5.4A-2.3 — Native typing visibility isolation
+
+Real-device validation can reach `qq.transport.typing_session=started scope=c2c`
+without the mobile QQ client rendering a typing indicator. At that point the runtime
+has already crossed the FLORAL activity boundary and the SDK promise has resolved;
+further Gateway changes would conflate transport behavior with platform/client
+visibility.
+
+Use the direct SDK probe to isolate the QQ layer:
+
+```bash
+corepack pnpm service:stop
+corepack pnpm qq:typing:probe
+```
+
+Then send one private message to the bot and watch mobile QQ for the next 20 seconds.
+The probe intentionally bypasses GatewayService, AgentRuntime, Codex and DeepSeek and
+calls `QQBot.sendTyping(rawReplyTarget)` repeatedly, matching Tencent's official QQBot
+gateway integration. It sends a passive text reply only after the observation window
+has ended.
+
+Expected terminal evidence:
+
+```text
+qq.typing_probe.gateway=ready
+qq.typing_probe.inbound=c2c
+qq.typing_probe.target_shape=raw-reply-target
+qq.typing_probe.signal=1:ok
+...
+qq.typing_probe.sdk_result=ok
+qq.typing_probe.visual_result=manual-check-required
+```
+
+Interpretation:
+
+- indicator visible: revisit FLORAL activity lifecycle/timing;
+- every `signal=N:ok` but indicator invisible: treat native typing as a best-effort
+  QQ platform/client capability and do not keep changing the Agent/Gateway path to
+  chase a state the SDK reports as accepted;
+- SDK call rejects: capture the sanitized SDK error and debug the QQ transport layer.
+
+The production transport keeps native typing enabled because it is harmless and may
+render on other clients/accounts. A product-level fallback (delayed, single progress
+message or streaming reply) should be designed separately from native typing support.
