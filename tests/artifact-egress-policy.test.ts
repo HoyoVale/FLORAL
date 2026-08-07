@@ -1,6 +1,6 @@
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, realpath, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join, resolve } from "node:path";
+import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { ArtifactEgressPolicy } from "../src/policy/artifact-egress-policy.js";
 
@@ -57,7 +57,7 @@ describe("ArtifactEgressPolicy", () => {
       byteLength: 4,
       media: {
         kind: "image",
-        localPath: resolve(screenshot),
+        localPath: await realpath(screenshot),
         caption: "**current screen**",
       },
     });
