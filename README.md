@@ -123,8 +123,8 @@ remain Mac-local only. See `docs/PHASE5_AUTHORIZATION_APPROVAL_AUTHORITY.md`.
 
 Phase 5.3 activates Codex deterministic user-reviewed approval handling with a
 cwd-only, network-disabled workspace-write turn sandbox while retaining the
-native read-only/never fail-safe. FLORAL translates its `untrusted` policy to
-the pinned app-server wire value `unlessTrusted`. A concrete Codex file-change
+native read-only/never fail-safe. FLORAL sends the pinned Codex 0.146.1 approval wire value `untrusted` while
+retaining app-server v2's camelCase sandbox values (`workspaceWrite`). A concrete Codex file-change
 request may receive one
 owner/conversation-bound QQ grant; opaque command escalation still requires an
 independent Mac-local confirmation. Local confirmations use a private,

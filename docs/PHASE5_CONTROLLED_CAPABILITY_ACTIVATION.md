@@ -22,10 +22,14 @@ writable root           = exact request cwd only
 network access          = false
 ```
 
-For the pinned Codex app-server 0.146.1 protocol this is translated on the wire
-to `approvalPolicy = unlessTrusted`, `sandbox = workspaceWrite` for thread
-start/resume, and a `sandboxPolicy.type = workspaceWrite` object for turn start.
-The native generated `config.toml` stays `approval_policy = never` and
+For the pinned Codex app-server 0.146.1 protocol FLORAL sends
+`approvalPolicy = untrusted`. App-server v2 keeps its camelCase sandbox wire
+values: `sandbox = workspaceWrite` for thread start/resume and
+`sandboxPolicy.type = workspaceWrite` for turn start. Phase 5.3A incorrectly
+followed a stale README example for the approval enum and sent the internal
+variant-style `unlessTrusted`; Phase 5.3D corrects only that approval wire
+contract against the generated schema/protocol while preserving the valid
+sandbox encoding. The native generated `config.toml` stays `approval_policy = never` and
 `sandbox_mode = read-only` as a fail-safe if FLORAL fails to supply its runtime
 overrides. `danger-full-access` is never activated.
 

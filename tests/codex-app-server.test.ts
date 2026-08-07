@@ -130,7 +130,7 @@ describe("CodexAppServerRuntime", () => {
 
 
 
-  it("maps FLORAL untrusted/workspace-write to Codex 0.146.1 approval wire values", async () => {
+  it("uses Codex 0.146.1 approval and sandbox wire values", async () => {
     const runtime = createRuntime("on-request-file-approval", 5_000, {
       approvalPolicy: "untrusted",
       sandboxMode: "workspace-write",

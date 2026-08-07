@@ -49,7 +49,7 @@ lines.on("line", (line) => {
   }
 
   if (message.method === "thread/start") {
-    if (scenario === "on-request-file-approval" && message.params?.approvalPolicy !== "unlessTrusted") {
+    if (scenario === "on-request-file-approval" && message.params?.approvalPolicy !== "untrusted") {
       send({
         id: message.id,
         error: { code: -32602, message: `invalid thread approval policy: ${String(message.params?.approvalPolicy)}` },
@@ -93,7 +93,7 @@ lines.on("line", (line) => {
   }
 
   if (message.method === "turn/start") {
-    if (scenario === "on-request-file-approval" && message.params?.approvalPolicy !== "unlessTrusted") {
+    if (scenario === "on-request-file-approval" && message.params?.approvalPolicy !== "untrusted") {
       send({
         id: message.id,
         error: { code: -32602, message: `invalid turn approval policy: ${String(message.params?.approvalPolicy)}` },

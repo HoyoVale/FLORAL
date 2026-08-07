@@ -165,7 +165,7 @@
             "project trust",
             "permission profiles"
           ],
-          "notes": "Phase 5.3A keeps the native/default Codex fail-safe at read-only/never, while FLORAL explicitly starts reviewed app-server turns with workspaceWrite + unlessTrusted (logical workspace-write + untrusted) and reviewer=user. File-change approval may be granted once through the owner-scoped QQ broker; opaque command escalation remains Mac-local only. Granular permission-profile expansion remains denied."
+          "notes": "Phase 5.3A keeps the native/default Codex fail-safe at read-only/never, while FLORAL explicitly starts reviewed app-server turns with workspaceWrite + untrusted (pinned 0.146.1 app-server wire values) and reviewer=user. File-change approval may be granted once through the owner-scoped QQ broker; opaque command escalation remains Mac-local only. Granular permission-profile expansion remains denied."
         },
         {
           "id": "mcp-client",
@@ -991,7 +991,7 @@
       "classification": "floral-owned",
       "file": "config/floral.toml",
       "needle": "codex_turn_approval_policy = \"untrusted\"",
-      "risk": "Native Codex config remains never/read-only; FLORAL maps logical untrusted to Codex app-server 0.146.1 approvalPolicy=unlessTrusted and uses cwd-only network-disabled workspaceWrite with user review."
+      "risk": "Native Codex config remains never/read-only; FLORAL sends pinned Codex app-server 0.146.1 approvalPolicy=untrusted with the valid app-server v2 workspaceWrite sandbox encoding, cwd-only/network-disabled and reviewer=user; the stale README approval value unlessTrusted is not used as the wire contract."
     },
     {
       "id": "authorization.scoped-file-change",

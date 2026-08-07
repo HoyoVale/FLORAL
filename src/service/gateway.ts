@@ -425,6 +425,7 @@ export class GatewayService {
         "agent_reply",
       );
     } catch (error) {
+      process.stderr.write(`${formatSafeAgentFailure(error)}\n`);
       await this.store.appendAudit({
         userId: resolved.userId,
         conversationId: resolved.conversationId,
@@ -543,4 +544,19 @@ function approvalCommandReply(
   if (outcome === "approved") return "一次性授权已批准。";
   if (outcome === "denied") return "一次性授权已拒绝。";
   return "未找到可由当前会话处理的有效审批，可能已处理、过期或不属于当前会话。";
+}
+
+function formatSafeAgentFailure(error: unknown): string {
+  const record = typeof error === "object" && error !== null
+    ? error as Record<string, unknown>
+    : undefined;
+  const type = error instanceof Error ? error.name : "unknown";
+  const kind = typeof record?.kind === "string" ? record.kind : "unknown";
+  const method = typeof record?.method === "string" ? record.method : "unknown";
+  const code = typeof record?.code === "number" ? String(record.code) : "none";
+  return `agent.run_failed.type=${safeLogToken(type)} kind=${safeLogToken(kind)} method=${safeLogToken(method)} code=${safeLogToken(code)}`;
+}
+
+function safeLogToken(value: string): string {
+  return value.replace(/[^A-Za-z0-9_.\/-]/g, "_").slice(0, 96) || "unknown";
 }

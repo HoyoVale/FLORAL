@@ -525,15 +525,18 @@ export class CodexAppServerRuntime implements AgentRuntime {
 
 function toAppServerApprovalPolicy(
   policy: "never" | "on-request" | "untrusted",
-): "never" | "onRequest" | "unlessTrusted" {
-  if (policy === "untrusted") return "unlessTrusted";
-  if (policy === "on-request") return "onRequest";
-  return "never";
+): "never" | "on-request" | "untrusted" {
+  // Codex 0.146.1 app-server accepts the config-compatible approval values
+  // directly. The README example used the internal variant-style
+  // "unlessTrusted", but the generated TurnStartParams schema accepts
+  // "untrusted" instead.
+  return policy;
 }
 
 function toAppServerThreadSandbox(
   mode: "read-only" | "workspace-write",
 ): "readOnly" | "workspaceWrite" {
+  // app-server v2 exposes SandboxMode as a camelCase string enum.
   return mode === "workspace-write" ? "workspaceWrite" : "readOnly";
 }
 
