@@ -4,9 +4,19 @@ import type {
   ChatTransport,
   InteractiveApprovalPrompt,
   InteractiveApprovalTransport,
+  MediaTransport,
 } from "../../core/contracts.js";
-import type { IncomingMessage, OutgoingMessage } from "../../core/types.js";
+import type {
+  IncomingMessage,
+  OutgoingMediaMessage,
+  OutgoingMessage,
+} from "../../core/types.js";
 import { buildFeishuApprovalCard } from "./feishu-card.js";
+import { loadFeishuLocalMedia } from "./feishu-media.js";
+import {
+  hasFeishuRenderableMarkdown,
+  serializeFeishuMarkdownPostIfSafe,
+} from "./feishu-rich-text.js";
 import { assertInstalledFeishuSdkVersion } from "./feishu-sdk-contract.js";
 import type {
   FeishuWorkerConfig,
@@ -37,8 +47,25 @@ interface FeishuOutboundClient {
           params: { receive_id_type: "chat_id" };
           data: {
             receive_id: string;
-            msg_type: "text" | "interactive";
+            msg_type: "text" | "post" | "image" | "file" | "interactive";
             content: string;
+          };
+        }): Promise<unknown>;
+      };
+      image: {
+        create(input: {
+          data: {
+            image_type: "message";
+            image: Buffer;
+          };
+        }): Promise<unknown>;
+      };
+      file: {
+        create(input: {
+          data: {
+            file_type: "stream";
+            file_name: string;
+            file: Buffer;
           };
         }): Promise<unknown>;
       };
@@ -61,7 +88,9 @@ interface FeishuApprovalInteractionRoute {
 
 const MAX_FEISHU_CONVERSATION_USERS = 512;
 
-export class FeishuTransport implements ChatTransport, InteractiveApprovalTransport {
+export class FeishuTransport
+  implements ChatTransport, InteractiveApprovalTransport, MediaTransport
+{
   readonly name = "feishu";
   readonly #client: FeishuOutboundClient;
   readonly #outboundTails = new Map<string, Promise<void>>();
@@ -180,6 +209,29 @@ export class FeishuTransport implements ChatTransport, InteractiveApprovalTransp
     }
   }
 
+  async sendMedia(message: OutgoingMediaMessage): Promise<void> {
+    if (!this.#started || this.#stopped) {
+      throw new Error("Feishu transport is not ready");
+    }
+    const conversationId = message.conversationId.trim();
+    if (!conversationId) {
+      throw new Error("Feishu media conversation id must not be empty");
+    }
+
+    const previous = this.#outboundTails.get(conversationId) ?? Promise.resolve();
+    const current = previous
+      .catch(() => undefined)
+      .then(() => this.#sendMediaNow({ ...message, conversationId }));
+    this.#outboundTails.set(conversationId, current);
+    try {
+      await current;
+    } finally {
+      if (this.#outboundTails.get(conversationId) === current) {
+        this.#outboundTails.delete(conversationId);
+      }
+    }
+  }
+
   async sendInteractiveApprovalPrompt(
     prompt: InteractiveApprovalPrompt,
   ): Promise<void> {
@@ -207,19 +259,12 @@ export class FeishuTransport implements ChatTransport, InteractiveApprovalTransp
     const current = previous
       .catch(() => undefined)
       .then(async () => {
-        const response = await withTimeout(
-          this.#client.im.v1.message.create({
-            params: { receive_id_type: "chat_id" },
-            data: {
-              receive_id: conversationId,
-              msg_type: "interactive",
-              content: JSON.stringify(card),
-            },
-          }),
-          this.options.outboundTimeoutMs,
+        await this.#sendMessagePayload(
+          conversationId,
+          "interactive",
+          JSON.stringify(card),
           "Feishu interactive approval",
         );
-        assertFeishuApiSuccess(response);
       });
     this.#outboundTails.set(conversationId, current);
     try {
@@ -253,26 +298,102 @@ export class FeishuTransport implements ChatTransport, InteractiveApprovalTransp
   }
 
   async #sendNow(message: OutgoingMessage): Promise<void> {
+    const normalized = normalizeFeishuOutgoingText(message.text);
+    if (hasFeishuRenderableMarkdown(normalized)) {
+      const post = serializeFeishuMarkdownPostIfSafe(normalized);
+      if (post) {
+        await this.#sendMessagePayload(
+          message.conversationId,
+          "post",
+          post,
+          "Feishu rich-text message",
+        );
+        return;
+      }
+      process.stderr.write("feishu.transport.rich_text_fallback=oversize\n");
+    }
+
     const chunks = splitFeishuText(
-      message.text,
+      normalized,
       this.options.textChunkBytes,
       this.options.maxReplyChunks,
     );
     for (const chunk of chunks) {
-      const response = await withTimeout(
-        this.#client.im.v1.message.create({
-          params: { receive_id_type: "chat_id" },
+      await this.#sendMessagePayload(
+        message.conversationId,
+        "text",
+        JSON.stringify({ text: chunk }),
+        "Feishu outbound message",
+      );
+    }
+  }
+
+  async #sendMediaNow(message: OutgoingMediaMessage): Promise<void> {
+    const media = await loadFeishuLocalMedia(message);
+
+    if (media.kind === "image") {
+      const upload = await withTimeout(
+        this.#client.im.v1.image.create({
+          data: { image_type: "message", image: media.bytes },
+        }),
+        this.options.outboundTimeoutMs,
+        "Feishu image upload",
+      );
+      const imageKey = requireFeishuResponseKey(upload, "image_key");
+      await this.#sendMessagePayload(
+        message.conversationId,
+        "image",
+        JSON.stringify({ image_key: imageKey }),
+        "Feishu image message",
+      );
+    } else {
+      const upload = await withTimeout(
+        this.#client.im.v1.file.create({
           data: {
-            receive_id: message.conversationId,
-            msg_type: "text",
-            content: JSON.stringify({ text: chunk }),
+            file_type: "stream",
+            file_name: media.fileName,
+            file: media.bytes,
           },
         }),
         this.options.outboundTimeoutMs,
-        "Feishu outbound message",
+        "Feishu file upload",
       );
-      assertFeishuApiSuccess(response);
+      const fileKey = requireFeishuResponseKey(upload, "file_key");
+      await this.#sendMessagePayload(
+        message.conversationId,
+        "file",
+        JSON.stringify({ file_key: fileKey }),
+        "Feishu file message",
+      );
     }
+
+    if (message.caption?.trim()) {
+      await this.#sendNow({
+        conversationId: message.conversationId,
+        text: message.caption,
+      });
+    }
+
+    process.stderr.write(
+      `feishu.transport.media=sent kind=${media.kind} bytes=${String(media.byteLength)}\n`,
+    );
+  }
+
+  async #sendMessagePayload(
+    conversationId: string,
+    msgType: "text" | "post" | "image" | "file" | "interactive",
+    content: string,
+    label: string,
+  ): Promise<void> {
+    const response = await withTimeout(
+      this.#client.im.v1.message.create({
+        params: { receive_id_type: "chat_id" },
+        data: { receive_id: conversationId, msg_type: msgType, content },
+      }),
+      this.options.outboundTimeoutMs,
+      label,
+    );
+    assertFeishuApiSuccess(response);
   }
 
   #dispatchInbound(message: Extract<FeishuWorkerMessage, { type: "message" }>): void {
@@ -514,6 +635,30 @@ function assertFeishuApiSuccess(value: unknown): void {
   if (typeof code === "number" && code !== 0) {
     throw new Error(`Feishu API returned non-zero code ${String(code)}`);
   }
+}
+
+function requireFeishuResponseKey(
+  value: unknown,
+  key: "image_key" | "file_key",
+): string {
+  assertFeishuApiSuccess(value);
+  if (typeof value !== "object" || value === null) {
+    throw new Error(`Feishu upload response missing ${key}`);
+  }
+  const data = (value as { data?: unknown }).data;
+  if (typeof data !== "object" || data === null) {
+    throw new Error(`Feishu upload response missing ${key}`);
+  }
+  const candidate = (data as Record<string, unknown>)[key];
+  if (typeof candidate !== "string" || !candidate.trim()) {
+    throw new Error(`Feishu upload response missing ${key}`);
+  }
+  return candidate.trim();
+}
+
+function normalizeFeishuOutgoingText(value: string): string {
+  const normalized = value.replace(/\r\n?/gu, "\n").trim();
+  return normalized || "（空回复）";
 }
 
 function errorName(error: unknown): string {

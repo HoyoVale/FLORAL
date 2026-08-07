@@ -67,6 +67,7 @@
     "feishu:sdk:check": "tsx scripts/feishu-sdk-check.ts",
     "feishu:private:probe": "tsx scripts/feishu-private-probe.ts",
     "feishu:card:probe": "tsx scripts/feishu-card-probe.ts",
+    "feishu:media:probe": "tsx scripts/feishu-media-probe.ts",
     "qq:typing:probe": "tsx scripts/qq-typing-probe.ts",
     "qq:keyboard:probe": "tsx scripts/qq-keyboard-probe.ts",
     "qq:private:probe": "tsx scripts/qq-private-probe.ts",

@@ -5,6 +5,7 @@ import type {
   AuditEventInput,
   ExternalIdentity,
   IncomingMessage,
+  OutgoingMediaMessage,
   OutgoingMessage,
   ResolvedGatewayIdentity,
   TransportKind,
@@ -50,6 +51,16 @@ export function supportsInteractiveApproval(
 ): transport is ChatTransport & InteractiveApprovalTransport {
   return typeof (transport as Partial<InteractiveApprovalTransport>)
     .sendInteractiveApprovalPrompt === "function";
+}
+
+export interface MediaTransport {
+  sendMedia(message: OutgoingMediaMessage): Promise<void>;
+}
+
+export function supportsMediaTransport(
+  transport: ChatTransport,
+): transport is ChatTransport & MediaTransport {
+  return typeof (transport as Partial<MediaTransport>).sendMedia === "function";
 }
 
 export interface AgentRuntime {

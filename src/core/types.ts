@@ -59,6 +59,16 @@ export interface OutgoingMessage {
   text: string;
 }
 
+export type OutgoingMediaKind = "image" | "file";
+
+export interface OutgoingMediaMessage {
+  conversationId: string;
+  kind: OutgoingMediaKind;
+  localPath: string;
+  fileName?: string | undefined;
+  caption?: string | undefined;
+}
+
 export type AgentEvent =
   | { type: "run.started"; threadId: string }
   | { type: "assistant.delta"; text: string }

@@ -32,6 +32,12 @@ const client = new sdk.Client({
 if (typeof client.im?.v1?.message?.create !== "function") {
   throw new Error("Feishu SDK method missing: Client.im.v1.message.create");
 }
+if (typeof client.im?.v1?.image?.create !== "function") {
+  throw new Error("Feishu SDK method missing: Client.im.v1.image.create");
+}
+if (typeof client.im?.v1?.file?.create !== "function") {
+  throw new Error("Feishu SDK method missing: Client.im.v1.file.create");
+}
 
 const version = await resolveInstalledVersion();
 if (version !== EXPECTED_VERSION) {
@@ -46,6 +52,8 @@ console.log("feishu.sdk.export.WSClient=ok");
 console.log("feishu.sdk.export.EventDispatcher=ok");
 console.log("feishu.sdk.method.WSClient.start=ok");
 console.log("feishu.sdk.method.im.v1.message.create=ok");
+console.log("feishu.sdk.method.im.v1.image.create=ok");
+console.log("feishu.sdk.method.im.v1.file.create=ok");
 console.log("feishu.sdk.contract=ok");
 
 async function resolveInstalledVersion(): Promise<string> {

@@ -1,3 +1,6 @@
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { FeishuTransport, splitFeishuText } from "../src/transport/feishu/feishu-transport.js";
 import type {
@@ -58,6 +61,8 @@ class FakeWorker implements FeishuWorkerLike {
 function options(input: {
   worker: FakeWorker;
   create?: (request: unknown) => Promise<unknown>;
+  imageCreate?: (request: unknown) => Promise<unknown>;
+  fileCreate?: (request: unknown) => Promise<unknown>;
   onFatal?: (error: Error) => void;
 }) {
   return {
@@ -75,6 +80,18 @@ function options(input: {
         v1: {
           message: {
             create: input.create ?? (async () => ({ code: 0 })),
+          },
+          image: {
+            create: input.imageCreate ?? (async () => ({
+              code: 0,
+              data: { image_key: "img_test" },
+            })),
+          },
+          file: {
+            create: input.fileCreate ?? (async () => ({
+              code: 0,
+              data: { file_key: "file_test" },
+            })),
           },
         },
       },
@@ -179,6 +196,109 @@ describe("FeishuTransport", () => {
       },
     });
     await transport.stop();
+  });
+
+  it("renders Markdown through post/md while ordinary text stays text", async () => {
+    const worker = new FakeWorker();
+    const requests: unknown[] = [];
+    const transport = new FeishuTransport(options({
+      worker,
+      create: async (request) => {
+        requests.push(request);
+        return { code: 0 };
+      },
+    }));
+    await startTransport(transport, worker);
+
+    await transport.send({
+      conversationId: "oc_chat",
+      text: "**Status**\n\n| Item | Value |\n|---|---|\n| ok | yes |",
+    });
+    await transport.send({
+      conversationId: "oc_chat",
+      text: "plain hello",
+    });
+
+    const rich = requests[0] as { data?: { msg_type?: unknown; content?: string } };
+    const plain = requests[1] as { data?: { msg_type?: unknown } };
+    expect(rich.data?.msg_type).toBe("post");
+    const richContent = JSON.parse(rich.data?.content ?? "{}") as {
+      zh_cn?: { content?: Array<Array<{ tag?: unknown; text?: unknown }>> };
+    };
+    expect(richContent.zh_cn?.content?.[0]?.[0]?.tag).toBe("md");
+    expect(richContent.zh_cn?.content?.[0]?.[0]?.text).toContain("| Item | Value |");
+    expect(plain.data?.msg_type).toBe("text");
+
+    await transport.stop();
+  });
+
+  it("uploads and sends native image/file messages", async () => {
+    const worker = new FakeWorker();
+    const messageRequests: unknown[] = [];
+    const imageUploads: unknown[] = [];
+    const fileUploads: unknown[] = [];
+    const dir = await mkdtemp(join(tmpdir(), "floral-feishu-transport-media-"));
+    const imagePath = join(dir, "screen.png");
+    const filePath = join(dir, "report.txt");
+    await writeFile(imagePath, Buffer.from([0x89, 0x50, 0x4e, 0x47]));
+    await writeFile(filePath, "report");
+
+    try {
+      const transport = new FeishuTransport(options({
+        worker,
+        create: async (request) => {
+          messageRequests.push(request);
+          return { code: 0 };
+        },
+        imageCreate: async (request) => {
+          imageUploads.push(request);
+          return { code: 0, data: { image_key: "img_native" } };
+        },
+        fileCreate: async (request) => {
+          fileUploads.push(request);
+          return { code: 0, data: { file_key: "file_native" } };
+        },
+      }));
+      await startTransport(transport, worker);
+
+      await transport.sendMedia({
+        conversationId: "oc_chat",
+        kind: "image",
+        localPath: imagePath,
+      });
+      await transport.sendMedia({
+        conversationId: "oc_chat",
+        kind: "file",
+        localPath: filePath,
+        caption: "**report ready**",
+      });
+
+      expect(imageUploads).toHaveLength(1);
+      expect(fileUploads).toHaveLength(1);
+
+      const imageMessage = messageRequests[0] as {
+        data?: { msg_type?: unknown; content?: string };
+      };
+      const fileMessage = messageRequests[1] as {
+        data?: { msg_type?: unknown; content?: string };
+      };
+      const captionMessage = messageRequests[2] as {
+        data?: { msg_type?: unknown };
+      };
+      expect(imageMessage.data?.msg_type).toBe("image");
+      expect(JSON.parse(imageMessage.data?.content ?? "{}")).toEqual({
+        image_key: "img_native",
+      });
+      expect(fileMessage.data?.msg_type).toBe("file");
+      expect(JSON.parse(fileMessage.data?.content ?? "{}")).toEqual({
+        file_key: "file_native",
+      });
+      expect(captionMessage.data?.msg_type).toBe("post");
+
+      await transport.stop();
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
   });
 
   it("sends a native approval card and routes a matching callback through the command path", async () => {

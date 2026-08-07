@@ -261,3 +261,58 @@ Fail-closed behavior:
 
 `files.write` can use the Feishu card. `shell.execute` remains Mac-local
 confirmation only. `system.admin` remains denied.
+
+
+## Phase 5F.4A — Markdown / rich-text delivery
+
+Assistant output that contains Markdown is now sent using Feishu's native
+`post -> zh_cn -> content -> tag=md` shape. Plain conversational text stays a
+normal `text` message.
+
+Model text is not allowed to activate Feishu-specific egress directives:
+raw `<at>` mentions and Markdown image syntax are escaped. Links, headings,
+lists, tables, code blocks and normal CommonMark/GFM remain available.
+Oversized rich-text payloads fall back to the existing plain-text chunk path.
+
+## Phase 5F.4B — image and file transport foundation
+
+`MediaTransport` is now an optional transport-neutral delivery capability:
+
+```text
+conversationId
+kind=image|file
+localPath=/absolute/path
+optional fileName
+optional caption
+```
+
+This is intentionally **not yet exposed to arbitrary Agent-selected file paths**.
+It is the delivery foundation for the later AgentArtifact / Visual MCP egress
+policy.
+
+Feishu native behavior:
+
+- image -> validate local regular file -> upload -> image_key -> `msg_type=image`;
+- file -> validate local regular file -> upload with `file_type=stream` ->
+  file_key -> `msg_type=file`;
+- captions use the same Markdown-aware text path;
+- localPath must be absolute;
+- symlinks are rejected;
+- image <= 10 MB; file <= 30 MB;
+- supported image extensions are allowlisted;
+- no URL downloader exists in this phase.
+
+Required application scope:
+
+```text
+im:resource
+获取与上传图片或文件资源
+```
+
+Direct target-Mac validation:
+
+```bash
+corepack pnpm service:stop
+corepack pnpm feishu:media:probe -- --image=/absolute/path/test.png
+corepack pnpm feishu:media:probe -- --file=/absolute/path/report.md
+```
