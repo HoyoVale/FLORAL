@@ -13,7 +13,12 @@ import {
   writeQqRuntimeAdoptionReport,
   type QqRuntimeAdoptionReport,
 } from "../../config/adoption/qq-runtime-options-adoption.js";
-import type { ChatTransport } from "../../core/contracts.js";
+import {
+  supportsConversationActivity,
+  type ChatTransport,
+  type ConversationActivityState,
+  type ConversationActivityTransport,
+} from "../../core/contracts.js";
 import type { IncomingMessage, OutgoingMessage } from "../../core/types.js";
 import { assertInstalledQqSdkVersion } from "./qq-sdk-contract.js";
 import { QqTransport, type QqTransportOptions } from "./qq-transport.js";
@@ -25,7 +30,9 @@ export interface QqRuntimeAdoptionDependencies {
   recordReport?: ((report: QqRuntimeAdoptionReport) => Promise<string>) | undefined;
 }
 
-export class QqRuntimeAdoptionTransport implements ChatTransport {
+export class QqRuntimeAdoptionTransport
+  implements ChatTransport, ConversationActivityTransport
+{
   readonly name = "qq-open-platform";
   #active: ChatTransport | undefined;
   #starting: Promise<void> | undefined;
@@ -54,6 +61,15 @@ export class QqRuntimeAdoptionTransport implements ChatTransport {
   async send(message: OutgoingMessage): Promise<void> {
     if (!this.#active) throw new Error("QQ runtime adoption transport is not ready");
     await this.#active.send(message);
+  }
+
+  async setConversationActivity(
+    conversationId: string,
+    state: ConversationActivityState,
+  ): Promise<void> {
+    const active = this.#active;
+    if (!active || !supportsConversationActivity(active)) return;
+    await active.setConversationActivity(conversationId, state);
   }
 
   async stop(): Promise<void> {

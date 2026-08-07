@@ -249,7 +249,8 @@
 ### Phase 5.4 — QQ Conversation UX
 
 - 5.4A: presentation fallback, semantic mobile chunking, user-facing status/help.
-- 5.4B: native QQ typing/Markdown/inline approval interactions after passive-reply sequence ownership is verified.
+- 5.4A-2: SDK-native typing indicator plus one per-conversation outbound sequencer; no parallel REST sender or FLORAL-owned `msg_seq`.
+- 5.4B: native Markdown/inline approval interactions, reusing the existing approval authority rather than changing authorization semantics.
 - Authorization semantics remain owned by the existing policy and approval layers.
 
 ## Phase 6 — macOS GUI and visual MCP

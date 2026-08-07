@@ -9,7 +9,11 @@ import {
   type QQBotInboundMessage,
   type ReplyTarget,
 } from "@tencent-connect/qqbot-nodejs";
-import type { ChatTransport } from "../../core/contracts.js";
+import type {
+  ChatTransport,
+  ConversationActivityState,
+  ConversationActivityTransport,
+} from "../../core/contracts.js";
 import type { IncomingMessage, OutgoingMessage } from "../../core/types.js";
 import { ReplyTargetCache } from "./reply-target-cache.js";
 import { presentQqText } from "./qq-presentation.js";
@@ -28,6 +32,7 @@ interface QqBotClient {
   start(signal?: AbortSignal): Promise<void>;
   stop(): void | Promise<void>;
   sendText(target: ReplyTarget, text: string): Promise<unknown>;
+  sendTyping(target: ReplyTarget): Promise<unknown>;
 }
 
 export interface QqTransportDiagnostics {
@@ -37,6 +42,10 @@ export interface QqTransportDiagnostics {
   inboundMessages: number;
   outboundChunks: number;
   deliveryFailures: number;
+  typingSignals: number;
+  typingFailures: number;
+  activeTypingConversations: number;
+  sequencedConversations: number;
   cachedReplyTargets: number;
   lastErrorType?: string | undefined;
 }
@@ -84,9 +93,18 @@ export class QqDeliveryError extends Error {
   }
 }
 
-export class QqTransport implements ChatTransport {
+const QQ_TYPING_REFRESH_MS = 50_000;
+const QQ_TYPING_TIMEOUT_CAP_MS = 2_000;
+
+interface TypingSession {
+  timer?: ReturnType<typeof setTimeout> | undefined;
+}
+
+export class QqTransport implements ChatTransport, ConversationActivityTransport {
   readonly name = "qq-open-platform";
   readonly #replyTargets: ReplyTargetCache<ReplyTarget>;
+  readonly #outboundTails = new Map<string, Promise<void>>();
+  readonly #typingSessions = new Map<string, TypingSession>();
   #bot: QqBotClient | undefined;
   #abortController: AbortController | undefined;
   #runPromise: Promise<void> | undefined;
@@ -97,6 +115,10 @@ export class QqTransport implements ChatTransport {
     inboundMessages: 0,
     outboundChunks: 0,
     deliveryFailures: 0,
+    typingSignals: 0,
+    typingFailures: 0,
+    activeTypingConversations: 0,
+    sequencedConversations: 0,
     cachedReplyTargets: 0,
   };
 
@@ -112,6 +134,8 @@ export class QqTransport implements ChatTransport {
     return {
       ...this.#diagnostics,
       cachedReplyTargets: this.#replyTargets.size(),
+      activeTypingConversations: this.#typingSessions.size,
+      sequencedConversations: this.#outboundTails.size,
     };
   }
 
@@ -241,43 +265,62 @@ export class QqTransport implements ChatTransport {
     const cached = this.#replyTargets.get(message.conversationId);
     if (!cached) throw new QqReplyTargetUnavailableError();
 
+    this.#stopTypingSession(message.conversationId);
     const presentedText = presentQqText(message.text);
     const chunks = splitQqText(presentedText, {
       maxCharacters: this.options.textChunkCharacters,
       maxChunks: this.options.maxReplyChunks,
     });
 
-    for (const [zeroBasedIndex, chunk] of chunks.entries()) {
-      const chunkIndex = zeroBasedIndex + 1;
-      try {
-        await withTimeout(
-          bot.sendText(
-            {
-              ...cached.target,
-              msgId: cached.messageId,
-            },
-            chunk,
-          ),
-          this.options.outboundTimeoutMs,
-          `QQ outbound chunk ${chunkIndex}`,
-        );
-        this.#diagnostics = {
-          ...this.#diagnostics,
-          outboundChunks: this.#diagnostics.outboundChunks + 1,
-        };
-      } catch (error) {
-        this.#diagnostics = {
-          ...this.#diagnostics,
-          deliveryFailures: this.#diagnostics.deliveryFailures + 1,
-          lastErrorType: safeErrorType(error),
-        };
-        throw new QqDeliveryError(chunkIndex, chunks.length, error);
+    await this.#sequenceOutbound(message.conversationId, async () => {
+      for (const [zeroBasedIndex, chunk] of chunks.entries()) {
+        const chunkIndex = zeroBasedIndex + 1;
+        try {
+          await withTimeout(
+            bot.sendText(
+              {
+                ...cached.target,
+                msgId: cached.messageId,
+              },
+              chunk,
+            ),
+            this.options.outboundTimeoutMs,
+            `QQ outbound chunk ${chunkIndex}`,
+          );
+          this.#diagnostics = {
+            ...this.#diagnostics,
+            outboundChunks: this.#diagnostics.outboundChunks + 1,
+          };
+        } catch (error) {
+          this.#diagnostics = {
+            ...this.#diagnostics,
+            deliveryFailures: this.#diagnostics.deliveryFailures + 1,
+            lastErrorType: safeErrorType(error),
+          };
+          throw new QqDeliveryError(chunkIndex, chunks.length, error);
+        }
       }
+    });
+  }
+
+  async setConversationActivity(
+    conversationId: string,
+    state: ConversationActivityState,
+  ): Promise<void> {
+    if (state === "idle") {
+      this.#stopTypingSession(conversationId);
+      return;
     }
+
+    if (this.#typingSessions.has(conversationId)) return;
+    this.#typingSessions.set(conversationId, {});
+    await this.#sendTypingSignal(conversationId);
+    this.#scheduleTypingRefresh(conversationId);
   }
 
   async stop(): Promise<void> {
     if (this.#diagnostics.state === "stopped") return;
+    this.#stopAllTypingSessions();
     this.#abortController?.abort();
     const bot = this.#bot;
     this.#bot = undefined;
@@ -290,11 +333,94 @@ export class QqTransport implements ChatTransport {
 
     this.#runPromise = undefined;
     this.#abortController = undefined;
+    this.#outboundTails.clear();
     this.#diagnostics = {
       ...this.#diagnostics,
       state: "stopped",
       cachedReplyTargets: 0,
+      activeTypingConversations: 0,
+      sequencedConversations: 0,
     };
+  }
+
+  async #sendTypingSignal(conversationId: string): Promise<void> {
+    const bot = this.#bot;
+    if (!bot || this.#diagnostics.state !== "ready") return;
+
+    const cached = this.#replyTargets.get(conversationId);
+    if (!cached) {
+      this.#stopTypingSession(conversationId);
+      return;
+    }
+
+    try {
+      await this.#sequenceOutbound(conversationId, () => withTimeout(
+        bot.sendTyping(cached.target),
+        Math.min(this.options.outboundTimeoutMs, QQ_TYPING_TIMEOUT_CAP_MS),
+        "QQ typing indicator",
+      ));
+      this.#diagnostics = {
+        ...this.#diagnostics,
+        typingSignals: this.#diagnostics.typingSignals + 1,
+      };
+    } catch (error) {
+      this.#diagnostics = {
+        ...this.#diagnostics,
+        typingFailures: this.#diagnostics.typingFailures + 1,
+      };
+      process.stderr.write(
+        `qq.transport.typing_error=${safeErrorType(error)}\n`,
+      );
+    }
+  }
+
+  #scheduleTypingRefresh(conversationId: string): void {
+    const session = this.#typingSessions.get(conversationId);
+    if (!session || session.timer) return;
+
+    const timer = setTimeout(() => {
+      const current = this.#typingSessions.get(conversationId);
+      if (!current) return;
+      current.timer = undefined;
+      void this.#sendTypingSignal(conversationId).finally(() => {
+        if (this.#typingSessions.has(conversationId)) {
+          this.#scheduleTypingRefresh(conversationId);
+        }
+      });
+    }, QQ_TYPING_REFRESH_MS);
+    timer.unref?.();
+    session.timer = timer;
+  }
+
+  #stopTypingSession(conversationId: string): void {
+    const session = this.#typingSessions.get(conversationId);
+    if (!session) return;
+    if (session.timer) clearTimeout(session.timer);
+    this.#typingSessions.delete(conversationId);
+  }
+
+  #stopAllTypingSessions(): void {
+    for (const conversationId of this.#typingSessions.keys()) {
+      this.#stopTypingSession(conversationId);
+    }
+  }
+
+  async #sequenceOutbound<T>(
+    conversationId: string,
+    operation: () => Promise<T>,
+  ): Promise<T> {
+    const previous = this.#outboundTails.get(conversationId) ?? Promise.resolve();
+    const current = previous.catch(() => undefined).then(operation);
+    const tail = current.then(() => undefined, () => undefined);
+    this.#outboundTails.set(conversationId, tail);
+
+    try {
+      return await current;
+    } finally {
+      if (this.#outboundTails.get(conversationId) === tail) {
+        this.#outboundTails.delete(conversationId);
+      }
+    }
   }
 
   async #handleInbound(

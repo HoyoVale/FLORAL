@@ -17,6 +17,22 @@ export interface ChatTransport {
   stop(): Promise<void>;
 }
 
+export type ConversationActivityState = "typing" | "idle";
+
+export interface ConversationActivityTransport {
+  setConversationActivity(
+    conversationId: string,
+    state: ConversationActivityState,
+  ): Promise<void>;
+}
+
+export function supportsConversationActivity(
+  transport: ChatTransport,
+): transport is ChatTransport & ConversationActivityTransport {
+  return typeof (transport as Partial<ConversationActivityTransport>)
+    .setConversationActivity === "function";
+}
+
 export interface AgentRuntime {
   readonly name: string;
   start(): Promise<void>;

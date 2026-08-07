@@ -9,10 +9,13 @@ import {
 class FakeBot {
   readonly listeners = new Map<string, Array<(...args: unknown[]) => unknown>>();
   readonly sent: Array<{ target: Record<string, unknown>; text: string }> = [];
+  readonly typing: Array<Record<string, unknown>> = [];
   readonly started = deferred<void>();
   readonly stopped = deferred<void>();
   signal: AbortSignal | undefined;
   sendError: Error | undefined;
+  typingError: Error | undefined;
+  nextSendGate: Promise<void> | undefined;
 
   on(event: string, listener: (...args: never[]) => unknown): void {
     const entries = this.listeners.get(event) ?? [];
@@ -36,7 +39,15 @@ class FakeBot {
   ): Promise<Record<string, unknown>> {
     if (this.sendError) throw this.sendError;
     this.sent.push({ target, text });
+    const gate = this.nextSendGate;
+    this.nextSendGate = undefined;
+    if (gate) await gate;
     return { id: `reply-${this.sent.length}` };
+  }
+
+  async sendTyping(target: Record<string, unknown>): Promise<void> {
+    if (this.typingError) throw this.typingError;
+    this.typing.push(target);
   }
 
   emit(event: string, ...args: unknown[]): void {
@@ -157,6 +168,75 @@ describe("QqTransport", () => {
     await transport.stop();
   });
 
+  it("uses the SDK-native typing indicator without allocating a separate reply sequence", async () => {
+    const fake = new FakeBot();
+    const transport = createTransport(fake);
+    const starting = transport.start(async () => undefined);
+    await fake.started.promise;
+    fake.emit("ready");
+    await starting;
+
+    await fake.emitAsync("message", {}, inbound({
+      messageId: "typing-source",
+      senderId: "user",
+      targetId: "conversation",
+      content: "hello",
+    }));
+
+    await transport.setConversationActivity("conversation", "typing");
+
+    expect(fake.typing).toEqual([{
+      scope: "c2c",
+      targetId: "conversation",
+    }]);
+    expect(transport.snapshot()).toMatchObject({
+      typingSignals: 1,
+      typingFailures: 0,
+      activeTypingConversations: 1,
+    });
+
+    await transport.send({
+      conversationId: "conversation",
+      text: "finished",
+    });
+
+    expect(transport.snapshot().activeTypingConversations).toBe(0);
+    expect(fake.sent[0]?.target).toEqual({
+      scope: "c2c",
+      targetId: "conversation",
+      msgId: "typing-source",
+    });
+    await transport.stop();
+  });
+
+  it("treats typing delivery as best effort and preserves final text delivery", async () => {
+    const fake = new FakeBot();
+    fake.typingError = new Error("typing unavailable");
+    const transport = createTransport(fake);
+    const starting = transport.start(async () => undefined);
+    await fake.started.promise;
+    fake.emit("ready");
+    await starting;
+    await fake.emitAsync("message", {}, inbound({
+      messageId: "typing-failure-source",
+      senderId: "user",
+      targetId: "conversation",
+      content: "hello",
+    }));
+
+    await expect(
+      transport.setConversationActivity("conversation", "typing"),
+    ).resolves.toBeUndefined();
+    expect(transport.snapshot().typingFailures).toBe(1);
+
+    await transport.send({
+      conversationId: "conversation",
+      text: "still delivered",
+    });
+    expect(fake.sent.at(-1)?.text).toBe("still delivered");
+    await transport.stop();
+  });
+
   it("presents Markdown as readable plain text before delivery", async () => {
     const fake = new FakeBot();
     const transport = createTransport(fake);
@@ -209,6 +289,37 @@ describe("QqTransport", () => {
     expect(fake.sent.every((entry) =>
       Array.from(entry.text).length <= 10
     )).toBe(true);
+    await transport.stop();
+  });
+
+  it("serializes concurrent native text sends per conversation", async () => {
+    const fake = new FakeBot();
+    const gate = deferred<void>();
+    fake.nextSendGate = gate.promise;
+    const transport = createTransport(fake);
+    const starting = transport.start(async () => undefined);
+    await fake.started.promise;
+    fake.emit("ready");
+    await starting;
+    await fake.emitAsync("message", {}, inbound({
+      messageId: "sequence-source",
+      senderId: "user",
+      targetId: "conversation",
+      content: "hello",
+    }));
+
+    const first = transport.send({ conversationId: "conversation", text: "first" });
+    await new Promise((resolve) => setImmediate(resolve));
+    const second = transport.send({ conversationId: "conversation", text: "second" });
+    await new Promise((resolve) => setImmediate(resolve));
+
+    expect(fake.sent.map((entry) => entry.text)).toEqual(["first"]);
+    expect(transport.snapshot().sequencedConversations).toBe(1);
+
+    gate.resolve(undefined);
+    await Promise.all([first, second]);
+    expect(fake.sent.map((entry) => entry.text)).toEqual(["first", "second"]);
+    expect(transport.snapshot().sequencedConversations).toBe(0);
     await transport.stop();
   });
 

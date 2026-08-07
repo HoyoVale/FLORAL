@@ -151,10 +151,11 @@ Phase 5.4A adds a QQ conversation-presentation baseline without changing the
 Phase 5.3 approval boundary. Common Markdown is rendered into readable plain
 text on the current SDK text path, long replies prefer semantic mobile-sized
 chunks, `/status` becomes user-facing while `/status --debug` preserves raw
-diagnostics, and `/help` exposes the compact command surface. Native QQ
-typing/Markdown/inline approval interactions remain a separate follow-up until
-passive-reply sequence ownership is explicit. See
-`docs/PHASE5_QQ_CONVERSATION_UX.md`.
+diagnostics, and `/help` exposes the compact command surface. Phase 5.4A-2
+adds SDK-native QQ typing plus a single per-conversation outbound sequencer for
+typing and text delivery; FLORAL does not create a parallel REST sender or own
+`msg_seq`. Native Markdown and inline approval keyboards remain the 5.4B
+follow-up. See `docs/PHASE5_QQ_CONVERSATION_UX.md`.
 
 ## Prepare the Mac mini
 

@@ -2,6 +2,8 @@ import { describe, expect, it } from "vitest";
 import type {
   AgentRuntime,
   ChatTransport,
+  ConversationActivityState,
+  ConversationActivityTransport,
 } from "../src/core/contracts.js";
 import type {
   AgentEvent,
@@ -34,6 +36,20 @@ class TestTransport implements ChatTransport {
   }
 
   async stop(): Promise<void> {}
+}
+
+class ActivityTransport extends TestTransport implements ConversationActivityTransport {
+  readonly activities: Array<{
+    conversationId: string;
+    state: ConversationActivityState;
+  }> = [];
+
+  async setConversationActivity(
+    conversationId: string,
+    state: ConversationActivityState,
+  ): Promise<void> {
+    this.activities.push({ conversationId, state });
+  }
 }
 
 class TestAgent implements AgentRuntime {
@@ -159,6 +175,30 @@ describe("GatewayService identity and commands", () => {
     const auditJson = JSON.stringify(store.auditEvents());
     expect(auditJson).not.toContain("hello");
     expect(auditJson).toContain("agent.run_completed");
+    await gateway.stop();
+  });
+
+  it("publishes typing activity for an agent run and clears it before the final reply", async () => {
+    const transport = new ActivityTransport();
+    const gateway = new GatewayService(
+      transport,
+      new TestAgent(),
+      new MemoryThreadStore(),
+      { cwd: ".", trustMockOwner: true },
+    );
+    await gateway.start();
+
+    await transport.receive(incoming({
+      id: "activity-1",
+      transport: "mock",
+      text: "hello",
+    }));
+
+    expect(transport.activities).toEqual([
+      { conversationId: "conversation-1", state: "typing" },
+      { conversationId: "conversation-1", state: "idle" },
+    ]);
+    expect(transport.sent.at(-1)?.text).toBe("reply:hello");
     await gateway.stop();
   });
 
@@ -325,6 +365,73 @@ describe("GatewayService identity and commands", () => {
     expect(agent.interrupts).toEqual(["thread-running"]);
     expect(transport.sent.some((entry) => entry.text.includes("停止请求"))).toBe(true);
     expect(transport.sent.some((entry) => entry.text === "当前任务已停止。")).toBe(true);
+    await gateway.stop();
+  });
+
+  it("pauses typing while an approval is pending and resumes after the decision", async () => {
+    const transport = new ActivityTransport();
+    const agent = new ApprovalAgent();
+    const registry: McpRuntimeRegistry = {
+      schemaVersion: 1,
+      authorityVersion: 1,
+      profile: "test",
+      registryFingerprint: "test-only",
+      servers: [],
+    };
+    const gateway = new GatewayService(
+      transport,
+      agent,
+      new MemoryThreadStore(),
+      {
+        cwd: ".",
+        trustMockOwner: true,
+        authorization: {
+          authority: new AuthorizationAuthority({
+            enabled: true,
+            sandboxMode: "workspace-write",
+            allowRemoteFileChangeApproval: false,
+            mcpRegistry: registry,
+          }),
+          approvalTtlMs: 5_000,
+          maxPendingApprovals: 4,
+          ownerOnlyRemoteApproval: true,
+        },
+      },
+    );
+    await gateway.start();
+
+    const runPromise = transport.receive(incoming({
+      id: "activity-approval-1",
+      transport: "mock",
+      text: "please edit",
+    }));
+    await agent.approvalRequested.promise;
+    await new Promise((resolve) => setImmediate(resolve));
+
+    expect(transport.activities).toEqual([
+      { conversationId: "conversation-1", state: "typing" },
+      { conversationId: "conversation-1", state: "idle" },
+    ]);
+
+    const prompt = transport.sent.find((entry) =>
+      entry.text.includes("FLORAL 请求一次性授权")
+    );
+    const approvalId = /审批编号=([A-Z0-9]+)/u.exec(prompt?.text ?? "")?.[1];
+    expect(approvalId).toBeTruthy();
+
+    await transport.receive(incoming({
+      id: "activity-approval-2",
+      transport: "mock",
+      text: `/approve ${approvalId}`,
+    }));
+    await runPromise;
+
+    expect(transport.activities).toEqual([
+      { conversationId: "conversation-1", state: "typing" },
+      { conversationId: "conversation-1", state: "idle" },
+      { conversationId: "conversation-1", state: "typing" },
+      { conversationId: "conversation-1", state: "idle" },
+    ]);
     await gateway.stop();
   });
 

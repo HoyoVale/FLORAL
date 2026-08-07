@@ -15,7 +15,11 @@ import {
   buildLegacyQqRuntimeOptionsContract,
   buildQqRuntimeOptionsContract,
 } from "../src/config/qq/qq-runtime-options.js";
-import type { ChatTransport } from "../src/core/contracts.js";
+import type {
+  ChatTransport,
+  ConversationActivityState,
+  ConversationActivityTransport,
+} from "../src/core/contracts.js";
 import type { IncomingMessage, OutgoingMessage } from "../src/core/types.js";
 import { QqRuntimeAdoptionTransport } from "../src/transport/qq/qq-runtime-adoption-transport.js";
 
@@ -39,6 +43,20 @@ class FakeTransport implements ChatTransport {
   }
   async send(_message: OutgoingMessage): Promise<void> {}
   async stop(): Promise<void> { this.stopped = true; }
+}
+
+class ActivityFakeTransport
+  extends FakeTransport
+  implements ConversationActivityTransport
+{
+  readonly activities: Array<{ conversationId: string; state: ConversationActivityState }> = [];
+
+  async setConversationActivity(
+    conversationId: string,
+    state: ConversationActivityState,
+  ): Promise<void> {
+    this.activities.push({ conversationId, state });
+  }
 }
 
 describe("QQ runtime options adoption", () => {
@@ -66,6 +84,34 @@ describe("QQ runtime options adoption", () => {
       buildQqRuntimeOptionsContract(authority.effective),
       "1.0.4",
     )).toBe("active");
+    await transport.stop();
+  });
+
+  it("forwards conversation activity to the active QQ transport", async () => {
+    const authority = await resolveConfigurationAuthority({ repositoryRoot, environment });
+    const env = loadEnv(environment);
+    const active = new ActivityFakeTransport();
+    const transport = new QqRuntimeAdoptionTransport(
+      repositoryRoot,
+      authority,
+      env,
+      environment,
+      {
+        createTransport: () => active,
+        resolveInstalledSdkVersion: async () => "1.0.4",
+        clearReport: async () => undefined,
+        recordReport: async () => "/tmp/qq-runtime.json",
+      },
+    );
+
+    await transport.start(async () => undefined);
+    await transport.setConversationActivity("conversation", "typing");
+    await transport.setConversationActivity("conversation", "idle");
+
+    expect(active.activities).toEqual([
+      { conversationId: "conversation", state: "typing" },
+      { conversationId: "conversation", state: "idle" },
+    ]);
     await transport.stop();
   });
 

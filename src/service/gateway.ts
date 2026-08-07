@@ -1,7 +1,9 @@
-import type {
-  AgentRuntime,
-  ChatTransport,
-  GatewayStore,
+import {
+  supportsConversationActivity,
+  type AgentRuntime,
+  type ChatTransport,
+  type ConversationActivityState,
+  type GatewayStore,
 } from "../core/contracts.js";
 import type {
   AgentEvent,
@@ -352,6 +354,7 @@ export class GatewayService {
         }
 
         active.stopRequested = true;
+        this.#setConversationActivity(message.identity.conversationId, "idle");
         this.#approvalBroker?.cancelConversation(resolved.conversationId);
         if (active.threadId && !active.interruptSent) {
           await this.#interruptRun(resolved, active);
@@ -397,6 +400,7 @@ export class GatewayService {
       eventType: "agent.run_requested",
       payload: { characterCount: message.text.length },
     });
+    this.#setConversationActivity(message.identity.conversationId, "typing");
 
     try {
       const threadId = await this.store.getActiveThread(resolved.conversationId);
@@ -407,15 +411,31 @@ export class GatewayService {
           cwd: this.options.cwd,
           ...(this.options.model ? { model: this.options.model } : {}),
           ...(this.#approvalBroker ? {
-            approvalHandler: (request) => this.#approvalBroker!.request(
-              {
-                userId: resolved.userId,
-                role: resolved.role,
-                conversationId: resolved.conversationId,
-                deliveryConversationId: message.identity.conversationId,
-              },
-              request,
-            ),
+            approvalHandler: async (request) => {
+              this.#setConversationActivity(
+                message.identity.conversationId,
+                "idle",
+              );
+              const decision = await this.#approvalBroker!.request(
+                {
+                  userId: resolved.userId,
+                  role: resolved.role,
+                  conversationId: resolved.conversationId,
+                  deliveryConversationId: message.identity.conversationId,
+                },
+                request,
+              );
+              if (
+                !active.stopRequested
+                && this.#activeRuns.get(resolved.conversationId) === active
+              ) {
+                this.#setConversationActivity(
+                  message.identity.conversationId,
+                  "typing",
+                );
+              }
+              return decision;
+            },
           } : {}),
         },
         (event) => this.#handleAgentEvent(resolved, active, event),
@@ -428,6 +448,7 @@ export class GatewayService {
         eventType: "agent.run_completed",
         payload: { responseCharacterCount: result.finalText.length },
       });
+      this.#setConversationActivity(message.identity.conversationId, "idle");
       await this.#deliverWithAudit(
         message.identity.conversationId,
         result.finalText,
@@ -435,6 +456,7 @@ export class GatewayService {
         "agent_reply",
       );
     } catch (error) {
+      this.#setConversationActivity(message.identity.conversationId, "idle");
       process.stderr.write(`${formatSafeAgentFailure(error)}\n`);
       await this.store.appendAudit({
         userId: resolved.userId,
@@ -540,6 +562,20 @@ export class GatewayService {
         },
       });
     }
+  }
+
+  #setConversationActivity(
+    conversationId: string,
+    state: ConversationActivityState,
+  ): void {
+    if (!supportsConversationActivity(this.transport)) return;
+    void this.transport.setConversationActivity(conversationId, state).catch((error) => {
+      process.stderr.write(
+        `transport.activity_error=${safeLogToken(
+          error instanceof Error ? error.name : "Error",
+        )}\n`,
+      );
+    });
   }
 
   async #send(conversationId: string, text: string): Promise<void> {
