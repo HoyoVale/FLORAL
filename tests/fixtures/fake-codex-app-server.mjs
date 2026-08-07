@@ -49,14 +49,14 @@ lines.on("line", (line) => {
   }
 
   if (message.method === "thread/start") {
-    if (scenario === "on-request-file-approval" && message.params?.approvalPolicy !== "on-request") {
+    if (scenario === "on-request-file-approval" && message.params?.approvalPolicy !== "unlessTrusted") {
       send({
         id: message.id,
         error: { code: -32602, message: `invalid thread approval policy: ${String(message.params?.approvalPolicy)}` },
       });
       return;
     }
-    if (message.params?.sandbox !== "read-only") {
+    if (scenario === "on-request-file-approval" && message.params?.sandbox !== "workspaceWrite") {
       send({
         id: message.id,
         error: {
@@ -64,6 +64,10 @@ lines.on("line", (line) => {
           message: `invalid thread sandbox: ${String(message.params?.sandbox)}`,
         },
       });
+      return;
+    }
+    if (scenario === "on-request-file-approval" && message.params?.approvalsReviewer !== "user") {
+      send({ id: message.id, error: { code: -32602, message: "thread approval reviewer must be user" } });
       return;
     }
     activeThreadId = "thr_new";
@@ -89,14 +93,14 @@ lines.on("line", (line) => {
   }
 
   if (message.method === "turn/start") {
-    if (scenario === "on-request-file-approval" && message.params?.approvalPolicy !== "on-request") {
+    if (scenario === "on-request-file-approval" && message.params?.approvalPolicy !== "unlessTrusted") {
       send({
         id: message.id,
         error: { code: -32602, message: `invalid turn approval policy: ${String(message.params?.approvalPolicy)}` },
       });
       return;
     }
-    if (message.params?.sandboxPolicy?.type !== "readOnly") {
+    if (scenario === "on-request-file-approval" && message.params?.sandboxPolicy?.type !== "workspaceWrite") {
       send({
         id: message.id,
         error: {
@@ -105,6 +109,17 @@ lines.on("line", (line) => {
         },
       });
       return;
+    }
+    if (scenario === "on-request-file-approval" && message.params?.approvalsReviewer !== "user") {
+      send({ id: message.id, error: { code: -32602, message: "approval reviewer must be user" } });
+      return;
+    }
+    if (scenario === "on-request-file-approval") {
+      const roots = message.params?.sandboxPolicy?.writableRoots;
+      if (!Array.isArray(roots) || roots.length !== 1 || message.params?.sandboxPolicy?.networkAccess !== false) {
+        send({ id: message.id, error: { code: -32602, message: "workspaceWrite must be cwd-only and network-disabled" } });
+        return;
+      }
     }
     if (scenario === "resume" && !resumed) {
       send({ id: message.id, error: { code: -32602, message: "thread was not resumed" } });

@@ -141,7 +141,9 @@ export const requestedConfigSchema = z.object({
       approval_ttl_ms: z.number().int().min(5_000).max(10 * 60_000),
       max_pending_approvals: z.number().int().min(1).max(32),
       owner_only_remote_approval: z.boolean(),
-      codex_turn_approval_policy: z.enum(["never", "on-request"]),
+      codex_turn_approval_policy: z.enum(["never", "on-request", "untrusted"]),
+      codex_turn_sandbox_mode: z.enum(["read-only", "workspace-write"]),
+      codex_approvals_reviewer: z.literal("user"),
       allow_remote_file_change_approval: z.boolean(),
       local_confirmation_enabled: z.boolean(),
       local_approval_ttl_ms: z.number().int().min(5_000).max(30 * 60_000),
@@ -334,7 +336,9 @@ export interface RequestedConfig {
       approval_ttl_ms: number;
       max_pending_approvals: number;
       owner_only_remote_approval: boolean;
-      codex_turn_approval_policy: "never" | "on-request";
+      codex_turn_approval_policy: "never" | "on-request" | "untrusted";
+      codex_turn_sandbox_mode: "read-only" | "workspace-write";
+      codex_approvals_reviewer: "user";
       allow_remote_file_change_approval: boolean;
       local_confirmation_enabled: boolean;
       local_approval_ttl_ms: number;
@@ -524,7 +528,9 @@ export const DEFAULT_REQUESTED_CONFIG: RequestedConfig = {
       approval_ttl_ms: 60_000,
       max_pending_approvals: 8,
       owner_only_remote_approval: true,
-      codex_turn_approval_policy: "on-request",
+      codex_turn_approval_policy: "untrusted",
+      codex_turn_sandbox_mode: "workspace-write",
+      codex_approvals_reviewer: "user",
       allow_remote_file_change_approval: true,
       local_confirmation_enabled: true,
       local_approval_ttl_ms: 300_000,
@@ -591,6 +597,9 @@ export const LOCKED_CONFIG_VALUES = {
   "runtime.authorization.enabled": true,
   "runtime.authorization.owner_only_remote_approval": true,
   "runtime.authorization.local_confirmation_enabled": true,
+  "runtime.authorization.codex_turn_approval_policy": "untrusted",
+  "runtime.authorization.codex_turn_sandbox_mode": "workspace-write",
+  "runtime.authorization.codex_approvals_reviewer": "user",
   "codex.native_web_search": false,
   "codex.sandbox.mode": "read-only",
   "codex.native.provider_id": "floral-deepseek",

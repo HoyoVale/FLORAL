@@ -1,3 +1,4 @@
+import { resolve } from "node:path";
 import type { AgentRuntime } from "../core/contracts.js";
 import type {
   AgentApprovalHandler,
@@ -73,8 +74,9 @@ export interface CodexAppServerOptions {
   args: string[];
   requestTimeoutMs: number;
   defaultModel: string | undefined;
-  approvalPolicy?: "never" | "on-request" | undefined;
-  sandboxMode?: "read-only" | undefined;
+  approvalPolicy?: "never" | "on-request" | "untrusted" | undefined;
+  sandboxMode?: "read-only" | "workspace-write" | undefined;
+  approvalsReviewer?: "user" | undefined;
   processCwd?: string | undefined;
   processEnv?: NodeJS.ProcessEnv | undefined;
 }
@@ -89,8 +91,9 @@ export class CodexAppServerRuntime implements AgentRuntime {
   readonly #client: CodexRpcClient;
   readonly #defaultModel: string | undefined;
   readonly #turnTimeoutMs: number;
-  readonly #approvalPolicy: "never" | "on-request";
-  readonly #sandboxMode: "read-only";
+  readonly #approvalPolicy: "never" | "on-request" | "untrusted";
+  readonly #sandboxMode: "read-only" | "workspace-write";
+  readonly #approvalsReviewer: "user";
   readonly #loadedThreads = new Set<string>();
   readonly #activeTurns = new Map<string, string>();
   readonly #eventHandlers = new Map<string, (event: AgentEvent) => void>();
@@ -110,6 +113,7 @@ export class CodexAppServerRuntime implements AgentRuntime {
     this.#turnTimeoutMs = options.requestTimeoutMs;
     this.#approvalPolicy = options.approvalPolicy ?? "never";
     this.#sandboxMode = options.sandboxMode ?? "read-only";
+    this.#approvalsReviewer = options.approvalsReviewer ?? "user";
     this.#client.on("serverRequest", (request: CodexServerRequest) => {
       void this.#handleServerRequest(request).catch(() => {
         this.#respondSafely(request.id, undefined, {
@@ -264,8 +268,9 @@ export class CodexAppServerRuntime implements AgentRuntime {
         threadId,
         input: [{ type: "text", text: request.text }],
         cwd: request.cwd,
-        approvalPolicy: this.#approvalPolicy,
-        sandboxPolicy: { type: "readOnly" },
+        approvalPolicy: toAppServerApprovalPolicy(this.#approvalPolicy),
+        approvalsReviewer: this.#approvalsReviewer,
+        sandboxPolicy: buildTurnSandboxPolicy(this.#sandboxMode, request.cwd),
       };
       const model = request.model ?? this.#defaultModel;
       if (model) turnParams.model = model;
@@ -376,8 +381,9 @@ export class CodexAppServerRuntime implements AgentRuntime {
   async #startThread(request: AgentRunRequest): Promise<string> {
     const params: Record<string, unknown> = {
       cwd: request.cwd,
-      approvalPolicy: this.#approvalPolicy,
-      sandbox: this.#sandboxMode,
+      approvalPolicy: toAppServerApprovalPolicy(this.#approvalPolicy),
+      approvalsReviewer: this.#approvalsReviewer,
+      sandbox: toAppServerThreadSandbox(this.#sandboxMode),
     };
     const model = request.model ?? this.#defaultModel;
     if (model) params.model = model;
@@ -393,7 +399,12 @@ export class CodexAppServerRuntime implements AgentRuntime {
   async #resumeThread(threadId: string): Promise<string> {
     if (this.#loadedThreads.has(threadId)) return threadId;
 
-    const response = await this.#client.request<ThreadResponse>("thread/resume", { threadId });
+    const response = await this.#client.request<ThreadResponse>("thread/resume", {
+      threadId,
+      approvalPolicy: toAppServerApprovalPolicy(this.#approvalPolicy),
+      approvalsReviewer: this.#approvalsReviewer,
+      sandbox: toAppServerThreadSandbox(this.#sandboxMode),
+    });
     const resumedId = response.thread?.id;
     if (!resumedId) {
       throw codexProtocolError("thread/resume returned no thread id");
@@ -511,6 +522,33 @@ export class CodexAppServerRuntime implements AgentRuntime {
   }
 }
 
+
+function toAppServerApprovalPolicy(
+  policy: "never" | "on-request" | "untrusted",
+): "never" | "onRequest" | "unlessTrusted" {
+  if (policy === "untrusted") return "unlessTrusted";
+  if (policy === "on-request") return "onRequest";
+  return "never";
+}
+
+function toAppServerThreadSandbox(
+  mode: "read-only" | "workspace-write",
+): "readOnly" | "workspaceWrite" {
+  return mode === "workspace-write" ? "workspaceWrite" : "readOnly";
+}
+
+
+function buildTurnSandboxPolicy(
+  mode: "read-only" | "workspace-write",
+  cwd: string,
+): Record<string, unknown> {
+  if (mode === "read-only") return { type: "readOnly" };
+  return {
+    type: "workspaceWrite",
+    writableRoots: [resolve(cwd)],
+    networkAccess: false,
+  };
+}
 
 function approvalItemKey(threadId: string, itemId: string): string {
   return `${threadId}:${itemId}`;

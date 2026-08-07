@@ -97,7 +97,7 @@ describe("ManagedCodexDeepSeekRuntime", () => {
 
 
   it("passes the FLORAL turn-scoped approval profile to Codex runtime creation", async () => {
-    let observed: { approvalPolicy: string; sandboxMode: string } | undefined;
+    let observed: { approvalPolicy: string; sandboxMode: string; approvalsReviewer: string } | undefined;
     const runtime = new FakeRuntime();
     const managed = new ManagedCodexDeepSeekRuntime(loadEnv({
       DEEPSEEK_API_KEY: "secret",
@@ -123,16 +123,22 @@ describe("ManagedCodexDeepSeekRuntime", () => {
         observed = {
           approvalPolicy: options.approvalPolicy,
           sandboxMode: options.sandboxMode,
+          approvalsReviewer: options.approvalsReviewer,
         };
         return runtime;
       },
     }, {
-      codexTurnApprovalPolicy: "on-request",
-      codexSandboxMode: "read-only",
+      codexTurnApprovalPolicy: "untrusted",
+      codexSandboxMode: "workspace-write",
+      codexApprovalsReviewer: "user",
     });
 
     await managed.start();
-    expect(observed).toEqual({ approvalPolicy: "on-request", sandboxMode: "read-only" });
+    expect(observed).toEqual({
+      approvalPolicy: "untrusted",
+      sandboxMode: "workspace-write",
+      approvalsReviewer: "user",
+    });
     await managed.stop();
   });
 

@@ -1,30 +1,40 @@
 # Phase 5.3 — Controlled Capability Activation and Local Confirmation
 
 Phase 5.3 activates the approval path built in Phase 5.2 without turning FLORAL
-into an unrestricted remote shell. The key invariant is that **approval and
-sandbox are separate controls**: a request may become eligible for one explicit
-approval, but the base Codex sandbox remains read-only.
+into an unrestricted remote shell. Phase 5.3A corrects the first activation
+attempt: **approval and sandbox are separate controls**, and a read-only active
+turn can reject a write before app-server ever emits a file-change approval.
+The checked-in native Codex config remains the conservative fail-safe, while the
+active app-server turn receives a separately bounded workspace-write policy.
 
 ## Runtime policy
 
 The checked-in Codex native configuration remains the conservative fail-safe
 configuration used by the configuration-federation/cutover chain. At runtime,
-FLORAL explicitly starts app-server threads/turns with:
+FLORAL explicitly starts app-server threads/turns with the following logical
+policy:
 
 ```text
-approvalPolicy = on-request
-sandbox          = read-only
+FLORAL approval policy = untrusted
+turn sandbox            = workspace-write
+approvals reviewer      = user
+writable root           = exact request cwd only
+network access          = false
 ```
 
-This allows Codex to surface approval requests while retaining a read-only
-sandbox ceiling. Phase 5.3 does not activate `workspace-write` or
-`danger-full-access`.
+For the pinned Codex app-server 0.146.1 protocol this is translated on the wire
+to `approvalPolicy = unlessTrusted`, `sandbox = workspaceWrite` for thread
+start/resume, and a `sandboxPolicy.type = workspaceWrite` object for turn start.
+The native generated `config.toml` stays `approval_policy = never` and
+`sandbox_mode = read-only` as a fail-safe if FLORAL fails to supply its runtime
+overrides. `danger-full-access` is never activated.
 
 ## Concrete file-change flow
 
 A `item/fileChange/requestApproval` request is translated to the typed
 `files.write` capability. Only this concrete source can enter the existing QQ
-one-shot approval flow while the base sandbox is read-only:
+one-shot approval flow while FLORAL keeps the policy authority stricter than
+the execution sandbox:
 
 ```text
 Codex concrete file-change request
@@ -34,9 +44,12 @@ Codex concrete file-change request
   -> accept or decline for this request only
 ```
 
-A generic FLORAL `files.write` request is still denied by the read-only sandbox.
-This prevents one approved edit from becoming a reusable write capability.
-FLORAL never maps the decision to `acceptForSession`.
+A generic FLORAL `files.write` request is still denied by the FLORAL
+authorization ceiling because the authority continues to evaluate against the
+native read-only baseline. Only a concrete `codex-file-change` request receives
+the scoped exception that can reach QQ. This prevents one approved edit from
+becoming a reusable write capability. FLORAL never maps the decision to
+`acceptForSession`.
 
 ## Opaque command escalation
 
@@ -77,7 +90,7 @@ Phase 5.3 does **not** activate:
 - session-scoped approvals;
 - persistent command prefix rules;
 - granular `item/permissions/requestApproval` grants;
-- arbitrary `workspace-write`;
+- unreviewed or session-wide write grants beyond the exact turn cwd;
 - `danger-full-access`;
 - unrestricted sudo or Keychain access;
 - remote approval for opaque shell commands or system administration.
@@ -90,7 +103,9 @@ enabled = true
 approval_ttl_ms = 60000
 max_pending_approvals = 8
 owner_only_remote_approval = true
-codex_turn_approval_policy = "on-request"
+codex_turn_approval_policy = "untrusted"
+codex_turn_sandbox_mode = "workspace-write"
+codex_approvals_reviewer = "user"
 allow_remote_file_change_approval = true
 local_confirmation_enabled = true
 local_approval_ttl_ms = 300000
@@ -111,8 +126,10 @@ corepack pnpm approval:local:list
 The expected policy surface is:
 
 ```text
-policy.sandbox=read-only
-policy.authorization.codex_turn_approval_policy=on-request
+policy.native_sandbox=read-only
+policy.turn_sandbox=workspace-write
+policy.authorization.codex_turn_approval_policy=untrusted
+policy.authorization.codex_approvals_reviewer=user
 policy.codex.file_change=approval:chat-confirmation
 policy.codex.command=approval:local-confirmation
 policy.system_admin=deny:sandbox-capability-denied

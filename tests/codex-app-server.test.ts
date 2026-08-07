@@ -9,7 +9,11 @@ const fixture = fileURLToPath(new URL("./fixtures/fake-codex-app-server.mjs", im
 function createRuntime(
   scenario: string,
   timeoutMs = 5_000,
-  options: { approvalPolicy?: "never" | "on-request" } = {},
+  options: {
+    approvalPolicy?: "never" | "on-request" | "untrusted";
+    sandboxMode?: "read-only" | "workspace-write";
+    approvalsReviewer?: "user";
+  } = {},
 ): CodexAppServerRuntime {
   return new CodexAppServerRuntime({
     command: process.execPath,
@@ -126,9 +130,11 @@ describe("CodexAppServerRuntime", () => {
 
 
 
-  it("activates on-request approvals per turn while keeping the sandbox read-only", async () => {
+  it("maps FLORAL untrusted/workspace-write to Codex 0.146.1 approval wire values", async () => {
     const runtime = createRuntime("on-request-file-approval", 5_000, {
-      approvalPolicy: "on-request",
+      approvalPolicy: "untrusted",
+      sandboxMode: "workspace-write",
+      approvalsReviewer: "user",
     });
     try {
       await runtime.start();

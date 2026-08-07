@@ -60,8 +60,9 @@ export interface ManagedCodexDeepSeekDependencies {
   createRuntime?: ((options: {
     codexHome: string;
     bridgeToken: string;
-    approvalPolicy: "never" | "on-request";
-    sandboxMode: "read-only";
+    approvalPolicy: "never" | "on-request" | "untrusted";
+    sandboxMode: "read-only" | "workspace-write";
+    approvalsReviewer: "user";
   }) => AgentRuntime) | undefined;
   prepareCodexConfig?: ((options: {
     legacyConfig: string;
@@ -75,8 +76,9 @@ export interface ManagedCodexDeepSeekDependencies {
 }
 
 export interface ManagedCodexDeepSeekRuntimeOptions {
-  codexTurnApprovalPolicy?: "never" | "on-request" | undefined;
-  codexSandboxMode?: "read-only" | undefined;
+  codexTurnApprovalPolicy?: "never" | "on-request" | "untrusted" | undefined;
+  codexSandboxMode?: "read-only" | "workspace-write" | undefined;
+  codexApprovalsReviewer?: "user" | undefined;
 }
 
 export class ManagedCodexDeepSeekRuntime implements AgentRuntime {
@@ -332,14 +334,17 @@ export class ManagedCodexDeepSeekRuntime implements AgentRuntime {
   #createRuntime(codexHome: string, bridgeToken: string): AgentRuntime {
     const approvalPolicy = this.options.codexTurnApprovalPolicy ?? "never";
     const sandboxMode = this.options.codexSandboxMode ?? "read-only";
+    const approvalsReviewer = this.options.codexApprovalsReviewer ?? "user";
     return this.dependencies.createRuntime?.({
       codexHome,
       bridgeToken,
       approvalPolicy,
       sandboxMode,
+      approvalsReviewer,
     }) ?? createCodexRuntime(this.env, codexHome, bridgeToken, {
       approvalPolicy,
       sandboxMode,
+      approvalsReviewer,
     });
   }
 
@@ -516,7 +521,11 @@ function createCodexRuntime(
   env: AppEnv,
   codexHome: string,
   bridgeToken: string,
-  execution: { approvalPolicy: "never" | "on-request"; sandboxMode: "read-only" },
+  execution: {
+    approvalPolicy: "never" | "on-request" | "untrusted";
+    sandboxMode: "read-only" | "workspace-write";
+    approvalsReviewer: "user";
+  },
 ): AgentRuntime {
   const processEnv: NodeJS.ProcessEnv = {
     ...process.env,
@@ -532,6 +541,7 @@ function createCodexRuntime(
     defaultModel: env.DEEPSEEK_MODEL,
     approvalPolicy: execution.approvalPolicy,
     sandboxMode: execution.sandboxMode,
+    approvalsReviewer: execution.approvalsReviewer,
     processCwd: env.CODEX_CWD,
     processEnv,
   });

@@ -225,6 +225,8 @@ export function renderConfigurationAuthority(
     `config.runtime.authorization.max_pending_approvals=${String(authority.effective.runtime.authorization.max_pending_approvals)}`,
     `config.runtime.authorization.owner_only_remote_approval=${String(authority.effective.runtime.authorization.owner_only_remote_approval)}`,
     `config.runtime.authorization.codex_turn_approval_policy=${authority.effective.runtime.authorization.codex_turn_approval_policy}`,
+    `config.runtime.authorization.codex_turn_sandbox_mode=${authority.effective.runtime.authorization.codex_turn_sandbox_mode}`,
+    `config.runtime.authorization.codex_approvals_reviewer=${authority.effective.runtime.authorization.codex_approvals_reviewer}`,
     `config.runtime.authorization.allow_remote_file_change_approval=${String(authority.effective.runtime.authorization.allow_remote_file_change_approval)}`,
     `config.runtime.authorization.local_confirmation_enabled=${String(authority.effective.runtime.authorization.local_confirmation_enabled)}`,
     `config.runtime.authorization.local_approval_ttl_ms=${String(authority.effective.runtime.authorization.local_approval_ttl_ms)}`,
@@ -351,15 +353,21 @@ function validateCrossFieldRules(
   }
   if (
     config.runtime.authorization.allow_remote_file_change_approval
-    && config.runtime.authorization.codex_turn_approval_policy !== "on-request"
+    && config.runtime.authorization.codex_turn_approval_policy !== "untrusted"
   ) {
-    throw new Error("runtime.authorization.allow_remote_file_change_approval requires codex_turn_approval_policy=on-request");
+    throw new Error("runtime.authorization.allow_remote_file_change_approval requires codex_turn_approval_policy=untrusted so workspace writes deterministically surface approval requests");
   }
   if (
-    config.runtime.authorization.codex_turn_approval_policy === "on-request"
+    config.runtime.authorization.codex_turn_sandbox_mode === "workspace-write"
     && !config.runtime.authorization.enabled
   ) {
-    throw new Error("runtime.authorization.codex_turn_approval_policy=on-request requires authorization.enabled=true");
+    throw new Error("runtime.authorization.codex_turn_sandbox_mode=workspace-write requires authorization.enabled=true");
+  }
+  if (
+    config.runtime.authorization.allow_remote_file_change_approval
+    && config.runtime.authorization.codex_turn_sandbox_mode !== "workspace-write"
+  ) {
+    throw new Error("runtime.authorization.allow_remote_file_change_approval requires codex_turn_sandbox_mode=workspace-write");
   }
   if (config.runtime.cost_guard.max_requests_per_hour < config.runtime.cost_guard.max_requests_per_minute) {
     throw new Error("runtime.cost_guard.max_requests_per_hour must be greater than or equal to max_requests_per_minute");

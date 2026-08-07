@@ -236,9 +236,9 @@
 
 ### Phase 5.3 — controlled capability activation and Mac-local confirmation
 
-- switch only the app-server turn override from `never` to `on-request`; keep the native fail-safe config and sandbox ceiling read-only;
+- keep the native fail-safe config at read-only/never, but run active app-server turns with cwd-only workspace-write, network disabled, user review, and the installed-version `unlessTrusted` approval wire policy;
 - allow only concrete Codex file-change requests to reach the existing owner-scoped QQ one-shot approval flow;
-- keep generic `files.write` denied by the read-only sandbox so a file-change grant cannot widen later actions;
+- keep generic `files.write` denied by FLORAL's native read-only authorization ceiling so the execution sandbox cannot widen later actions;
 - route opaque command escalation to a private Mac-local one-shot confirmation mailbox, never to QQ `/approve`;
 - bind local decisions to the current service session and exact private request fingerprint, with restart cleanup and expiry;
 - never return `acceptForSession` or a persistent permission grant.

@@ -45,11 +45,14 @@ const lines = [
   `policy.authorization.max_pending=${String(config.effective.runtime.authorization.max_pending_approvals)}`,
   `policy.authorization.owner_only_remote=${String(config.effective.runtime.authorization.owner_only_remote_approval)}`,
   `policy.authorization.codex_turn_approval_policy=${config.effective.runtime.authorization.codex_turn_approval_policy}`,
+  `policy.authorization.codex_turn_sandbox_mode=${config.effective.runtime.authorization.codex_turn_sandbox_mode}`,
+  `policy.authorization.codex_approvals_reviewer=${config.effective.runtime.authorization.codex_approvals_reviewer}`,
   `policy.authorization.remote_file_change=${String(config.effective.runtime.authorization.allow_remote_file_change_approval)}`,
   `policy.authorization.local_confirmation=${String(config.effective.runtime.authorization.local_confirmation_enabled)}`,
   `policy.authorization.local_approval_ttl_ms=${String(config.effective.runtime.authorization.local_approval_ttl_ms)}`,
   `policy.authorization.local_approval_poll_ms=${String(config.effective.runtime.authorization.local_approval_poll_ms)}`,
-  `policy.sandbox=${config.effective.codex.sandbox.mode}`,
+  `policy.native_sandbox=${config.effective.codex.sandbox.mode}`,
+  `policy.turn_sandbox=${config.effective.runtime.authorization.codex_turn_sandbox_mode}`,
   `policy.codex.command=${renderDecision(command)}`,
   `policy.codex.file_change=${renderDecision(fileChange)}`,
   `policy.system_admin=${renderDecision(systemAdmin)}`,
@@ -67,8 +70,14 @@ if (check) {
   if (fileChange.status !== "approval-required" || fileChange.approvalLevel !== "chat-confirmation") {
     failures.push("controlled-file-change-not-chat-confirmation");
   }
-  if (config.effective.runtime.authorization.codex_turn_approval_policy !== "on-request") {
-    failures.push("codex-turn-approval-policy-not-on-request");
+  if (config.effective.runtime.authorization.codex_turn_approval_policy !== "untrusted") {
+    failures.push("codex-turn-approval-policy-not-untrusted");
+  }
+  if (config.effective.runtime.authorization.codex_turn_sandbox_mode !== "workspace-write") {
+    failures.push("codex-turn-sandbox-not-workspace-write");
+  }
+  if (config.effective.runtime.authorization.codex_approvals_reviewer !== "user") {
+    failures.push("codex-approvals-reviewer-not-user");
   }
   if (!config.effective.runtime.authorization.local_confirmation_enabled) {
     failures.push("local-confirmation-disabled");

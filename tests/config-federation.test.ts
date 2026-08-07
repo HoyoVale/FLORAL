@@ -54,7 +54,9 @@ describe("configuration federation authority", () => {
     expect(authority.effective.runtime.authorization.enabled).toBe(true);
     expect(authority.effective.runtime.authorization.approval_ttl_ms).toBe(60_000);
     expect(authority.effective.runtime.authorization.owner_only_remote_approval).toBe(true);
-    expect(authority.effective.runtime.authorization.codex_turn_approval_policy).toBe("on-request");
+    expect(authority.effective.runtime.authorization.codex_turn_approval_policy).toBe("untrusted");
+    expect(authority.effective.runtime.authorization.codex_turn_sandbox_mode).toBe("workspace-write");
+    expect(authority.effective.runtime.authorization.codex_approvals_reviewer).toBe("user");
     expect(authority.effective.runtime.authorization.allow_remote_file_change_approval).toBe(true);
     expect(authority.effective.runtime.authorization.local_confirmation_enabled).toBe(true);
     expect(authority.effective.runtime.authorization.local_approval_ttl_ms).toBe(300_000);
@@ -84,7 +86,9 @@ describe("configuration federation authority", () => {
     expect(output).toContain("config.runtime.adoption.searxng=unified");
     expect(output).toContain("config.runtime.authorization.enabled=true");
     expect(output).toContain("config.runtime.authorization.owner_only_remote_approval=true");
-    expect(output).toContain("config.runtime.authorization.codex_turn_approval_policy=on-request");
+    expect(output).toContain("config.runtime.authorization.codex_turn_approval_policy=untrusted");
+    expect(output).toContain("config.runtime.authorization.codex_turn_sandbox_mode=workspace-write");
+    expect(output).toContain("config.runtime.authorization.codex_approvals_reviewer=user");
     expect(output).toContain("config.runtime.authorization.allow_remote_file_change_approval=true");
     expect(output).toContain("config.runtime.authorization.local_confirmation_enabled=true");
   });

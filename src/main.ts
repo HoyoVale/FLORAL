@@ -47,7 +47,8 @@ const transport: ChatTransport = env.QQ_MODE === "real"
 const agent: AgentRuntime = env.CODEX_MODE === "real"
   ? new ManagedCodexDeepSeekRuntime(env, {}, {
       codexTurnApprovalPolicy: authority.effective.runtime.authorization.codex_turn_approval_policy,
-      codexSandboxMode: "read-only",
+      codexSandboxMode: authority.effective.runtime.authorization.codex_turn_sandbox_mode,
+      codexApprovalsReviewer: authority.effective.runtime.authorization.codex_approvals_reviewer,
     })
   : new MockAgentRuntime();
 

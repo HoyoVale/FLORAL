@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "reviewedAt": "2026-08-07",
-  "purpose": "Phase 4 configuration federation, Phase 4.0E5 SearXNG runtime adoption, Phase 5.1 runtime cost-guard inventory, and Phase 5.2 authorization/approval authority inventory.",
+  "purpose": "Phase 4 configuration federation, Phase 4.0E5 SearXNG runtime adoption, Phase 5.1 cost guard, Phase 5.2 authorization authority, and Phase 5.3A controlled Codex capability activation inventory.",
   "classifications": [
     "floral-owned",
     "upstream-managed",
@@ -52,6 +52,8 @@
             "/approve <id>",
             "/deny <id>",
             "runtime.authorization.codex_turn_approval_policy",
+            "runtime.authorization.codex_turn_sandbox_mode",
+            "runtime.authorization.codex_approvals_reviewer",
             "runtime.authorization.allow_remote_file_change_approval",
             "runtime.authorization.local_confirmation_enabled",
             "runtime.authorization.local_approval_ttl_ms",
@@ -163,7 +165,7 @@
             "project trust",
             "permission profiles"
           ],
-          "notes": "Phase 5.3 keeps the native Codex config fail-safe at read-only/never, but FLORAL explicitly starts app-server turns with read-only + on-request. File-change approval may be granted once through the owner-scoped QQ broker; opaque command escalation remains Mac-local only. Granular permission-profile expansion remains denied."
+          "notes": "Phase 5.3A keeps the native/default Codex fail-safe at read-only/never, while FLORAL explicitly starts reviewed app-server turns with workspaceWrite + unlessTrusted (logical workspace-write + untrusted) and reviewer=user. File-change approval may be granted once through the owner-scoped QQ broker; opaque command escalation remains Mac-local only. Granular permission-profile expansion remains denied."
         },
         {
           "id": "mcp-client",
@@ -776,20 +778,20 @@
       "risk": "Codex MCP auto-approval is allowed only for an active allowlisted tool with a FLORAL capability mapping; future side-effecting MCPs must not inherit this setting."
     },
     {
-      "id": "codex.turn.approval-never",
+      "id": "codex.runtime.default-approval-never",
       "component": "codex",
       "classification": "locked",
       "file": "src/agent/codex-app-server.ts",
-      "needle": "approvalPolicy: \"never\"",
-      "risk": "Native Codex approval prompting remains closed while Phase 5.2 establishes the FLORAL broker; a later controlled activation must change this only with sandbox and policy evidence."
+      "needle": "this.#approvalPolicy = options.approvalPolicy ?? \"never\";",
+      "risk": "If FLORAL does not explicitly supply the reviewed turn policy, Codex approval falls back to never rather than silently widening authority."
     },
     {
-      "id": "codex.turn.sandbox-read-only",
+      "id": "codex.runtime.default-sandbox-read-only",
       "component": "codex",
       "classification": "locked",
       "file": "src/agent/codex-app-server.ts",
-      "needle": "sandboxPolicy: { type: \"readOnly\" }",
-      "risk": "The current agent turn is always read-only."
+      "needle": "this.#sandboxMode = options.sandboxMode ?? \"read-only\";",
+      "risk": "If FLORAL does not explicitly supply the controlled workspace-write turn policy, Codex falls back to read-only."
     },
     {
       "id": "deepseek.stream.false",
@@ -984,12 +986,12 @@
       "risk": "An enabled MCP tool must not bypass role and approval policy merely because it appears in the upstream allowlist."
     },
     {
-      "id": "authorization.codex-turn-on-request",
+      "id": "authorization.codex-turn-reviewed-workspace",
       "component": "codex",
       "classification": "floral-owned",
       "file": "config/floral.toml",
-      "needle": "codex_turn_approval_policy = \"on-request\"",
-      "risk": "The native Codex config remains never/read-only; the active app-server turn override must be explicit, observable, and bounded by FLORAL approval brokers."
+      "needle": "codex_turn_approval_policy = \"untrusted\"",
+      "risk": "Native Codex config remains never/read-only; FLORAL maps logical untrusted to Codex app-server 0.146.1 approvalPolicy=unlessTrusted and uses cwd-only network-disabled workspaceWrite with user review."
     },
     {
       "id": "authorization.scoped-file-change",

@@ -121,8 +121,11 @@ are bound to the current owner and conversation, are consumed once, and vanish
 on service restart. Opaque Codex command escalation and system administration
 remain Mac-local only. See `docs/PHASE5_AUTHORIZATION_APPROVAL_AUTHORITY.md`.
 
-Phase 5.3 activates Codex `on-request` approval handling while retaining the
-read-only sandbox ceiling. A concrete Codex file-change request may receive one
+Phase 5.3 activates Codex deterministic user-reviewed approval handling with a
+cwd-only, network-disabled workspace-write turn sandbox while retaining the
+native read-only/never fail-safe. FLORAL translates its `untrusted` policy to
+the pinned app-server wire value `unlessTrusted`. A concrete Codex file-change
+request may receive one
 owner/conversation-bound QQ grant; opaque command escalation still requires an
 independent Mac-local confirmation. Local confirmations use a private,
 service-session-bound mailbox under the FLORAL runtime directory and can be

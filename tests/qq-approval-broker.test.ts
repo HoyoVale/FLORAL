@@ -189,6 +189,10 @@ describe("QqApprovalBroker", () => {
 
   it("routes local-confirmation approvals through the Mac-local one-shot broker", async () => {
     const sent: string[] = [];
+    let resolveDelivery!: (text: string) => void;
+    const delivery = new Promise<string>((resolve) => {
+      resolveDelivery = resolve;
+    });
     const registry: McpRuntimeRegistry = {
       schemaVersion: 1,
       authorityVersion: 1,
@@ -217,7 +221,10 @@ describe("QqApprovalBroker", () => {
         mcpRegistry: registry,
       }),
       localConfirmation,
-      send: async (_conversationId, text) => { sent.push(text); },
+      send: async (_conversationId, text) => {
+        sent.push(text);
+        resolveDelivery(text);
+      },
       audit: async () => undefined,
     });
 
@@ -234,11 +241,11 @@ describe("QqApprovalBroker", () => {
       source: "codex",
     });
 
-    await new Promise((resolve) => setTimeout(resolve, 20));
-    expect(sent.at(-1)).toContain("本地审批编号=LOCAL777");
-    expect(sent.at(-1)).toContain("请求详情仅在 Mac 本地显示");
-    expect(sent.at(-1)).not.toContain("echo local");
-    expect(sent.at(-1)).toContain("QQ /approve 无法授权");
+    const prompt = await delivery;
+    expect(prompt).toContain("本地审批编号=LOCAL777");
+    expect(prompt).toContain("请求详情仅在 Mac 本地显示");
+    expect(prompt).not.toContain("echo local");
+    expect(prompt).toContain("QQ /approve 无法授权");
     expect(broker.pendingCount("conversation-1")).toBe(1);
     expect(await writeLocalApprovalDecision(directory, "LOCAL777", "approve")).toBe("written");
     await expect(decision).resolves.toBe("approve");
