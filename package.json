@@ -65,6 +65,7 @@
     "dev:watch": "tsx watch src/main.ts",
     "qq:sdk:check": "tsx scripts/qq-sdk-check.ts",
     "qq:typing:probe": "tsx scripts/qq-typing-probe.ts",
+    "qq:keyboard:probe": "tsx scripts/qq-keyboard-probe.ts",
     "qq:private:probe": "tsx scripts/qq-private-probe.ts",
     "qq:full-chain:probe": "tsx scripts/qq-full-chain-probe.ts",
     "qq:reconnect:probe": "tsx scripts/qq-reconnect-probe.ts",

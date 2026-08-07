@@ -82,6 +82,7 @@ async function runExclusiveProbe(): Promise<void> {
     logger: createProbeLogger(),
   });
 
+  const typingWireAudit = installTypingWireAudit(bot);
   const abortController = new AbortController();
   const ready = deferred<void>();
   const completion = deferred<void>();
@@ -148,6 +149,9 @@ async function runExclusiveProbe(): Promise<void> {
     }, env.QQBOT_PROBE_TIMEOUT_MS);
 
     await completion.promise;
+    typingWireAudit.assertValid();
+    console.log(`qq.typing_probe.wire_requests=${typingWireAudit.count()}`);
+    console.log("qq.typing_probe.wire_contract=qq-api-v2-msg-type-6");
     console.log("qq.typing_probe.sdk_result=ok");
     console.log("qq.typing_probe.visual_result=manual-check-required");
     console.log("qq.typing_probe.result=ok");
@@ -176,7 +180,7 @@ async function exerciseTyping(
   const deadline = Date.now() + visibleSeconds * 1_000;
   let attempts = 0;
   while (Date.now() < deadline) {
-    await bot.sendTyping(target as ReplyTarget);
+    await bot.sendTyping(target as ReplyTarget, 60);
     attempts += 1;
     console.log(`qq.typing_probe.signal=${attempts}:ok`);
     const remainingMs = deadline - Date.now();
@@ -191,6 +195,91 @@ async function exerciseTyping(
     "FLORAL typing probe 已完成。若刚才约 20 秒内手机 QQ 仍完全没有显示“正在输入”，则 SDK 调用成功但当前 QQ 客户端/机器人能力未渲染该状态。",
   );
   console.log("qq.typing_probe.passive_reply=ok");
+}
+
+interface TypingWireAudit {
+  count(): number;
+  assertValid(): void;
+}
+
+function installTypingWireAudit(bot: QQBot): TypingWireAudit {
+  type RequestFn = (
+    accessToken: string,
+    method: string,
+    path: string,
+    body?: unknown,
+  ) => Promise<unknown>;
+
+  const client = bot.apiClient as unknown as { request: RequestFn };
+  const originalRequest = client.request.bind(client) as RequestFn;
+  let count = 0;
+  let invalid = 0;
+  let firstLogged = false;
+
+  client.request = async (accessToken, method, path, body) => {
+    const record = asRecord(body);
+    if (
+      method === "POST"
+      && /^\/v2\/users\/[^/]+\/messages$/u.test(path)
+      && record?.msg_type === 6
+    ) {
+      count += 1;
+      const inputNotify = asRecord(record.input_notify);
+      const valid =
+        inputNotify?.input_type === 1
+        && inputNotify?.input_second === 60
+        && typeof record.msg_id === "string"
+        && record.msg_id.length > 0
+        && Number.isInteger(record.msg_seq)
+        && Number(record.msg_seq) >= 1;
+      if (!valid) invalid += 1;
+
+      if (!firstLogged) {
+        firstLogged = true;
+        console.log("qq.typing_probe.wire.method=POST");
+        console.log("qq.typing_probe.wire.path_shape=/v2/users/<openid>/messages");
+        console.log(`qq.typing_probe.wire.msg_type=${String(record.msg_type)}`);
+        console.log(
+          `qq.typing_probe.wire.input_type=${String(inputNotify?.input_type)}`,
+        );
+        console.log(
+          `qq.typing_probe.wire.input_second=${String(inputNotify?.input_second)}`,
+        );
+        console.log(
+          `qq.typing_probe.wire.msg_id=${
+            typeof record.msg_id === "string" && record.msg_id.length > 0
+              ? "present"
+              : "missing"
+          }`,
+        );
+        console.log(`qq.typing_probe.wire.msg_seq=${String(record.msg_seq)}`);
+        console.log(
+          `qq.typing_probe.wire.official_shape=${valid ? "ok" : "invalid"}`,
+        );
+      }
+    }
+    return await originalRequest(accessToken, method, path, body);
+  };
+
+  return {
+    count: () => count,
+    assertValid: () => {
+      if (count === 0) {
+        throw new Error("No msg_type=6 request reached the QQ SDK HTTP client");
+      }
+      if (invalid > 0) {
+        throw new Error(
+          `Observed ${invalid} typing request(s) outside the QQ API v2 contract`,
+        );
+      }
+    },
+  };
+}
+
+function asRecord(value: unknown): Record<string, unknown> | undefined {
+  return typeof value === "object" && value !== null
+    ? value as Record<string, unknown>
+    : undefined;
 }
 
 function parseVisibleSeconds(args: string[]): number {
