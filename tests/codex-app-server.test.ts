@@ -210,6 +210,23 @@ describe("CodexAppServerRuntime", () => {
     }
   });
 
+  it("prefers the terminal final answer over an earlier commentary message", async () => {
+    const runtime = createRuntime("terminal-final-after-commentary");
+    try {
+      await runtime.start();
+      const result = await runtime.run({
+        text: "inspect then summarize",
+        cwd: process.cwd(),
+      });
+
+      expect(result.finalText).toBe(
+        "FLORAL 当前处于 Phase 5.4 QQ Conversation UX 阶段。",
+      );
+    } finally {
+      await runtime.stop();
+    }
+  });
+
   it("surfaces provider usage limits as a typed error", async () => {
     const runtime = createRuntime("quota");
     try {

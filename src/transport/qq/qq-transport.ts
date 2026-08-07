@@ -93,7 +93,7 @@ export class QqDeliveryError extends Error {
   }
 }
 
-const QQ_TYPING_REFRESH_MS = 50_000;
+const QQ_TYPING_REFRESH_MS = 5_000;
 const QQ_TYPING_TIMEOUT_CAP_MS = 2_000;
 
 interface TypingSession {
@@ -355,7 +355,10 @@ export class QqTransport implements ChatTransport, ConversationActivityTransport
 
     try {
       await this.#sequenceOutbound(conversationId, () => withTimeout(
-        bot.sendTyping(cached.target),
+        bot.sendTyping({
+          ...cached.target,
+          msgId: cached.messageId,
+        }),
         Math.min(this.options.outboundTimeoutMs, QQ_TYPING_TIMEOUT_CAP_MS),
         "QQ typing indicator",
       ));
@@ -369,7 +372,7 @@ export class QqTransport implements ChatTransport, ConversationActivityTransport
         typingFailures: this.#diagnostics.typingFailures + 1,
       };
       process.stderr.write(
-        `qq.transport.typing_error=${safeErrorType(error)}\n`,
+        `qq.transport.typing_error=${safeErrorType(error)} reason=${safeErrorMessage(error)}\n`,
       );
     }
   }
@@ -530,6 +533,20 @@ function createRedactedLogger(): {
 function safeErrorType(error: unknown): string {
   if (error instanceof Error && error.name.trim()) return error.name;
   return "Error";
+}
+
+function safeErrorMessage(error: unknown): string {
+  const message = error instanceof Error ? error.message : String(error);
+  return JSON.stringify(
+    message
+      .replace(/[\u0000-\u001f\u007f]+/gu, " ")
+      .replace(/((?:api[_-]?key|token|secret|password)\s*[=:]\s*)[^\s,;]+/giu, "$1<redacted>")
+      .replace(/([?&](?:api[_-]?key|token|secret|password)=)[^&\s]+/giu, "$1<redacted>")
+      .replace(/Bearer\s+[^\s,;]+/giu, "Bearer <redacted>")
+      .replace(/\s+/gu, " ")
+      .trim()
+      .slice(0, 240) || "unknown",
+  );
 }
 
 async function withTimeout<T>(

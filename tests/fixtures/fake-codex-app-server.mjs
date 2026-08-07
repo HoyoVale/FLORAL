@@ -235,6 +235,75 @@ lines.on("line", (line) => {
         return;
       }
 
+      if (scenario === "terminal-final-after-commentary") {
+        send({
+          method: "item/completed",
+          params: {
+            threadId: activeThreadId,
+            turnId: activeTurnId,
+            item: {
+              id: "commentary_1",
+              type: "agentMessage",
+              text: "我先看一下路线图和最近的阶段文档，确认当前开发进度：",
+              phase: "commentary",
+            },
+          },
+        });
+        send({
+          method: "item/started",
+          params: {
+            threadId: activeThreadId,
+            turnId: activeTurnId,
+            item: {
+              id: "mcp_1",
+              type: "mcpToolCall",
+              server: "floral_search",
+              tool: "searxng_web_search",
+              status: "inProgress",
+            },
+          },
+        });
+        send({
+          method: "item/completed",
+          params: {
+            threadId: activeThreadId,
+            turnId: activeTurnId,
+            item: {
+              id: "mcp_1",
+              type: "mcpToolCall",
+              server: "floral_search",
+              tool: "searxng_web_search",
+              status: "completed",
+            },
+          },
+        });
+        send({
+          method: "turn/completed",
+          params: {
+            threadId: activeThreadId,
+            turn: {
+              id: activeTurnId,
+              status: "completed",
+              items: [
+                {
+                  id: "commentary_1",
+                  type: "agentMessage",
+                  text: "我先看一下路线图和最近的阶段文档，确认当前开发进度：",
+                  phase: "commentary",
+                },
+                {
+                  id: "final_1",
+                  type: "agentMessage",
+                  text: "FLORAL 当前处于 Phase 5.4 QQ Conversation UX 阶段。",
+                  phase: "final_answer",
+                },
+              ],
+            },
+          },
+        });
+        return;
+      }
+
       if (scenario === "timeout") return;
       if (scenario === "exit-turn") {
         process.stderr.write("fixture forced exit\n");

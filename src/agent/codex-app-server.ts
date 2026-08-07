@@ -309,8 +309,8 @@ export class CodexAppServerRuntime implements AgentRuntime {
       const result = {
         threadId,
         finalText: authoritativeText
-          || lastAgentMessageText
           || readFinalAgentText(terminal.params.turn.items)
+          || lastAgentMessageText
           || streamedText
           || "Codex turn completed without an agent message.",
       };
@@ -671,6 +671,18 @@ function readTextDelta(value: AgentDeltaParams): string | undefined {
 
 function readFinalAgentText(items: unknown[] | undefined): string | undefined {
   if (!items) return undefined;
+
+  for (let index = items.length - 1; index >= 0; index -= 1) {
+    const item = asRecord(items[index]);
+    if (
+      item?.type === "agentMessage"
+      && item.phase === "final_answer"
+      && typeof item.text === "string"
+    ) {
+      return item.text;
+    }
+  }
+
   for (let index = items.length - 1; index >= 0; index -= 1) {
     const item = asRecord(items[index]);
     if (item?.type === "agentMessage" && typeof item.text === "string") return item.text;
