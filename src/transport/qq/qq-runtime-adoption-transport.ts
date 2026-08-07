@@ -15,12 +15,9 @@ import {
 } from "../../config/adoption/qq-runtime-options-adoption.js";
 import {
   supportsConversationActivity,
-  supportsInteractiveApproval,
   type ChatTransport,
   type ConversationActivityState,
   type ConversationActivityTransport,
-  type InteractiveApprovalPrompt,
-  type InteractiveApprovalTransport,
 } from "../../core/contracts.js";
 import type { IncomingMessage, OutgoingMessage } from "../../core/types.js";
 import { assertInstalledQqSdkVersion } from "./qq-sdk-contract.js";
@@ -34,7 +31,7 @@ export interface QqRuntimeAdoptionDependencies {
 }
 
 export class QqRuntimeAdoptionTransport
-  implements ChatTransport, ConversationActivityTransport, InteractiveApprovalTransport
+  implements ChatTransport, ConversationActivityTransport
 {
   readonly name = "qq-open-platform";
   #active: ChatTransport | undefined;
@@ -75,16 +72,10 @@ export class QqRuntimeAdoptionTransport
     await active.setConversationActivity(conversationId, state);
   }
 
-  async sendInteractiveApprovalPrompt(
-    prompt: InteractiveApprovalPrompt,
-  ): Promise<void> {
-    const active = this.#active;
-    if (!active || !supportsInteractiveApproval(active)) {
-      throw new Error("Active QQ transport does not support interactive approvals");
-    }
-    await active.sendInteractiveApprovalPrompt(prompt);
-  }
-
+  // Phase 5 closure: keep native Inline Keyboard support in QqTransport and the
+  // direct probe, but do not advertise it through the production adoption wrapper
+  // until QQ grants the message-template / Inline Keyboard capability. Gateway's
+  // structural capability detection therefore selects the stable text approval path.
   async stop(): Promise<void> {
     if (this.#stopped) return;
     this.#stopped = true;

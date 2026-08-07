@@ -252,7 +252,7 @@
 - 5.4A-2: SDK-native typing indicator plus one per-conversation outbound sequencer; real-device correction keeps `msgId` only on passive text replies, sends typing with a bare `ReplyTarget`, uses a short keepalive cadence, preserves assistant+tool-call history across the DeepSeek bridge, and rejects pre-tool commentary as a terminal answer.
 - 5.4A-2.3: direct QQ SDK typing visibility probe; isolates client/platform rendering from FLORAL runtime when the SDK reports success but mobile QQ shows no indicator.
 - 5.4A-2.4: isolated probe confirmed repeated SDK typing success with no mobile rendering; production native typing is therefore disabled and replaced by a configurable single delayed visible activity fallback for long real-QQ runs.
-- 5.4B: QQ Inline Keyboard `[允许一次] [拒绝]` for existing remote one-shot approvals; callbacks re-enter the normal identity/command path, unknown or expired interactions fail closed, and text commands remain a delivery fallback. Native Markdown stays decoupled from authorization.
+- 5.4B: QQ Inline Keyboard `[允许一次] [拒绝]` implementation and probes are complete, but production exposure is platform-gated while message-template approval is pending; stable `/approve <id>` and `/deny <id>` remain the production path. Native Markdown stays decoupled from authorization.
 - Authorization semantics remain owned by the existing policy and approval layers.
 
 ## Phase 6 — macOS GUI and visual MCP

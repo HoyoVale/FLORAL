@@ -1,0 +1,14 @@
+# Canonical repository text format. Adding this file does not renormalize the
+# existing working tree; do that only in a dedicated future maintenance change.
+* text=auto eol=lf
+
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.webp binary
+*.gif binary
+*.ico binary
+*.zip binary
+*.pdf binary
+*.sqlite binary
+*.db binary

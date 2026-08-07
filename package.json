@@ -64,6 +64,8 @@
     "mac:smoke": "bash scripts/mac-smoke.sh",
     "dev:watch": "tsx watch src/main.ts",
     "qq:sdk:check": "tsx scripts/qq-sdk-check.ts",
+    "feishu:sdk:check": "tsx scripts/feishu-sdk-check.ts",
+    "feishu:private:probe": "tsx scripts/feishu-private-probe.ts",
     "qq:typing:probe": "tsx scripts/qq-typing-probe.ts",
     "qq:keyboard:probe": "tsx scripts/qq-keyboard-probe.ts",
     "qq:private:probe": "tsx scripts/qq-private-probe.ts",
@@ -94,6 +96,7 @@
     "approval:local:deny": "tsx scripts/local-approval.ts deny"
   },
   "dependencies": {
+    "@larksuiteoapi/node-sdk": "1.36.0",
     "@tencent-connect/qqbot-nodejs": "1.0.4",
     "better-auth": "^1.6.25",
     "better-sqlite3": "^12.2.0",

@@ -19,8 +19,6 @@ import type {
   ChatTransport,
   ConversationActivityState,
   ConversationActivityTransport,
-  InteractiveApprovalPrompt,
-  InteractiveApprovalTransport,
 } from "../src/core/contracts.js";
 import type { IncomingMessage, OutgoingMessage } from "../src/core/types.js";
 import { QqRuntimeAdoptionTransport } from "../src/transport/qq/qq-runtime-adoption-transport.js";
@@ -49,20 +47,15 @@ class FakeTransport implements ChatTransport {
 
 class ActivityFakeTransport
   extends FakeTransport
-  implements ConversationActivityTransport, InteractiveApprovalTransport
+  implements ConversationActivityTransport
 {
   readonly activities: Array<{ conversationId: string; state: ConversationActivityState }> = [];
-  readonly approvals: InteractiveApprovalPrompt[] = [];
 
   async setConversationActivity(
     conversationId: string,
     state: ConversationActivityState,
   ): Promise<void> {
     this.activities.push({ conversationId, state });
-  }
-
-  async sendInteractiveApprovalPrompt(prompt: InteractiveApprovalPrompt): Promise<void> {
-    this.approvals.push(prompt);
   }
 }
 
@@ -114,25 +107,11 @@ describe("QQ runtime options adoption", () => {
     await transport.start(async () => undefined);
     await transport.setConversationActivity("conversation", "typing");
     await transport.setConversationActivity("conversation", "idle");
-    await transport.sendInteractiveApprovalPrompt({
-      conversationId: "conversation",
-      approvalId: "APPROVE123",
-      capability: "files.write",
-      summary: "write",
-      ttlMs: 60_000,
-    });
 
     expect(active.activities).toEqual([
       { conversationId: "conversation", state: "typing" },
       { conversationId: "conversation", state: "idle" },
     ]);
-    expect(active.approvals).toEqual([{
-      conversationId: "conversation",
-      approvalId: "APPROVE123",
-      capability: "files.write",
-      summary: "write",
-      ttlMs: 60_000,
-    }]);
     await transport.stop();
   });
 

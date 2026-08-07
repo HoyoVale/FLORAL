@@ -101,6 +101,28 @@ Native Markdown remains separate from this approval callback work. It can be eva
 7. Trigger `shell.execute`. QQ must still show the Mac-local confirmation notice, never remote approval buttons.
 8. `qq:sdk:check` must confirm `sendTextWithKeyboard` and `acknowledgeInteraction` exist in the pinned SDK contract.
 
+### 5.4B closure — platform-gated production exposure
+
+Real-device validation showed that the current bot can successfully send the approval
+message body while both minimal API v2 callback (`type=1`) and command (`type=2`)
+Inline Keyboards remain invisible. QQ separately gates message-template / Inline
+Keyboard capability, and the application has been submitted for that platform review.
+
+Until that capability is approved, production must remain operable rather than treating
+an accepted-but-invisible keyboard request as a usable approval surface:
+
+- `QqTransport` keeps the implemented Inline Keyboard and interaction callback code;
+- `qq:keyboard:probe` remains available for re-validation after platform approval;
+- `QqRuntimeAdoptionTransport` deliberately does not expose
+  `InteractiveApprovalTransport`, so Gateway capability detection selects the existing
+  command approval path;
+- remote-confirmable `files.write` therefore presents the approval ID plus
+  `/approve <id>` and `/deny <id>`;
+- `shell.execute` remains Mac-local and `system.admin` remains denied.
+
+This closes Phase 5 without deleting the native implementation. Re-enabling it later is
+a transport-capability exposure change after QQ platform review, not an authorization redesign.
+
 ## Phase 5.4A-2.3 — Native typing visibility isolation
 
 Real-device validation can reach `qq.transport.typing_session=started scope=c2c`

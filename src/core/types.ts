@@ -1,4 +1,4 @@
-export type TransportKind = "qq" | "mock";
+export type TransportKind = "qq" | "feishu" | "mock";
 export type GatewayRole = "owner" | "operator" | "viewer";
 
 export type Capability =
