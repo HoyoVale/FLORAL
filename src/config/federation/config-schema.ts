@@ -79,6 +79,12 @@ export const requestedConfigSchema = z.object({
     approval: z.object({
       policy: z.enum(["never", "on-request", "on-failure", "untrusted"]),
     }).strict(),
+    memories: z.object({
+      enabled: z.boolean(),
+      use_memories: z.boolean(),
+      generate_memories: z.boolean(),
+      disable_on_external_context: z.boolean(),
+    }).strict(),
     native: z.object({
       provider_id: z.string().trim().min(1),
       wire_api: z.literal("responses"),
@@ -307,6 +313,12 @@ export interface RequestedConfig {
     native_web_search: boolean;
     sandbox: { mode: "read-only" | "workspace-write" | "danger-full-access" };
     approval: { policy: "never" | "on-request" | "on-failure" | "untrusted" };
+    memories: {
+      enabled: boolean;
+      use_memories: boolean;
+      generate_memories: boolean;
+      disable_on_external_context: boolean;
+    };
     native: {
       provider_id: string;
       wire_api: "responses";
@@ -532,6 +544,12 @@ export const DEFAULT_REQUESTED_CONFIG: RequestedConfig = {
     native_web_search: false,
     sandbox: { mode: "read-only" },
     approval: { policy: "never" },
+    memories: {
+      enabled: true,
+      use_memories: true,
+      generate_memories: true,
+      disable_on_external_context: false,
+    },
     native: {
       provider_id: "floral-deepseek",
       wire_api: "responses",

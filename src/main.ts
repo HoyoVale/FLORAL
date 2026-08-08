@@ -1,6 +1,10 @@
 import { homedir } from "node:os";
 import { resolve } from "node:path";
 import { ManagedCodexDeepSeekRuntime } from "./agent/managed-codex-deepseek-runtime.js";
+import {
+  readCodexNativeMemoryRuntimeStatus,
+  renderCodexNativeMemoryRuntimeLines,
+} from "./agent/codex-native-memory-status.js";
 import { MockAgentRuntime } from "./agent/mock-agent.js";
 import { loadEnv } from "./config/env.js";
 import {
@@ -139,11 +143,19 @@ const gateway = new GatewayService(
       policy: artifactEgressPolicy,
     },
     runtimeStatusLines: async () => {
-      const snapshot = await readDeepSeekCostGuardSnapshot(
-        repositoryRoot,
-        authority.effective.runtime.cost_guard,
-      );
+      const [snapshot, nativeMemory] = await Promise.all([
+        readDeepSeekCostGuardSnapshot(
+          repositoryRoot,
+          authority.effective.runtime.cost_guard,
+        ),
+        readCodexNativeMemoryRuntimeStatus({
+          repositoryRoot,
+          managedHome: authority.effective.codex.managed_home,
+          config: authority.effective.codex.memories,
+        }),
+      ]);
       return [
+        ...renderCodexNativeMemoryRuntimeLines(nativeMemory),
         `cost_guard=${snapshot.blockedReason ? `blocked:${snapshot.blockedReason}` : "ready"}`,
         `cost_24h=¥${snapshot.estimatedCostCny.day.toFixed(3)}/${authority.effective.runtime.cost_guard.max_cost_cny_per_day.toFixed(2)}`,
         `tokens_24h=${String(snapshot.tokens.day)}/${String(authority.effective.runtime.cost_guard.max_tokens_per_day)}`,

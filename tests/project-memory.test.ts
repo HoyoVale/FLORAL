@@ -2,6 +2,7 @@ import {
   mkdir,
   mkdtemp,
   readFile,
+  realpath,
   rm,
   writeFile,
 } from "node:fs/promises";
@@ -19,7 +20,8 @@ describe("project durable memory", () => {
     const root = await mkdtemp(join(tmpdir(), "floral-project-memory-"));
     const projectDir = join(root, "Probe");
     await mkdir(projectDir);
-    const project = { name: "Probe", path: projectDir };
+    const canonicalProjectDir = await realpath(projectDir);
+    const project = { name: "Probe", path: canonicalProjectDir };
 
     try {
       await bootstrapProjectContext(project);
@@ -69,7 +71,7 @@ describe("project durable memory", () => {
         issueEntries: 1,
       });
 
-      const context = await readFile(join(projectDir, ".floral", "CONTEXT.md"), "utf8");
+      const context = await readFile(join(canonicalProjectDir, ".floral", "CONTEXT.md"), "utf8");
       expect(context).toContain("2026-08-08T14:00:00.000Z");
       expect(context).toContain("Windows 端修改，Mac 端只 git pull。");
       expect(context.match(/FLORAL:MEM:/gu)).toHaveLength(1);
@@ -82,7 +84,8 @@ describe("project durable memory", () => {
     const root = await mkdtemp(join(tmpdir(), "floral-project-memory-guard-"));
     const projectDir = join(root, "Probe");
     await mkdir(projectDir);
-    const project = { name: "Probe", path: projectDir };
+    const canonicalProjectDir = await realpath(projectDir);
+    const project = { name: "Probe", path: canonicalProjectDir };
 
     try {
       await bootstrapProjectContext(project);
@@ -92,7 +95,7 @@ describe("project durable memory", () => {
         "x".repeat(1_201),
       )).rejects.toThrow(/exceeds 1200 characters/u);
 
-      const contextPath = join(projectDir, ".floral", "CONTEXT.md");
+      const contextPath = join(canonicalProjectDir, ".floral", "CONTEXT.md");
       await writeFile(
         contextPath,
         `${await readFile(contextPath, "utf8")}\n<!-- FLORAL:PROJECT-MEMORY:BEGIN -->\n`,

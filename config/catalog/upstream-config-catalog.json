@@ -210,6 +210,21 @@
           ]
         },
         {
+          "id": "native-memory",
+          "classification": "upstream-managed",
+          "coverage": "Phase-7.4A-managed-config-with-runtime-probe",
+          "knownKeys": [
+            "features.memories",
+            "memories.use_memories",
+            "memories.generate_memories",
+            "memories.disable_on_external_context",
+            "CODEX_HOME/memories (diagnostic-only generated state)",
+            "thread/memoryMode/set (experimental app-server; unavailable on current production probe)",
+            "memory/reset (experimental app-server; unavailable on current production probe)"
+          ],
+          "notes": "Phase 7.4A enables Codex-native memories in the unified generated config. The memory store is Codex-owned CODEX_HOME state, not a FLORAL database. FLORAL inspects generated artifacts only for diagnostics and does not edit them. Project AGENTS/repo docs remain the deterministic source of truth if recalled memory conflicts."
+        },
+        {
           "id": "native-advanced",
           "classification": "upstream-passthrough",
           "coverage": "inventory-only",
@@ -217,7 +232,7 @@
             "profiles",
             "project-scoped .codex/config.toml",
             "shell environment inheritance and filtering",
-            "history and memories",
+            "history",
             "skills and agents",
             "hooks",
             "feature flags",
@@ -243,7 +258,9 @@
         "app-server generated schemas",
         "managed CODEX_HOME config path",
         "rendered config fingerprint",
-        "managed model catalog fingerprint"
+        "managed model catalog fingerprint",
+        "codex features list (memories feature state)",
+        "managed CODEX_HOME/memories presence (diagnostic-only)"
       ]
     },
     {
@@ -1169,6 +1186,14 @@
       "file": "src/workspace/project-context.ts",
       "needle": "const MAX_MEMORY_FILE_BYTES = 64 * 1024;",
       "risk": "Project memory files are durable model guidance and must remain bounded, regular, project-local files with fail-closed marker validation."
+    },
+    {
+      "id": "codex.native-memory-config",
+      "component": "codex",
+      "classification": "upstream-managed",
+      "file": "src/config/adapters/codex-native-config.ts",
+      "needle": "`memories = ${String(config.codex.memories.enabled)}`",
+      "risk": "Native memory must be enabled through the generated Codex config authority; direct edits to CODEX_HOME memory artifacts are not a supported control surface."
     }
   ],
   "environmentKeyPolicies": {

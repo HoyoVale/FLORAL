@@ -85,6 +85,15 @@ mode = "read-only"
 # Locked Phase 4.0 safety baseline.
 policy = "never"
 
+[codex.memories]
+# Phase 7.4A adopts Codex-native durable memories. The memory store belongs
+# to the managed CODEX_HOME; project files/AGENTS remain the deterministic
+# project source of truth when any recalled memory conflicts with the repo.
+enabled = true
+use_memories = true
+generate_memories = true
+disable_on_external_context = false
+
 [codex.native]
 # Native Codex config.toml fields. "inherit" maps DeepSeek high/max to
 # Codex high/xhigh. Provider identity and web-search policy remain locked.

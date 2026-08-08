@@ -52,6 +52,10 @@ describe("Codex unified shadow adoption", () => {
     expect(comparison.status).toBe("compatible");
     expect(comparison.expectedUnifiedOnlyAssignments).toEqual([
       "approval_policy",
+      "features.memories",
+      "memories.disable_on_external_context",
+      "memories.generate_memories",
+      "memories.use_memories",
       "model_reasoning_summary",
       "sandbox_mode",
     ]);

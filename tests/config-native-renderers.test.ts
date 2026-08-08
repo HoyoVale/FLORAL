@@ -78,6 +78,12 @@ describe("native configuration adapters", () => {
     expect(output).toContain('model_reasoning_summary = "concise"');
     expect(output).toContain(`base_url = "${CODEX_BRIDGE_BASE_URL_PLACEHOLDER}"`);
     expect(output).toContain(`model_catalog_json = "${CODEX_MODEL_CATALOG_PATH_PLACEHOLDER}"`);
+    expect(output).toContain("[features]");
+    expect(output).toContain("memories = true");
+    expect(output).toContain("[memories]");
+    expect(output).toContain("use_memories = true");
+    expect(output).toContain("generate_memories = true");
+    expect(output).toContain("disable_on_external_context = false");
     expect(output).toContain("[mcp_servers.floral_search]");
     expect(output).toContain('default_tools_approval_mode = "approve"');
     expect(output).toContain('[mcp_servers.floral_search.tools.searxng_web_search]');

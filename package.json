@@ -48,6 +48,7 @@
     "codex:capabilities:json": "tsx scripts/codex-capability-baseline.ts json",
     "codex:capabilities:write": "tsx scripts/codex-capability-baseline.ts write",
     "codex:capabilities:check": "tsx scripts/codex-capability-baseline.ts check",
+    "codex:native-memory:probe": "tsx scripts/codex-native-memory-probe.ts",
     "deepseek:probe": "tsx scripts/deepseek-probe.ts",
     "bridge:start": "tsx scripts/responses-bridge.ts",
     "bridge:probe": "tsx scripts/responses-bridge-probe.ts",

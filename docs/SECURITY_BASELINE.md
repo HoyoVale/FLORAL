@@ -114,3 +114,12 @@ This section supersedes the conflicting Phase 5.2/5.3 bullets above for Codex-na
 - Exact categorized entries are deduplicated by SHA-256-derived marker. Audit records retain the fingerprint and metadata, not the raw durable-memory text.
 - Malformed FLORAL memory markers or concurrent file changes fail closed.
 
+
+## Phase 7.4A Codex-native memory boundary
+
+- Native memories are enabled only through FLORAL's generated unified Codex config; direct editing of files under `CODEX_HOME/memories` is not a supported control path.
+- Codex owns extraction, consolidation, storage, and recall. FLORAL may inspect only bounded existence/status metadata for diagnostics and must not treat generated memory files as a second application database.
+- `memories.disable_on_external_context=false` is explicit for the first native-memory adoption pass. In Codex semantics, setting it to `true` lets external-context sources mark a thread memory mode as `polluted`; FLORAL does not add a second interpretation of that state.
+- Native memory currently has `CODEX_HOME` scope, not FLORAL Project scope. Therefore project `AGENTS.md`, repository documentation, and other project-local sources of truth take precedence over recalled memory when they disagree.
+- The existing controlled-cutover fallback is retained. If the installed Codex cannot parse or activate the native memory configuration, FLORAL rolls back to legacy config rather than preventing service startup; diagnostics must surface that memory is not active.
+- Memory-generation provider traffic still traverses the FLORAL model bridge and cost guard; enabling memories does not bypass provider accounting or request limits.

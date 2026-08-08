@@ -64,3 +64,11 @@ Phase 7.3B keeps Codex thread history and project-shared durable memory separate
 
 Writes are bounded, deduplicated, audited by fingerprint rather than raw text, and rejected while an Agent run is active. Existing project files remain the source of truth; this phase does not introduce a second database or Codex-internal memory dependency.
 
+
+## Phase 7.4A Codex-native memory adoption
+
+FLORAL now enables the Codex native memories subsystem through the same generated `CODEX_HOME/config.toml` authority used for the rest of the Codex runtime. The unified config emits `features.memories=true` plus `memories.use_memories=true`, `memories.generate_memories=true`, and `memories.disable_on_external_context=false`.
+
+The native memory store belongs to Codex under the managed `CODEX_HOME`; FLORAL does not parse or mutate Codex memory artifacts as an application database. `CODEX_HOME/memories` is inspected only for diagnostics. The controlled unified-config cutover remains the compatibility gate: if the installed Codex rejects the memory config, startup falls back to the established legacy config and status/probe output reports native memory as configured but not active.
+
+Codex native memories are cross-thread recall state, while project `AGENTS.md` and repository/project documents remain deterministic project guidance. If recalled memory conflicts with the checked-in project source of truth, the project source wins. Phase 7.3 explicit `.floral` project notes remain temporarily available as a compatibility layer but are not extended into an automatic FLORAL memory engine.

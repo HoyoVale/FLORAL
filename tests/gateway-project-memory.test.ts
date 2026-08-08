@@ -2,6 +2,7 @@ import {
   mkdir,
   mkdtemp,
   readFile,
+  realpath,
   rm,
 } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -115,16 +116,17 @@ async function createFixture(role: ResolvedGatewayIdentity["role"]) {
   const root = await mkdtemp(join(tmpdir(), "floral-gateway-memory-"));
   const projectDir = join(root, "Probe");
   await mkdir(projectDir);
-  await bootstrapProjectContext({ name: "Probe", path: projectDir });
+  const canonicalProjectDir = await realpath(projectDir);
+  await bootstrapProjectContext({ name: "Probe", path: canonicalProjectDir });
   const transport = new TestTransport();
   const store = new RoleStore(role);
   store.selected.set("conversation-1", "Probe");
   const gateway = new GatewayService(transport, new NoopAgent(), store, {
-    cwd: projectDir,
+    cwd: canonicalProjectDir,
     workspace: new ProjectWorkspaceRoot(root),
   });
   await gateway.start();
-  return { root, projectDir, transport, store, gateway };
+  return { root, projectDir: canonicalProjectDir, transport, store, gateway };
 }
 
 describe("Gateway explicit durable project memory", () => {

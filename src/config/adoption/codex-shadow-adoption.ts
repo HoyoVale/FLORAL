@@ -66,6 +66,10 @@ export interface PrepareCodexConfigAdoptionOptions {
 
 const EXPECTED_UNIFIED_ONLY_ASSIGNMENTS = [
   "approval_policy",
+  "features.memories",
+  "memories.disable_on_external_context",
+  "memories.generate_memories",
+  "memories.use_memories",
   "model_reasoning_summary",
   "sandbox_mode",
 ] as const;
