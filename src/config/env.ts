@@ -60,6 +60,7 @@ const envSchema = z.object({
   CODEX_MANAGED_HOME: z.string().trim().min(1).default("./data/codex-runtime"),
   CODEX_REQUEST_TIMEOUT_MS: z.coerce.number().int().positive().default(120_000),
   DEEPSEEK_API_KEY: optionalNonEmptyString,
+  MIMO_API_KEY: optionalNonEmptyString,
   DEEPSEEK_BASE_URL: z.string().url().default("https://api.deepseek.com"),
   DEEPSEEK_MODEL: z.string().trim().min(1).default("deepseek-v4-flash"),
   DEEPSEEK_REQUEST_TIMEOUT_MS: z.coerce.number().int().positive().default(120_000),

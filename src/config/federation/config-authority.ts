@@ -23,6 +23,7 @@ export interface ConfigurationProvenance {
 
 export type SecretId =
   | "deepseek_api_key"
+  | "mimo_api_key"
   | "qq_app_id"
   | "qq_app_secret"
   | "feishu_app_id"
@@ -69,6 +70,7 @@ interface EnvironmentBinding {
 
 export const SECRET_ENVIRONMENT_REFERENCES: Record<SecretId, string> = {
   deepseek_api_key: "DEEPSEEK_API_KEY",
+  mimo_api_key: "MIMO_API_KEY",
   qq_app_id: "QQBOT_APP_ID",
   qq_app_secret: "QQBOT_APP_SECRET",
   feishu_app_id: "FEISHU_APP_ID",
@@ -465,6 +467,13 @@ function validateCrossFieldRules(
   }
   if (config.mcp.search.enabled && config.mcp.search.enabled_tools.length === 0) {
     throw new Error("mcp.search.enabled requires at least one enabled tool");
+  }
+  if (config.mcp.vision.enabled) {
+    const actualVisionTools = [...config.mcp.vision.enabled_tools].sort();
+    const expectedVisionTools = ["vision_analyze_region", "vision_analyze_screen"];
+    if (JSON.stringify(actualVisionTools) !== JSON.stringify(expectedVisionTools)) {
+      throw new Error("mcp.vision.enabled requires exactly the FLORAL-owned vision tool surface");
+    }
   }
   for (const [id, tools] of [
     ["search", config.mcp.search.enabled_tools],

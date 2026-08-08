@@ -1,3 +1,10 @@
+import {
+  resolveFloralVisionRuntime,
+} from "../mcp/mcp-runtime-registry.js";
+import {
+  DEFAULT_MIMO_VISION_BASE_URL,
+  DEFAULT_MIMO_VISION_MODEL,
+} from "../mcp/vision/floral-vision-contract.js";
 import { createHash } from "node:crypto";
 import { chmod, mkdir, readFile, rename, rm, writeFile } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
@@ -92,6 +99,28 @@ function isAllowedPeekabooObserveOnlyUnifiedAssignment(
   return expected === undefined || expected === assignment;
 }
 
+const visionRuntime = resolveFloralVisionRuntime();
+const VISION_READ_ONLY_UNIFIED_ASSIGNMENTS = new Map<string, string>([
+  ["mcp_servers.floral_vision.command", JSON.stringify(process.execPath)],
+  ["mcp_servers.floral_vision.args", JSON.stringify([visionRuntime.serverEntrypoint])],
+  [
+    "mcp_servers.floral_vision.env",
+    `{ FLORAL_VISION_ALLOWED_ROOT = ${JSON.stringify(visionRuntime.allowedRoot)}, MIMO_BASE_URL = ${JSON.stringify(DEFAULT_MIMO_VISION_BASE_URL)}, MIMO_VISION_MODEL = ${JSON.stringify(DEFAULT_MIMO_VISION_MODEL)} }`,
+  ],
+  ["mcp_servers.floral_vision.env_vars", '["MIMO_API_KEY"]'],
+  ["mcp_servers.floral_vision.enabled_tools", '["vision_analyze_region", "vision_analyze_screen"]'],
+  ["mcp_servers.floral_vision.required", "false"],
+  ["mcp_servers.floral_vision.startup_timeout_sec", "60"],
+  ["mcp_servers.floral_vision.tool_timeout_sec", "120"],
+  ["mcp_servers.floral_vision.default_tools_approval_mode", '"approve"'],
+  ["mcp_servers.floral_vision.tools.vision_analyze_region.approval_mode", '"approve"'],
+  ["mcp_servers.floral_vision.tools.vision_analyze_screen.approval_mode", '"approve"'],
+]);
+
+function isAllowedVisionReadOnlyUnifiedAssignment(path: string, assignment: string): boolean {
+  return VISION_READ_ONLY_UNIFIED_ASSIGNMENTS.get(path) === assignment;
+}
+
 export async function prepareCodexConfigAdoption(
   options: PrepareCodexConfigAdoptionOptions,
 ): Promise<CodexConfigAdoptionResult> {
@@ -183,7 +212,10 @@ export function compareCodexShadowConfigs(input: {
       if (expectedUnifiedOnly.has(path)) return false;
       const assignment = unified.get(path);
       return assignment === undefined
-        || !isAllowedPeekabooObserveOnlyUnifiedAssignment(path, assignment);
+        || !(
+          isAllowedPeekabooObserveOnlyUnifiedAssignment(path, assignment)
+          || isAllowedVisionReadOnlyUnifiedAssignment(path, assignment)
+        );
     })
     .sort();
   const missingExpectedUnifiedOnlyAssignments = [...expectedUnifiedOnly]

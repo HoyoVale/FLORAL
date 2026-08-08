@@ -38,6 +38,7 @@ async function createEmptyMcpRegistry() {
   });
   const config = structuredClone(authority.effective);
   config.mcp.search.enabled = false;
+  config.mcp.vision.enabled = false;
   config.mcp.macos.enabled = false;
   return buildMcpRuntimeRegistry(config);
 }

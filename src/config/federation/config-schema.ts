@@ -216,6 +216,11 @@ export const requestedConfigSchema = z.object({
       enabled: z.boolean(),
       id: z.string().trim().min(1),
       enabled_tools: strictStringArray,
+      required: z.boolean(),
+      startup_timeout_sec: positiveInteger,
+      tool_timeout_sec: positiveInteger,
+      default_tools_approval_mode: z.enum(["auto", "prompt", "writes", "approve"]),
+      tool_approval_mode: z.enum(["auto", "prompt", "writes", "approve"]),
       inherit_parent_environment: z.boolean(),
     }).strict(),
     macos: z.object({
@@ -436,6 +441,11 @@ export interface RequestedConfig {
       enabled: boolean;
       id: string;
       enabled_tools: string[];
+      required: boolean;
+      startup_timeout_sec: number;
+      tool_timeout_sec: number;
+      default_tools_approval_mode: "auto" | "prompt" | "writes" | "approve";
+      tool_approval_mode: "auto" | "prompt" | "writes" | "approve";
       inherit_parent_environment: boolean;
     };
     macos: {
@@ -659,6 +669,11 @@ export const DEFAULT_REQUESTED_CONFIG: RequestedConfig = {
       enabled: false,
       id: "floral_vision",
       enabled_tools: ["vision_analyze_screen", "vision_analyze_region"],
+      required: false,
+      startup_timeout_sec: 60,
+      tool_timeout_sec: 120,
+      default_tools_approval_mode: "approve",
+      tool_approval_mode: "approve",
       inherit_parent_environment: false,
     },
     macos: {
@@ -701,6 +716,9 @@ export const LOCKED_CONFIG_VALUES = {
   "mcp.search.default_tools_approval_mode": "approve",
   "mcp.search.tool_approval_mode": "approve",
   "mcp.search.inherit_parent_environment": false,
+  "mcp.vision.required": false,
+  "mcp.vision.default_tools_approval_mode": "approve",
+  "mcp.vision.tool_approval_mode": "approve",
   "mcp.vision.inherit_parent_environment": false,
   "mcp.macos.profile": "observe",
   "mcp.macos.expected_version": "3.10.0",

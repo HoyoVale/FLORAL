@@ -717,7 +717,7 @@
     {
       "id": "mimo-vision",
       "displayName": "MiMo V2.5 vision provider",
-      "integrationStatus": "planned",
+      "integrationStatus": "active",
       "versionSource": "configured remote model ID and API response",
       "officialSources": [
         "https://github.com/XiaomiMiMo",
@@ -727,7 +727,7 @@
         {
           "id": "provider",
           "classification": "upstream-managed",
-          "coverage": "endpoint-schema-unverified",
+          "coverage": "active-fixed-endpoint-model",
           "knownKeys": [
             "API endpoint",
             "API key",
@@ -737,12 +737,12 @@
             "image size limits",
             "structured output support"
           ],
-          "notes": "The exact MiMo V2.5 endpoint schema must be frozen from the user's purchased endpoint documentation before implementation."
+          "notes": "Phase 6A.2B fixes the official HTTPS MiMo endpoint and mimo-v2.5 model behind the FLORAL-owned gateway."
         },
         {
           "id": "floral-vision-mcp",
           "classification": "floral-owned",
-          "coverage": "planned",
+          "coverage": "active-owned-gateway",
           "knownKeys": [
             "evidence ID input only",
             "allowed image directory",
@@ -755,7 +755,7 @@
         {
           "id": "secrets",
           "classification": "locked",
-          "coverage": "planned",
+          "coverage": "active-secretref-env-name-only",
           "knownKeys": [
             "MIMO_API_KEY",
             "child-process-only secret injection",
@@ -1369,6 +1369,10 @@
     "SEARXNG_URL": {
       "component": "searxng",
       "classification": "upstream-managed"
+    },
+    "MIMO_API_KEY": {
+      "component": "mimo-vision",
+      "classification": "locked"
     }
   }
 }

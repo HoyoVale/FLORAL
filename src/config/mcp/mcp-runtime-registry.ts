@@ -1,14 +1,19 @@
+import { basename, dirname, join, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 import { createHash } from "node:crypto";
 import type { EffectiveConfig } from "../federation/config-authority.js";
+import {
+  DEFAULT_MIMO_VISION_BASE_URL,
+  DEFAULT_MIMO_VISION_MODEL,
+  FLORAL_VISION_TOOLS,
+} from "./vision/floral-vision-contract.js";
 
 export type McpIntegrationStatus = "active" | "planned";
 export type McpApprovalMode = "auto" | "prompt" | "writes" | "approve";
 
-export interface McpRuntimeEnvironmentEntry {
-  name: string;
-  kind: "literal";
-  value: string;
-}
+export type McpRuntimeEnvironmentEntry =
+  | { name: string; kind: "literal"; value: string }
+  | { name: string; kind: "passthrough" };
 
 export interface McpRuntimeStdioTransport {
   type: "stdio";
@@ -45,8 +50,33 @@ export interface McpRuntimeRegistry {
   registryFingerprint: string;
 }
 
+export interface FloralVisionRuntimePaths {
+  repositoryRoot: string;
+  serverEntrypoint: string;
+  allowedRoot: string;
+}
+
+export function resolveFloralVisionRuntime(): FloralVisionRuntimePaths {
+  const moduleRoot = resolve(dirname(fileURLToPath(import.meta.url)), "../../..");
+  const repositoryRoot = basename(moduleRoot) === "dist" ? dirname(moduleRoot) : moduleRoot;
+  return {
+    repositoryRoot,
+    serverEntrypoint: join(repositoryRoot, "dist", "scripts", "floral-vision-mcp.js"),
+    allowedRoot: join(repositoryRoot, "artifacts", "outbound", "floral_peekaboo"),
+  };
+}
+
 export function buildMcpRuntimeRegistry(config: EffectiveConfig): McpRuntimeRegistry {
   const search = config.mcp.search;
+  const visionRuntime = resolveFloralVisionRuntime();
+  const visionTools = [...config.mcp.vision.enabled_tools].sort();
+  const expectedVisionTools = [...FLORAL_VISION_TOOLS].sort();
+  if (
+    config.mcp.vision.enabled
+    && JSON.stringify(visionTools) !== JSON.stringify(expectedVisionTools)
+  ) {
+    throw new Error("FLORAL vision MCP tool surface drift");
+  }
   const servers: McpRuntimeServer[] = [
     {
       id: search.id,
@@ -80,14 +110,33 @@ export function buildMcpRuntimeRegistry(config: EffectiveConfig): McpRuntimeRegi
     {
       id: config.mcp.vision.id,
       enabled: config.mcp.vision.enabled,
-      integrationStatus: "planned",
-      tools: [...config.mcp.vision.enabled_tools].sort().map((name) => ({
+      integrationStatus: "active",
+      transport: {
+        type: "stdio",
+        command: process.execPath,
+        args: [visionRuntime.serverEntrypoint],
+        inheritParentEnvironment: config.mcp.vision.inherit_parent_environment,
+        environment: [
+          { name: "FLORAL_VISION_ALLOWED_ROOT", kind: "literal", value: visionRuntime.allowedRoot },
+          { name: "MIMO_BASE_URL", kind: "literal", value: DEFAULT_MIMO_VISION_BASE_URL },
+          { name: "MIMO_VISION_MODEL", kind: "literal", value: DEFAULT_MIMO_VISION_MODEL },
+          { name: "MIMO_API_KEY", kind: "passthrough" },
+        ],
+      },
+      required: config.mcp.vision.required,
+      startupTimeoutSec: config.mcp.vision.startup_timeout_sec,
+      toolTimeoutSec: config.mcp.vision.tool_timeout_sec,
+      defaultToolsApprovalMode: config.mcp.vision.default_tools_approval_mode,
+      tools: visionTools.map((name) => ({
         name,
         enabled: true,
-        approvalMode: "prompt",
+        approvalMode: config.mcp.vision.tool_approval_mode,
       })),
       provider: {
         kind: "mimo-vision",
+        model: DEFAULT_MIMO_VISION_MODEL,
+        endpoint: DEFAULT_MIMO_VISION_BASE_URL,
+        inputRoot: "floral-peekaboo-artifacts-only",
         inheritParentEnvironment: config.mcp.vision.inherit_parent_environment,
       },
     },
@@ -155,12 +204,27 @@ export function renderCodexMcpLines(registry: McpRuntimeRegistry): string[] {
     if (!server.enabled || server.integrationStatus !== "active") continue;
     const transport = requireStdioTransport(server);
     const enabledTools = server.tools.filter((tool) => tool.enabled);
+    const literalEnvironment = transport.environment.filter(
+      (entry): entry is Extract<McpRuntimeEnvironmentEntry, { kind: "literal" }> => entry.kind === "literal",
+    );
+    const passthroughEnvironment = transport.environment.filter(
+      (entry) => entry.kind === "passthrough",
+    );
     lines.push(
       "",
       `[mcp_servers.${tomlKey(server.id)}]`,
       `command = ${tomlString(transport.command)}`,
       `args = ${tomlArray(transport.args)}`,
-      `env = { ${transport.environment.map((entry) => `${tomlKey(entry.name)} = ${tomlString(entry.value)}`).join(", ")} }`,
+    );
+    if (literalEnvironment.length > 0) {
+      lines.push(
+        `env = { ${literalEnvironment.map((entry) => `${tomlKey(entry.name)} = ${tomlString(entry.value)}`).join(", ")} }`,
+      );
+    }
+    if (passthroughEnvironment.length > 0) {
+      lines.push(`env_vars = ${tomlArray(passthroughEnvironment.map((entry) => entry.name))}`);
+    }
+    lines.push(
       `enabled_tools = ${tomlArray(enabledTools.map((tool) => tool.name))}`,
       `required = ${String(requireBoolean(server.required, `${server.id}.required`))}`,
       `startup_timeout_sec = ${positiveInteger(server.startupTimeoutSec, `${server.id}.startupTimeoutSec`)}`,

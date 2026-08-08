@@ -31,11 +31,15 @@ describe("MCP runtime registry", () => {
       server.enabled,
     ])).toEqual([
       ["floral_search", "active", true],
-      ["floral_vision", "planned", false],
+      ["floral_vision", "active", true],
       ["floral_peekaboo", "active", true],
     ]);
     expect(registry.servers[0]?.tools.map((tool) => tool.name)).toEqual([
       "searxng_web_search",
+    ]);
+    expect(registry.servers[1]?.tools.map((tool) => tool.name)).toEqual([
+      "vision_analyze_region",
+      "vision_analyze_screen",
     ]);
     expect(registry.servers[2]?.tools.map((tool) => tool.name)).toEqual([
       "image",

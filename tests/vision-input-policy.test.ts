@@ -1,4 +1,4 @@
-import { mkdtempSync, mkdirSync, writeFileSync, symlinkSync, linkSync } from "node:fs";
+import { linkSync, mkdirSync, mkdtempSync, realpathSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
@@ -17,7 +17,7 @@ describe("FLORAL vision input policy", () => {
   it("accepts a regular screenshot inside the configured FLORAL root", () => {
     const { screenshots, image } = fixture();
     const resolved = resolveTrustedVisionArtifact({ artifactPath: image, allowedRoot: screenshots });
-    expect(resolved.absolutePath).toBe(image);
+    expect(resolved.absolutePath).toBe(realpathSync(image));
     expect(resolved.extension).toBe(".png");
   });
 

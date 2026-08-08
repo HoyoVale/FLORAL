@@ -236,9 +236,16 @@ tool_approval_mode = "approve"
 inherit_parent_environment = false
 
 [mcp.vision]
-enabled = false
+# Phase 6A.2B activates FLORAL's owned read-only vision gateway. The MiMo API
+# key stays in local .env and is passed to Codex only by environment name.
+enabled = true
 id = "floral_vision"
 enabled_tools = ["vision_analyze_screen", "vision_analyze_region"]
+required = false
+startup_timeout_sec = 60
+tool_timeout_sec = 120
+default_tools_approval_mode = "approve"
+tool_approval_mode = "approve"
 inherit_parent_environment = false
 
 [mcp.macos]
