@@ -1,4 +1,4 @@
-import { resolve } from "node:path";
+import { join, resolve } from "node:path";
 import { describe, expect, it } from "vitest";
 import {
   FLORAL_PEEKABOO_GATEWAY_TOOLS,
@@ -6,7 +6,9 @@ import {
   buildObservationArtifactPath,
   buildPeekabooChildEnvironment,
   buildPeekabooImageArguments,
+  buildPeekabooMcpArguments,
   buildPeekabooSeeArguments,
+  resolvePeekabooBridgeSocketPath,
 } from "../src/config/mcp/peekaboo/floral-peekaboo-gateway.js";
 
 describe("FLORAL Peekaboo observation gateway", () => {
@@ -18,6 +20,23 @@ describe("FLORAL Peekaboo observation gateway", () => {
     expect(env).not.toHaveProperty("MIMO_API_KEY");
     expect(env).not.toHaveProperty("DEEPSEEK_API_KEY");
     expect(env).not.toHaveProperty("QQBOT_APP_SECRET");
+  });
+
+  it("pins the upstream MCP server to the permissioned Peekaboo Bridge socket", () => {
+    const home = resolve("/Users/floral-test");
+    const socket = resolvePeekabooBridgeSocketPath(home);
+    expect(socket).toBe(
+      join(home, "Library", "Application Support", "Peekaboo", "bridge.sock"),
+    );
+    expect(buildPeekabooMcpArguments(socket)).toEqual([
+      "mcp",
+      "--bridge-socket",
+      socket,
+    ]);
+  });
+
+  it("rejects a non-absolute Bridge socket path", () => {
+    expect(() => buildPeekabooMcpArguments("bridge.sock")).toThrow(/socket path is invalid/u);
   });
 
   it("forces image captures to a FLORAL-controlled PNG without AI or foreground focus", () => {

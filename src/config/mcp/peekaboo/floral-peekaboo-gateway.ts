@@ -1,5 +1,5 @@
 import { homedir, tmpdir, userInfo } from "node:os";
-import { join, resolve } from "node:path";
+import { isAbsolute, join, resolve } from "node:path";
 
 export const FLORAL_PEEKABOO_GATEWAY_NAME = "floral-peekaboo";
 export const FLORAL_PEEKABOO_GATEWAY_VERSION = "0.1.0";
@@ -25,6 +25,28 @@ export function buildPeekabooChildEnvironment(): Record<string, string> {
     PEEKABOO_AI_PROVIDERS: "",
     PEEKABOO_LOG_LEVEL: "warn",
   };
+}
+
+export function resolvePeekabooBridgeSocketPath(
+  homeDirectory = homedir(),
+): string {
+  const home = homeDirectory.trim();
+  if (!home || /[\r\n\0]/u.test(home)) {
+    throw new Error("Peekaboo Bridge home directory is invalid");
+  }
+  const socketPath = join(home, "Library", "Application Support", "Peekaboo", "bridge.sock");
+  if (!isAbsolute(socketPath)) {
+    throw new Error("Peekaboo Bridge socket path must be absolute");
+  }
+  return socketPath;
+}
+
+export function buildPeekabooMcpArguments(bridgeSocket: string): string[] {
+  const socket = bridgeSocket.trim();
+  if (!socket || !isAbsolute(socket) || /[\r\n\0]/u.test(socket)) {
+    throw new Error("Peekaboo Bridge socket path is invalid");
+  }
+  return ["mcp", "--bridge-socket", socket];
 }
 
 export function buildObservationArtifactPath(options: {

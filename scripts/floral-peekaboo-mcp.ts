@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { chmod, mkdir } from "node:fs/promises";
+import { chmod, mkdir, stat } from "node:fs/promises";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
@@ -12,8 +12,10 @@ import {
   buildObservationArtifactPath,
   buildPeekabooChildEnvironment,
   buildPeekabooImageArguments,
+  buildPeekabooMcpArguments,
   buildPeekabooSeeArguments,
   extractMcpTextContent,
+  resolvePeekabooBridgeSocketPath,
 } from "../src/config/mcp/peekaboo/floral-peekaboo-gateway.js";
 import { resolveTrustedVisionArtifact } from "../src/config/mcp/vision/vision-input-policy.js";
 
@@ -27,6 +29,7 @@ if (!allowedRoot) {
   throw new Error("FLORAL_PEEKABOO_ALLOWED_ROOT must be explicitly injected by FLORAL");
 }
 await mkdir(allowedRoot, { recursive: true, mode: 0o700 });
+const bridgeSocket = resolvePeekabooBridgeSocketPath();
 
 type UpstreamConnection = {
   client: Client;
@@ -40,6 +43,18 @@ async function connectUpstream(): Promise<UpstreamConnection> {
   if (upstream) return upstream;
   if (connecting) return await connecting;
 
+  const bridgeStat = await stat(bridgeSocket).catch((error: unknown) => {
+    const detail = error instanceof Error ? error.message : String(error);
+    throw new Error(
+      `Peekaboo Bridge socket is unavailable at ${bridgeSocket}: ${detail}`,
+    );
+  });
+  if (!bridgeStat.isSocket()) {
+    throw new Error(
+      `Peekaboo Bridge path is not a Unix socket: ${bridgeSocket}`,
+    );
+  }
+
   connecting = (async () => {
     const client = new Client({
       name: "floral-peekaboo-upstream-client",
@@ -47,7 +62,7 @@ async function connectUpstream(): Promise<UpstreamConnection> {
     });
     const transport = new StdioClientTransport({
       command: peekabooCommand,
-      args: ["mcp"],
+      args: buildPeekabooMcpArguments(bridgeSocket),
       env: buildPeekabooChildEnvironment(),
     });
     try {
