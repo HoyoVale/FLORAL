@@ -116,7 +116,7 @@ export function redactNativeMemoryErrorExcerpt(value: unknown): string | undefin
   let text = normalized
     .replace(/\bBearer\s+[A-Za-z0-9._~+\/-]+=*/giu, "Bearer <redacted>")
     .replace(/\bsk-[A-Za-z0-9_-]{8,}\b/gu, "<redacted-secret>")
-    .replace(/\b(?:api[_-]?key|token|secret|password)\s*[:=]\s*[^\s,;]+/giu, "$1=<redacted>")
+    .replace(/\b(api[_-]?key|token|secret|password)\s*[:=]\s*[^\s,;]+/giu, "$1=<redacted>")
     .replace(/https?:\/\/[^\s)}>'"]+/giu, "<redacted-url>")
     .replace(/\/Users\/[^/\s]+/gu, "$HOME")
     .replace(/\/Volumes\/[^/\s]+/gu, "$VOLUME")
