@@ -29,6 +29,51 @@ function sse(text: string, status = 200, headers?: Record<string, string>): Resp
 }
 
 describe("DeepSeek streaming protocol", () => {
+  it("uses requestTimeoutMs as an idle timeout instead of a total stream lifetime cap", async () => {
+    const encoder = new TextEncoder();
+    const fetchImpl: typeof fetch = async () => {
+      const body = new ReadableStream<Uint8Array>({
+        start(controller) {
+          setTimeout(() => {
+            controller.enqueue(encoder.encode(
+              `data: ${JSON.stringify({
+                model: "deepseek-v4-flash",
+                choices: [{ delta: { reasoning_content: "still working" }, finish_reason: null }],
+              })}
+
+`,
+            ));
+          }, 100);
+          setTimeout(() => {
+            controller.enqueue(encoder.encode(
+              `data: ${JSON.stringify({
+                model: "deepseek-v4-flash",
+                choices: [{ delta: { content: "done" }, finish_reason: "stop" }],
+              })}
+
+`,
+            ));
+          }, 200);
+          setTimeout(() => {
+            controller.enqueue(encoder.encode("data: [DONE]\n\n"));
+            controller.close();
+          }, 300);
+        },
+      });
+      return new Response(body, {
+        status: 200,
+        headers: { "content-type": "text/event-stream" },
+      });
+    };
+
+    const stream = streamDeepSeekChat(request, options(fetchImpl, 180));
+    const chunks = [];
+    for await (const chunk of stream) chunks.push(chunk);
+
+    expect(chunks.some((chunk) => chunk.reasoningDelta === "still working")).toBe(true);
+    expect(chunks.some((chunk) => chunk.contentDelta === "done")).toBe(true);
+  });
+
   it("rejects malformed SSE JSON as a non-retryable protocol error", async () => {
     const stream = streamDeepSeekChat(
       request,

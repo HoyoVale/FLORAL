@@ -27,10 +27,15 @@ export async function* streamDeepSeekChat(
   const controller = new AbortController();
   let timedOut = false;
   let completed = false;
-  const timeout = setTimeout(() => {
-    timedOut = true;
-    controller.abort(new Error("provider request timeout"));
-  }, options.requestTimeoutMs);
+  let timeout: ReturnType<typeof setTimeout> | undefined;
+  const armIdleTimeout = () => {
+    if (timeout) clearTimeout(timeout);
+    timeout = setTimeout(() => {
+      timedOut = true;
+      controller.abort(new Error("provider stream idle timeout"));
+    }, options.requestTimeoutMs);
+  };
+  armIdleTimeout();
   const onAbort = () => controller.abort(signal?.reason);
   signal?.addEventListener("abort", onAbort, { once: true });
 
@@ -71,6 +76,10 @@ export async function* streamDeepSeekChat(
         signal: controller.signal,
       },
     );
+    // The configured timeout is a streaming inactivity budget, not a hard
+    // wall-clock cap. A healthy long-running reasoning/tool stream must be
+    // allowed to continue as long as the provider keeps producing bytes.
+    armIdleTimeout();
 
     if (!response.ok) {
       const text = await response.text();
@@ -94,7 +103,7 @@ export async function* streamDeepSeekChat(
     }
 
     let sawDone = false;
-    for await (const data of readSseData(response.body)) {
+    for await (const data of readSseData(response.body, armIdleTimeout)) {
       if (data === "[DONE]") {
         sawDone = true;
         completed = true;
@@ -153,7 +162,7 @@ export async function* streamDeepSeekChat(
     if (timedOut) {
       throw new ModelProviderError({
         kind: "timeout",
-        message: `DeepSeek streaming request timed out after ${options.requestTimeoutMs}ms`,
+        message: `DeepSeek streaming request was idle for ${options.requestTimeoutMs}ms`,
         retryable: true,
         cause: error,
       });
@@ -167,7 +176,7 @@ export async function* streamDeepSeekChat(
       cause: error,
     });
   } finally {
-    clearTimeout(timeout);
+    if (timeout) clearTimeout(timeout);
     signal?.removeEventListener("abort", onAbort);
     if (!completed && !controller.signal.aborted) {
       controller.abort(new Error("provider stream closed before completion"));
@@ -175,7 +184,10 @@ export async function* streamDeepSeekChat(
   }
 }
 
-async function* readSseData(stream: ReadableStream<Uint8Array>): AsyncGenerator<string> {
+async function* readSseData(
+  stream: ReadableStream<Uint8Array>,
+  onActivity?: () => void,
+): AsyncGenerator<string> {
   const reader = stream.getReader();
   const decoder = new TextDecoder();
   let buffer = "";
@@ -188,8 +200,8 @@ async function* readSseData(stream: ReadableStream<Uint8Array>): AsyncGenerator<
         reachedEof = true;
         break;
       }
+      onActivity?.();
       buffer += decoder.decode(value, { stream: true }).replace(/\r\n/g, "\n");
-
       let boundary = buffer.indexOf("\n\n");
       while (boundary >= 0) {
         const frame = buffer.slice(0, boundary);
