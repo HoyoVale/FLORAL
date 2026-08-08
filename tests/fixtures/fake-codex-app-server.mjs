@@ -233,7 +233,6 @@ lines.on("line", (line) => {
             mode: "form",
             _meta: {
               codex_approval_kind: "mcp_tool_call",
-              tool_name: "click",
               tool_title: "Click",
               tool_params: {
                 snapshot: "snapshot-1",

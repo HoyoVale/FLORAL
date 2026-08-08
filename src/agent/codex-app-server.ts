@@ -49,6 +49,7 @@ interface ItemLifecycleParams {
     server?: string;
     tool?: string;
     status?: string;
+    arguments?: unknown;
     error?: unknown;
     command?: string;
     cwd?: string;
@@ -87,6 +88,15 @@ interface TurnTerminalState {
   errorNotification: unknown;
 }
 
+interface InFlightMcpToolCall {
+  threadId: string;
+  turnId: string;
+  itemId: string;
+  server: string;
+  tool: string;
+  arguments: Record<string, unknown>;
+}
+
 export class CodexAppServerRuntime implements AgentRuntime {
   readonly name = "codex-app-server";
   readonly #client: CodexRpcClient;
@@ -100,6 +110,7 @@ export class CodexAppServerRuntime implements AgentRuntime {
   readonly #eventHandlers = new Map<string, (event: AgentEvent) => void>();
   readonly #approvalHandlers = new Map<string, AgentApprovalHandler>();
   readonly #approvalItemSummaries = new Map<string, string>();
+  readonly #inFlightMcpToolCalls = new Map<string, InFlightMcpToolCall>();
   #started = false;
 
   constructor(options: CodexAppServerOptions) {
@@ -210,6 +221,14 @@ export class CodexAppServerRuntime implements AgentRuntime {
         if (approvalSummary) this.#approvalItemSummaries.set(approvalItemKey(threadId, itemId), approvalSummary);
       }
 
+      const inFlightMcpTool = readInFlightMcpToolCall(params, threadId);
+      if (inFlightMcpTool) {
+        this.#inFlightMcpToolCalls.set(
+          approvalItemKey(threadId, inFlightMcpTool.itemId),
+          inFlightMcpTool,
+        );
+      }
+
       const tool = readMcpToolEvent(params.item);
       if (!tool) return;
       onEvent?.({
@@ -224,7 +243,11 @@ export class CodexAppServerRuntime implements AgentRuntime {
       if (!matchesTurn(params, threadId, activeTurnId)) return;
 
       const itemId = params.item?.id;
-      if (itemId) this.#approvalItemSummaries.delete(approvalItemKey(threadId, itemId));
+      if (itemId) {
+        const key = approvalItemKey(threadId, itemId);
+        this.#approvalItemSummaries.delete(key);
+        this.#inFlightMcpToolCalls.delete(key);
+      }
 
       const tool = readMcpToolEvent(params.item);
       if (tool) {
@@ -362,6 +385,7 @@ export class CodexAppServerRuntime implements AgentRuntime {
       this.#eventHandlers.delete(threadId);
       this.#approvalHandlers.delete(threadId);
       this.#deleteApprovalItemSummaries(threadId);
+      this.#deleteInFlightMcpToolCalls(threadId);
     }
   }
 
@@ -385,6 +409,7 @@ export class CodexAppServerRuntime implements AgentRuntime {
     this.#eventHandlers.clear();
     this.#approvalHandlers.clear();
     this.#approvalItemSummaries.clear();
+    this.#inFlightMcpToolCalls.clear();
     await this.#client.stop();
   }
 
@@ -496,7 +521,13 @@ export class CodexAppServerRuntime implements AgentRuntime {
     }
 
     if (request.method === "mcpServer/elicitation/request") {
-      const approval = buildMcpToolApprovalRequest(request);
+      const serverId = readString(params?.serverName);
+      const correlatedTurnId = readString(params?.turnId)
+        ?? (threadId ? this.#activeTurns.get(threadId) : undefined);
+      const context = threadId && correlatedTurnId && serverId
+        ? this.#resolveMcpToolApprovalContext(threadId, correlatedTurnId, serverId)
+        : undefined;
+      const approval = buildMcpToolApprovalRequest(request, context);
       if (!approval) {
         this.#respondSafely(request.id, { action: "decline", content: null, _meta: null });
         return;
@@ -527,10 +558,34 @@ export class CodexAppServerRuntime implements AgentRuntime {
     });
   }
 
+  #resolveMcpToolApprovalContext(
+    threadId: string,
+    turnId: string,
+    serverId: string,
+  ): InFlightMcpToolCall | undefined {
+    const matches = [...this.#inFlightMcpToolCalls.values()].filter((call) =>
+      call.threadId === threadId
+      && call.turnId === turnId
+      && call.server === serverId
+      && capabilityForMcpTool(call.server, call.tool) === "application.control"
+    );
+    // The real Codex elicitation intentionally does not carry tool_name. Only
+    // correlate when exactly one in-flight control-capable MCP call exists for
+    // this thread/turn/server. Parallel ambiguous mutations fail closed.
+    return matches.length === 1 ? matches[0] : undefined;
+  }
+
   #deleteApprovalItemSummaries(threadId: string): void {
     const prefix = `${threadId}:`;
     for (const key of this.#approvalItemSummaries.keys()) {
       if (key.startsWith(prefix)) this.#approvalItemSummaries.delete(key);
+    }
+  }
+
+  #deleteInFlightMcpToolCalls(threadId: string): void {
+    const prefix = `${threadId}:`;
+    for (const key of this.#inFlightMcpToolCalls.keys()) {
+      if (key.startsWith(prefix)) this.#inFlightMcpToolCalls.delete(key);
     }
   }
 
@@ -652,6 +707,7 @@ function buildCodexApprovalRequest(
 
 function buildMcpToolApprovalRequest(
   request: CodexServerRequest,
+  context: InFlightMcpToolCall | undefined,
 ): AgentApprovalRequest | undefined {
   const params = asRecord(request.params);
   if (readString(params?.mode) !== "form") return undefined;
@@ -659,8 +715,8 @@ function buildMcpToolApprovalRequest(
   if (readString(metadata?.codex_approval_kind) !== "mcp_tool_call") return undefined;
 
   const serverId = readString(params?.serverName);
-  const toolName = readString(metadata?.tool_name);
-  if (serverId !== "floral_peekaboo" || toolName !== "click") return undefined;
+  if (!context || serverId !== context.server || context.tool !== "click") return undefined;
+  const toolName = context.tool;
 
   const schema = asPlainRecord(params?.requestedSchema);
   const properties = asPlainRecord(schema?.properties);
@@ -671,7 +727,10 @@ function buildMcpToolApprovalRequest(
   const capability = capabilityForMcpTool(serverId, toolName);
   if (capability !== "application.control") return undefined;
   const toolParams = asPlainRecord(metadata?.tool_params);
-  const intent = redactApprovalText(readString(toolParams?.intent));
+  if (!toolParams || !sameMcpClickApprovalArguments(toolParams, context.arguments)) {
+    return undefined;
+  }
+  const intent = redactApprovalText(readString(context.arguments.intent));
   const summary = intent
     ? `MCP ${serverId}/${toolName} 请求执行一次操作：${intent}`
     : `MCP ${serverId}/${toolName} 请求执行一次 ${capability} 操作。`;
@@ -684,6 +743,20 @@ function buildMcpToolApprovalRequest(
     mcpServerId: serverId,
     mcpToolName: toolName,
   };
+}
+
+function sameMcpClickApprovalArguments(
+  metadataArguments: Record<string, unknown>,
+  lifecycleArguments: Record<string, unknown>,
+): boolean {
+  const expectedKeys = ["intent", "on", "snapshot"];
+  const metadataKeys = Object.keys(metadataArguments).sort();
+  const lifecycleKeys = Object.keys(lifecycleArguments).sort();
+  if (JSON.stringify(metadataKeys) !== JSON.stringify(expectedKeys)) return false;
+  if (JSON.stringify(lifecycleKeys) !== JSON.stringify(expectedKeys)) return false;
+  return expectedKeys.every((key) =>
+    readString(metadataArguments[key]) === readString(lifecycleArguments[key])
+  );
 }
 
 function redactApprovalText(value: string | undefined): string | undefined {
@@ -711,6 +784,33 @@ function isUnavailableThreadResume(error: unknown): boolean {
   return message.includes("thread not loaded")
     || message.includes("thread not found")
     || message.includes("no rollout found");
+}
+
+function readInFlightMcpToolCall(
+  params: ItemLifecycleParams,
+  fallbackThreadId: string,
+): InFlightMcpToolCall | undefined {
+  const item = params.item;
+  if (
+    item?.type !== "mcpToolCall"
+    || typeof item.id !== "string"
+    || typeof item.server !== "string"
+    || typeof item.tool !== "string"
+    || capabilityForMcpTool(item.server, item.tool) !== "application.control"
+  ) {
+    return undefined;
+  }
+  const turnId = readString(params.turnId);
+  const argumentsValue = asPlainRecord(item.arguments);
+  if (!turnId || !argumentsValue) return undefined;
+  return {
+    threadId: readString(params.threadId) ?? fallbackThreadId,
+    turnId,
+    itemId: item.id,
+    server: item.server,
+    tool: item.tool,
+    arguments: argumentsValue,
+  };
 }
 
 function readMcpToolEvent(
