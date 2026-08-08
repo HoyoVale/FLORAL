@@ -142,3 +142,13 @@ This section supersedes the conflicting Phase 5.2/5.3 bullets above for Codex-na
 - Raw memory columns are never selected. Raw `jobs.last_error` may be inspected in-process only to classify the failure into a bounded non-secret category; the original error text is never returned to chat/CLI diagnostics.
 - Schema drift is fail-soft. Missing or changed upstream tables return `schema-unsupported` rather than causing FLORAL startup failure.
 - The diagnostic must never be used as a supported Codex repair API. Upstream-owned state remains upstream-owned.
+
+## Native Memory local forensics boundary
+
+`codex:native-memory:forensics` is intentionally local-terminal-only. It does not mutate the
+Codex state database and does not read `raw_memory`, rollout-summary, `MEMORY.md`, or project
+conversation contents. The only free-form field it touches is the Phase-2 job `last_error`.
+Before display, FLORAL normalizes control characters, truncates output, and redacts bearer
+credentials, API-key/token-like assignments, OpenAI-style secret tokens, URLs, user-home and
+volume roots, email addresses, and long quoted payloads. The raw error is never sent through
+Feishu and is represented separately by a short SHA-256 fingerprint for correlation.

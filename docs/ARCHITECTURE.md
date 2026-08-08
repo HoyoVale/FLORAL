@@ -90,3 +90,23 @@ Phase 7.4C adds a bounded forensic surface for the observed `generated -> consol
 The diagnostic discovers the active upstream schema dynamically. When the expected `jobs` / `stage1_outputs` tables are present it reports bounded counts, the global `memory_consolidate_global` job state, retry budget, selected-for-phase2 count, workspace-diff/git-baseline presence, and a sanitized error category such as `sandbox`, `timeout`, `context-window`, or `provider`. Raw `last_error` text is never surfaced because it may contain private paths or provider details. Unknown/new Codex schemas fail soft as `schema-unsupported` rather than becoming a runtime dependency.
 
 This layer exists only to decide whether the blocker is upstream scheduling, sandbox/process launch, provider/model execution, or artifact production. Any repair remains upstream-first: FLORAL does not patch Codex job rows or replace the consolidation worker. The independently observed Feishu inbound image/file gap is tracked for the next transport phase and is deliberately not mixed into memory diagnostics.
+
+## Phase 7.4D — Native Memory error forensics
+
+When Phase 2 diagnostics stop at `blocked:unknown`, FLORAL provides a local-terminal-only
+forensic command instead of widening remote diagnostics or taking over Codex memory:
+
+```text
+pnpm codex:native-memory:forensics
+```
+
+The command opens only the managed Codex memory/state SQLite database in read-only mode,
+selects allow-listed job metadata plus `last_error`, and immediately converts the error to:
+
+- a deterministic SHA-256 fingerprint;
+- a bounded (600-character maximum) redacted excerpt;
+- retry / attempt / timestamp metadata when those upstream columns exist.
+
+The excerpt is never exposed through Feishu `/memory diagnose`. It exists only so the Mac
+operator can identify an upstream Codex failure class when the bounded remote classifier
+returns `unknown`.
