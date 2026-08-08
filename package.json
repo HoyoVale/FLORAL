@@ -96,7 +96,9 @@
     "policy:check": "tsx scripts/authorization-policy.ts --check",
     "approval:local:list": "tsx scripts/local-approval.ts list",
     "approval:local:approve": "tsx scripts/local-approval.ts approve",
-    "approval:local:deny": "tsx scripts/local-approval.ts deny"
+    "approval:local:deny": "tsx scripts/local-approval.ts deny",
+    "vision:mcp": "tsx scripts/floral-vision-mcp.ts",
+    "vision:probe": "tsx scripts/mimo-vision-probe.ts"
   },
   "dependencies": {
     "@larksuiteoapi/node-sdk": "1.36.0",
@@ -105,7 +107,8 @@
     "better-sqlite3": "^12.2.0",
     "fastify": "^5.10.0",
     "pino": "^9.9.0",
-    "zod": "^4.1.0"
+    "zod": "^4.1.0",
+    "@modelcontextprotocol/sdk": "^1.29.0"
   },
   "devDependencies": {
     "@types/better-sqlite3": "^7.6.13",

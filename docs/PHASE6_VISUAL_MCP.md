@@ -59,7 +59,7 @@ Both tools map to `screen.capture`. The 5F.4C egress policy separately requires
 
 ## Target-Mac baseline
 
-Phase 6A.1 is pinned to Peekaboo `3.9.8`.
+Phase 6A.1 is pinned to Peekaboo `3.10.0`.
 
 ```bash
 brew install steipete/tap/peekaboo
@@ -97,7 +97,7 @@ diagnostic screenshot before exit.
 Expected tail:
 
 ```text
-peekaboo.probe.version=3.9.8
+peekaboo.probe.version=3.10.0
 peekaboo.probe.tools=image,see
 peekaboo.probe.permissions_command=ok
 peekaboo.probe.capture=ok
