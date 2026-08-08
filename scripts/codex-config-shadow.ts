@@ -1,4 +1,4 @@
-import { dirname, resolve } from "node:path";
+import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import {
   assessCodexShadowReport,
@@ -8,8 +8,10 @@ import {
 } from "../src/config/adoption/codex-shadow-adoption.js";
 import { renderCodexConfig } from "../src/config/adapters/codex-native-config.js";
 import { resolveConfigurationAuthority } from "../src/config/federation/config-authority.js";
+import { loadProjectEnv } from "../src/config/load-project-env.js";
 
 const repositoryRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
+loadProjectEnv(join(repositoryRoot, ".env"));
 const mode = process.argv[2] ?? "show";
 if (!new Set(["show", "json", "check"]).has(mode)) {
   throw new Error(`Unknown Codex shadow mode: ${mode}`);
