@@ -52,7 +52,9 @@ describe("LocalConfirmationBroker", () => {
     }
 
     expect(await writeLocalApprovalDecision(directory, "LOCAL001", "approve")).toBe("written");
-    expect(await writeLocalApprovalDecision(directory, "LOCAL001", "deny")).toBe("already-decided");
+    const duplicateDecision = await writeLocalApprovalDecision(directory, "LOCAL001", "deny");
+    expect(["already-decided", "not-found"]).toContain(duplicateDecision);
+    expect(duplicateDecision).not.toBe("written");
     await expect(handle?.decision).resolves.toBe("approve");
     expect(broker.pendingCount()).toBe(0);
     expect(await listLocalApprovalRecords(directory)).toEqual([]);

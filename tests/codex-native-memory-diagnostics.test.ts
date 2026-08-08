@@ -54,6 +54,11 @@ describe("Codex native memory Phase 2 diagnostics", () => {
           job_key TEXT NOT NULL,
           status TEXT NOT NULL,
           retry_remaining INTEGER,
+          started_at INTEGER,
+          finished_at INTEGER,
+          retry_at INTEGER,
+          input_watermark INTEGER,
+          last_success_watermark INTEGER,
           last_error TEXT
         );
         INSERT INTO stage1_outputs(thread_id, selected_for_phase2) VALUES ('a', 0), ('b', 0);
@@ -61,20 +66,28 @@ describe("Codex native memory Phase 2 diagnostics", () => {
           VALUES ('memory_stage1', 'a', 'done', 0, NULL);
         INSERT INTO jobs(kind, job_key, status, retry_remaining, last_error)
           VALUES ('memory_stage1', 'b', 'done', 0, NULL);
-        INSERT INTO jobs(kind, job_key, status, retry_remaining, last_error)
-          VALUES (
-            'memory_consolidate_global',
-            'global',
-            'error',
-            2,
-            'sandbox-exec: sandbox_apply: Operation not permitted /Users/private/path'
-          );
+        INSERT INTO jobs(
+          kind, job_key, status, retry_remaining, started_at, finished_at, retry_at,
+          input_watermark, last_success_watermark, last_error
+        ) VALUES (
+          'memory_consolidate_global',
+          'global',
+          'error',
+          2,
+          1786207620,
+          1786207657,
+          1786208257,
+          1786207600,
+          0,
+          'sandbox-exec: sandbox_apply: Operation not permitted /Users/private/path'
+        );
       `);
       db.close();
 
       const result = await readCodexNativeMemoryPhase2Diagnostics({
         managedHome: home,
         runtime: generatedRuntime(),
+        nowMs: 1_786_207_700_000,
       });
       expect(result).toMatchObject({
         database: "read-only",
@@ -85,15 +98,55 @@ describe("Codex native memory Phase 2 diagnostics", () => {
         phase2Job: "present",
         phase2Status: "error",
         phase2RetryRemaining: 2,
+        phase2StartedAt: "2026-08-08T16:47:00.000Z",
+        phase2FinishedAt: "2026-08-08T16:47:37.000Z",
+        phase2RetryAt: "2026-08-08T16:57:37.000Z",
+        phase2RetryState: "backoff",
+        phase2RetryWaitSeconds: 557,
+        phase2InputWatermark: "1786207600",
+        phase2LastSuccessWatermark: "0",
         phase2ErrorClass: "sandbox",
         phase2WorkspaceDiff: "present",
         memoryGitBaseline: "present",
-        diagnosis: "blocked:sandbox",
+        diagnosis: "waiting:phase2-backoff:sandbox",
       });
       const rendered = renderCodexNativeMemoryPhase2DiagnosticLines(result).join("\n");
+      expect(rendered).toContain("codex_memory_phase2_retry_state=backoff");
+      expect(rendered).toContain("codex_memory_phase2_retry_at=2026-08-08T16:57:37.000Z");
       expect(rendered).toContain("codex_memory_phase2_error_class=sandbox");
       expect(rendered).not.toContain("/Users/private/path");
       expect(rendered).not.toContain("sensitive raw memory");
+    } finally {
+      await rm(home, { recursive: true, force: true });
+    }
+  });
+
+  it("reports a failed Phase 2 job as due after retry_at without changing retry_remaining", async () => {
+    const home = await mkdtemp(join(tmpdir(), "floral-native-memory-retry-due-"));
+    try {
+      const db = new Database(join(home, "memories_1.sqlite"));
+      db.exec(`
+        CREATE TABLE jobs (
+          kind TEXT NOT NULL,
+          job_key TEXT NOT NULL,
+          status TEXT NOT NULL,
+          retry_remaining INTEGER,
+          retry_at INTEGER,
+          last_error TEXT
+        );
+        INSERT INTO jobs(kind, job_key, status, retry_remaining, retry_at, last_error)
+          VALUES ('memory_consolidate_global', 'global', 'error', 2, 1786208257, 'failed_invalid_artifacts');
+      `);
+      db.close();
+
+      const result = await readCodexNativeMemoryPhase2Diagnostics({
+        managedHome: home,
+        runtime: generatedRuntime(),
+        nowMs: 1_786_208_258_000,
+      });
+      expect(result.phase2RetryState).toBe("due");
+      expect(result.phase2RetryWaitSeconds).toBeUndefined();
+      expect(result.phase2RetryRemaining).toBe(2);
     } finally {
       await rm(home, { recursive: true, force: true });
     }

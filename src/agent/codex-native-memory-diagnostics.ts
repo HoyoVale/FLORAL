@@ -43,6 +43,13 @@ export interface CodexNativeMemoryPhase2Diagnostics {
   phase2Job: "present" | "absent" | "unknown";
   phase2Status: CodexNativeMemoryPhase2Status;
   phase2RetryRemaining?: number;
+  phase2StartedAt?: string;
+  phase2FinishedAt?: string;
+  phase2RetryAt?: string;
+  phase2RetryState: "not-applicable" | "backoff" | "due" | "exhausted" | "unknown";
+  phase2RetryWaitSeconds?: number;
+  phase2InputWatermark?: string;
+  phase2LastSuccessWatermark?: string;
   phase2ErrorClass: ErrorClass;
   phase2WorkspaceDiff: "present" | "absent";
   memoryGitBaseline: "present" | "absent";
@@ -56,6 +63,11 @@ export interface CodexNativeMemoryPhase2Diagnostics {
 interface JobRow {
   status?: unknown;
   retry_remaining?: unknown;
+  started_at?: unknown;
+  finished_at?: unknown;
+  retry_at?: unknown;
+  input_watermark?: unknown;
+  last_success_watermark?: unknown;
   last_error?: unknown;
 }
 
@@ -75,6 +87,7 @@ interface CandidateObservation {
 export async function readCodexNativeMemoryPhase2Diagnostics(input: {
   managedHome: string;
   runtime: CodexNativeMemoryRuntimeStatus;
+  nowMs?: number;
 }): Promise<CodexNativeMemoryPhase2Diagnostics> {
   const codexHome = resolve(input.managedHome);
   const memoriesRoot = join(codexHome, "memories");
@@ -97,6 +110,7 @@ export async function readCodexNativeMemoryPhase2Diagnostics(input: {
       database: "absent",
       phase2Job: "unknown",
       phase2Status: "not-observed",
+      phase2RetryState: "unknown",
       phase2ErrorClass: "none",
       phase2WorkspaceDiff,
       memoryGitBaseline,
@@ -125,6 +139,7 @@ export async function readCodexNativeMemoryPhase2Diagnostics(input: {
       database: openFailures === candidates.length ? "unavailable" : "schema-unsupported",
       phase2Job: "unknown",
       phase2Status: "not-observed",
+      phase2RetryState: "unknown",
       phase2ErrorClass: "none",
       phase2WorkspaceDiff,
       memoryGitBaseline,
@@ -141,6 +156,19 @@ export async function readCodexNativeMemoryPhase2Diagnostics(input: {
     ? classifyMemoryJobError(selected.phase2Job.last_error)
     : "none";
   const retryRemaining = numericValue(selected.phase2Job?.retry_remaining);
+  const startedAt = timestampValue(selected.phase2Job?.started_at);
+  const finishedAt = timestampValue(selected.phase2Job?.finished_at);
+  const retryAt = timestampMetadata(selected.phase2Job?.retry_at);
+  const nowMs = input.nowMs ?? Date.now();
+  const retryState = classifyRetryState({
+    status: phase2Status,
+    ...(retryRemaining !== undefined ? { retryRemaining } : {}),
+    ...(retryAt ? { retryAtMs: retryAt.ms } : {}),
+    nowMs,
+  });
+  const retryWaitSeconds = retryState === "backoff" && retryAt
+    ? Math.max(0, Math.ceil((retryAt.ms - nowMs) / 1_000))
+    : undefined;
 
   return finalize({
     database: "read-only",
@@ -156,6 +184,17 @@ export async function readCodexNativeMemoryPhase2Diagnostics(input: {
     phase2Job: selected.phase2Job ? "present" : "absent",
     phase2Status,
     ...(retryRemaining !== undefined ? { phase2RetryRemaining: retryRemaining } : {}),
+    ...(startedAt ? { phase2StartedAt: startedAt } : {}),
+    ...(finishedAt ? { phase2FinishedAt: finishedAt } : {}),
+    ...(retryAt?.iso ? { phase2RetryAt: retryAt.iso } : {}),
+    phase2RetryState: retryState,
+    ...(retryWaitSeconds !== undefined ? { phase2RetryWaitSeconds: retryWaitSeconds } : {}),
+    ...(metadataScalar(selected.phase2Job?.input_watermark)
+      ? { phase2InputWatermark: metadataScalar(selected.phase2Job?.input_watermark)! }
+      : {}),
+    ...(metadataScalar(selected.phase2Job?.last_success_watermark)
+      ? { phase2LastSuccessWatermark: metadataScalar(selected.phase2Job?.last_success_watermark)! }
+      : {}),
     phase2ErrorClass,
     phase2WorkspaceDiff,
     memoryGitBaseline,
@@ -181,6 +220,13 @@ export function renderCodexNativeMemoryPhase2DiagnosticLines(
     `codex_memory_phase2_job=${diagnostic.phase2Job}`,
     `codex_memory_phase2_status=${diagnostic.phase2Status}`,
     `codex_memory_phase2_retry_remaining=${diagnostic.phase2RetryRemaining ?? "unknown"}`,
+    `codex_memory_phase2_started_at=${diagnostic.phase2StartedAt ?? "unknown"}`,
+    `codex_memory_phase2_finished_at=${diagnostic.phase2FinishedAt ?? "unknown"}`,
+    `codex_memory_phase2_retry_at=${diagnostic.phase2RetryAt ?? "unknown"}`,
+    `codex_memory_phase2_retry_state=${diagnostic.phase2RetryState}`,
+    `codex_memory_phase2_retry_wait_seconds=${diagnostic.phase2RetryWaitSeconds ?? 0}`,
+    `codex_memory_phase2_input_watermark=${diagnostic.phase2InputWatermark ?? "unknown"}`,
+    `codex_memory_phase2_last_success_watermark=${diagnostic.phase2LastSuccessWatermark ?? "unknown"}`,
     `codex_memory_phase2_error_class=${diagnostic.phase2ErrorClass}`,
     `codex_memory_phase2_workspace_diff=${diagnostic.phase2WorkspaceDiff}`,
     `codex_memory_phase2_git_baseline=${diagnostic.memoryGitBaseline}`,
@@ -252,7 +298,11 @@ function diagnosePhase2(
   if (diagnostic.database === "schema-unsupported") return "unknown:schema-unsupported";
   if (diagnostic.phase2Job === "absent") return "blocked:phase2-job-not-observed";
   if (diagnostic.phase2Status === "error") {
-    return `blocked:${diagnostic.phase2ErrorClass === "none" ? "unknown" : diagnostic.phase2ErrorClass}`;
+    const reason = diagnostic.phase2ErrorClass === "none" ? "unknown" : diagnostic.phase2ErrorClass;
+    if (diagnostic.phase2RetryState === "backoff") return `waiting:phase2-backoff:${reason}`;
+    if (diagnostic.phase2RetryState === "due") return `blocked:${reason}:retry-due`;
+    if (diagnostic.phase2RetryState === "exhausted") return `blocked:${reason}:retry-exhausted`;
+    return `blocked:${reason}`;
   }
   if (diagnostic.phase2Status === "pending") return "waiting:phase2-pending";
   if (diagnostic.phase2Status === "running") return "running:phase2";
@@ -351,8 +401,16 @@ async function inspectCandidateDatabase(
         observation.stage1JobsPending = pending;
         observation.stage1JobsRunning = running;
 
-        const selectedColumns = ["status", "retry_remaining", "last_error"]
-          .filter((column) => columns.has(column));
+        const selectedColumns = [
+          "status",
+          "retry_remaining",
+          "started_at",
+          "finished_at",
+          "retry_at",
+          "input_watermark",
+          "last_success_watermark",
+          "last_error",
+        ].filter((column) => columns.has(column));
         if (selectedColumns.length > 0) {
           const where = columns.has("job_key")
             ? "kind = ? AND job_key = ?"
@@ -413,4 +471,52 @@ async function directoryExists(path: string): Promise<"present" | "absent"> {
   } catch {
     return "absent";
   }
+}
+
+function timestampMetadata(value: unknown): { iso: string; ms: number } | undefined {
+  let ms: number | undefined;
+  if (typeof value === "number" && Number.isFinite(value)) {
+    ms = Math.abs(value) < 100_000_000_000 ? value * 1_000 : value;
+  } else if (typeof value === "bigint") {
+    const numericValue = Number(value);
+    if (Number.isFinite(numericValue)) {
+      ms = Math.abs(numericValue) < 100_000_000_000 ? numericValue * 1_000 : numericValue;
+    }
+  } else if (typeof value === "string" && value.trim()) {
+    const trimmed = value.trim();
+    const asNumber = Number(trimmed);
+    if (Number.isFinite(asNumber)) {
+      ms = Math.abs(asNumber) < 100_000_000_000 ? asNumber * 1_000 : asNumber;
+    } else {
+      const parsed = Date.parse(trimmed);
+      if (Number.isFinite(parsed)) ms = parsed;
+    }
+  }
+  if (ms === undefined) return undefined;
+  const date = new Date(ms);
+  if (!Number.isFinite(date.getTime())) return undefined;
+  return { iso: date.toISOString(), ms };
+}
+
+function timestampValue(value: unknown): string | undefined {
+  return timestampMetadata(value)?.iso;
+}
+
+function metadataScalar(value: unknown): string | undefined {
+  if (typeof value === "number" && Number.isFinite(value)) return String(value);
+  if (typeof value === "bigint") return value.toString();
+  if (typeof value === "string" && value.trim()) return value.trim().slice(0, 80);
+  return undefined;
+}
+
+function classifyRetryState(input: {
+  status: CodexNativeMemoryPhase2Status;
+  retryRemaining?: number;
+  retryAtMs?: number;
+  nowMs: number;
+}): CodexNativeMemoryPhase2Diagnostics["phase2RetryState"] {
+  if (input.status !== "error") return "not-applicable";
+  if (input.retryRemaining !== undefined && input.retryRemaining <= 0) return "exhausted";
+  if (input.retryAtMs === undefined) return "unknown";
+  return input.retryAtMs <= input.nowMs ? "due" : "backoff";
 }

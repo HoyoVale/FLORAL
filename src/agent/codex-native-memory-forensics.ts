@@ -22,6 +22,15 @@ export interface CodexNativeMemoryPhase2Forensics {
   createdAt?: string;
   updatedAt?: string;
   nextRetryAt?: string;
+  startedAt?: string;
+  finishedAt?: string;
+  retryAt?: string;
+  leaseUntil?: string;
+  retryState: "not-applicable" | "backoff" | "due" | "exhausted" | "unknown";
+  retryWaitSeconds?: number;
+  inputWatermark?: string;
+  lastSuccessWatermark?: string;
+  workerAssigned?: boolean;
   errorPresent: boolean;
   errorLength?: number;
   errorFingerprint?: string;
@@ -41,18 +50,26 @@ const SAFE_JOB_METADATA_COLUMNS = [
   "created_at",
   "updated_at",
   "next_retry_at",
+  "started_at",
+  "finished_at",
   "retry_at",
+  "lease_until",
+  "input_watermark",
+  "last_success_watermark",
+  "worker_id",
   "last_error",
 ] as const;
 
 export async function readCodexNativeMemoryPhase2Forensics(input: {
   managedHome: string;
+  nowMs?: number;
 }): Promise<CodexNativeMemoryPhase2Forensics> {
   const candidates = await discoverCandidates(resolve(input.managedHome));
   if (candidates.length === 0) {
     return {
       database: "absent",
       jobColumns: [],
+      retryState: "unknown",
       errorPresent: false,
     };
   }
@@ -61,7 +78,7 @@ export async function readCodexNativeMemoryPhase2Forensics(input: {
   let schemaSeen = false;
   for (const candidate of candidates) {
     try {
-      const result = await inspectDatabase(candidate.path);
+      const result = await inspectDatabase(candidate.path, input.nowMs ?? Date.now());
       if (!result) continue;
       schemaSeen = true;
       return {
@@ -81,6 +98,7 @@ export async function readCodexNativeMemoryPhase2Forensics(input: {
         ? "read-only"
         : "schema-unsupported",
     jobColumns: [],
+    retryState: "unknown",
     errorPresent: false,
   };
 }
@@ -95,9 +113,15 @@ export function renderCodexNativeMemoryPhase2ForensicLines(
     `codex_memory_forensic_status=${forensic.status ?? "unknown"}`,
     `codex_memory_forensic_retry_remaining=${forensic.retryRemaining ?? "unknown"}`,
     `codex_memory_forensic_attempts=${forensic.attempts ?? "unknown"}`,
-    `codex_memory_forensic_created_at=${forensic.createdAt ?? "unknown"}`,
-    `codex_memory_forensic_updated_at=${forensic.updatedAt ?? "unknown"}`,
-    `codex_memory_forensic_next_retry_at=${forensic.nextRetryAt ?? "unknown"}`,
+    `codex_memory_forensic_started_at=${forensic.startedAt ?? forensic.createdAt ?? "unknown"}`,
+    `codex_memory_forensic_finished_at=${forensic.finishedAt ?? forensic.updatedAt ?? "unknown"}`,
+    `codex_memory_forensic_retry_at=${forensic.retryAt ?? forensic.nextRetryAt ?? "unknown"}`,
+    `codex_memory_forensic_retry_state=${forensic.retryState}`,
+    `codex_memory_forensic_retry_wait_seconds=${forensic.retryWaitSeconds ?? 0}`,
+    `codex_memory_forensic_lease_until=${forensic.leaseUntil ?? "unknown"}`,
+    `codex_memory_forensic_input_watermark=${forensic.inputWatermark ?? "unknown"}`,
+    `codex_memory_forensic_last_success_watermark=${forensic.lastSuccessWatermark ?? "unknown"}`,
+    `codex_memory_forensic_worker_assigned=${forensic.workerAssigned ?? false}`,
     `codex_memory_forensic_error_present=${forensic.errorPresent}`,
     `codex_memory_forensic_error_length=${forensic.errorLength ?? 0}`,
     `codex_memory_forensic_error_fingerprint=${forensic.errorFingerprint ?? "none"}`,
@@ -158,7 +182,10 @@ async function discoverCandidates(codexHome: string): Promise<Candidate[]> {
   return candidates.sort((a, b) => b.mtimeMs - a.mtimeMs);
 }
 
-async function inspectDatabase(path: string): Promise<Omit<CodexNativeMemoryPhase2Forensics, "database" | "databaseFile"> | undefined> {
+async function inspectDatabase(
+  path: string,
+  nowMs: number,
+): Promise<Omit<CodexNativeMemoryPhase2Forensics, "database" | "databaseFile"> | undefined> {
   const packageName = "better-sqlite3";
   const module = await import(packageName) as {
     default: new (
@@ -189,24 +216,52 @@ async function inspectDatabase(path: string): Promise<Omit<CodexNativeMemoryPhas
     if (!row) {
       return {
         jobColumns: [...columns].sort(),
+        retryState: "unknown",
         errorPresent: false,
       };
     }
 
     const lastError = row.last_error;
+    const status = stringValue(row.status);
     const retryRemaining = numeric(row.retry_remaining);
     const attempts = numeric(row.attempts) ?? numeric(row.attempt_count);
-    const nextRetryAt = stringValue(row.next_retry_at) ?? stringValue(row.retry_at);
+    const createdAt = timestampValue(row.created_at);
+    const updatedAt = timestampValue(row.updated_at);
+    const nextRetry = timestampMetadata(row.next_retry_at ?? row.retry_at);
+    const startedAt = timestampValue(row.started_at);
+    const finishedAt = timestampValue(row.finished_at);
+    const leaseUntil = timestampValue(row.lease_until);
+    const retryState = classifyRetryState({
+      ...(status ? { status } : {}),
+      ...(retryRemaining !== undefined ? { retryRemaining } : {}),
+      ...(nextRetry ? { retryAtMs: nextRetry.ms } : {}),
+      nowMs,
+    });
+    const retryWaitSeconds = retryState === "backoff" && nextRetry
+      ? Math.max(0, Math.ceil((nextRetry.ms - nowMs) / 1_000))
+      : undefined;
     const errorText = typeof lastError === "string" ? lastError : undefined;
 
     return {
       jobColumns: [...columns].sort(),
-      ...(stringValue(row.status) ? { status: stringValue(row.status)! } : {}),
+      ...(status ? { status } : {}),
       ...(retryRemaining !== undefined ? { retryRemaining } : {}),
       ...(attempts !== undefined ? { attempts } : {}),
-      ...(stringValue(row.created_at) ? { createdAt: stringValue(row.created_at)! } : {}),
-      ...(stringValue(row.updated_at) ? { updatedAt: stringValue(row.updated_at)! } : {}),
-      ...(nextRetryAt ? { nextRetryAt } : {}),
+      ...(createdAt ? { createdAt } : {}),
+      ...(updatedAt ? { updatedAt } : {}),
+      ...(nextRetry?.iso ? { nextRetryAt: nextRetry.iso, retryAt: nextRetry.iso } : {}),
+      ...(startedAt ? { startedAt } : {}),
+      ...(finishedAt ? { finishedAt } : {}),
+      ...(leaseUntil ? { leaseUntil } : {}),
+      retryState,
+      ...(retryWaitSeconds !== undefined ? { retryWaitSeconds } : {}),
+      ...(metadataScalar(row.input_watermark) ? { inputWatermark: metadataScalar(row.input_watermark)! } : {}),
+      ...(metadataScalar(row.last_success_watermark)
+        ? { lastSuccessWatermark: metadataScalar(row.last_success_watermark)! }
+        : {}),
+      ...(row.worker_id !== undefined && row.worker_id !== null
+        ? { workerAssigned: Boolean(stringValue(row.worker_id) ?? numeric(row.worker_id)) }
+        : {}),
       errorPresent: Boolean(errorText?.trim()),
       ...(errorText ? { errorLength: errorText.length } : {}),
       ...(fingerprintNativeMemoryError(errorText)
@@ -237,4 +292,52 @@ function numeric(value: unknown): number | undefined {
 
 function stringValue(value: unknown): string | undefined {
   return typeof value === "string" && value.trim() ? value.trim() : undefined;
+}
+
+function timestampMetadata(value: unknown): { iso: string; ms: number } | undefined {
+  let ms: number | undefined;
+  if (typeof value === "number" && Number.isFinite(value)) {
+    ms = Math.abs(value) < 100_000_000_000 ? value * 1_000 : value;
+  } else if (typeof value === "bigint") {
+    const numericValue = Number(value);
+    if (Number.isFinite(numericValue)) {
+      ms = Math.abs(numericValue) < 100_000_000_000 ? numericValue * 1_000 : numericValue;
+    }
+  } else if (typeof value === "string" && value.trim()) {
+    const trimmed = value.trim();
+    const asNumber = Number(trimmed);
+    if (Number.isFinite(asNumber)) {
+      ms = Math.abs(asNumber) < 100_000_000_000 ? asNumber * 1_000 : asNumber;
+    } else {
+      const parsed = Date.parse(trimmed);
+      if (Number.isFinite(parsed)) ms = parsed;
+    }
+  }
+  if (ms === undefined) return undefined;
+  const date = new Date(ms);
+  if (!Number.isFinite(date.getTime())) return undefined;
+  return { iso: date.toISOString(), ms };
+}
+
+function timestampValue(value: unknown): string | undefined {
+  return timestampMetadata(value)?.iso;
+}
+
+function metadataScalar(value: unknown): string | undefined {
+  if (typeof value === "number" && Number.isFinite(value)) return String(value);
+  if (typeof value === "bigint") return value.toString();
+  if (typeof value === "string" && value.trim()) return value.trim().slice(0, 80);
+  return undefined;
+}
+
+function classifyRetryState(input: {
+  status?: string;
+  retryRemaining?: number;
+  retryAtMs?: number;
+  nowMs: number;
+}): CodexNativeMemoryPhase2Forensics["retryState"] {
+  if (input.status?.toLowerCase() !== "error") return "not-applicable";
+  if (input.retryRemaining !== undefined && input.retryRemaining <= 0) return "exhausted";
+  if (input.retryAtMs === undefined) return "unknown";
+  return input.retryAtMs <= input.nowMs ? "due" : "backoff";
 }
