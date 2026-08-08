@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "reviewedAt": "2026-08-08",
-  "purpose": "Phase 4 configuration federation, Phase 5 safety controls, Phase 5F Feishu migration, Phase 7.1 Codex-native permission authority, Phase 7.2 project/chat control, and Phase 7.3A project-shared context bootstrap inventory.",
+  "purpose": "Phase 4 configuration federation, Phase 5 safety controls, Phase 5F Feishu migration, Phase 7.1 Codex-native permission authority, Phase 7.2 project/chat control, and Phase 7.3 project-shared context and explicit durable-memory control inventory.",
   "classifications": [
     "floral-owned",
     "upstream-managed",
@@ -1153,6 +1153,22 @@
       "file": "src/service/gateway.ts",
       "needle": "command.project_context_init_denied",
       "risk": "Initializing shared project context mutates project files and therefore remains owner-only and unavailable while an agent run is active."
+    },
+    {
+      "id": "workspace.project-memory-explicit-owner",
+      "component": "floral",
+      "classification": "locked",
+      "file": "src/service/gateway.ts",
+      "needle": "eventType: \"command.project_memory_recorded\"",
+      "risk": "Durable project memory must only be written after an explicit owner command in the selected project and must not be inferred automatically from ordinary chat."
+    },
+    {
+      "id": "workspace.project-memory-bounded-files",
+      "component": "floral",
+      "classification": "locked",
+      "file": "src/workspace/project-context.ts",
+      "needle": "const MAX_MEMORY_FILE_BYTES = 64 * 1024;",
+      "risk": "Project memory files are durable model guidance and must remain bounded, regular, project-local files with fail-closed marker validation."
     }
   ],
   "environmentKeyPolicies": {

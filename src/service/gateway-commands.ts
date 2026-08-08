@@ -12,6 +12,8 @@ export type GatewayCommand =
   | { type: "project-new"; name: string | undefined }
   | { type: "project-context-init" }
   | { type: "project-context-status" }
+  | { type: "project-memory-status" }
+  | { type: "project-memory-record"; kind: "context" | "decision" | "issue"; text: string | undefined }
   | { type: "chats" }
   | { type: "chat"; value: string | undefined }
   | { type: "chat-archive"; value: string | undefined }
@@ -43,6 +45,17 @@ export function parseGatewayCommand(text: string): GatewayCommand | undefined {
   }
   if (/^\/project\s+context(?:\s+status)?$/i.test(trimmed)) {
     return { type: "project-context-status" };
+  }
+  if (/^\/project\s+memory$/i.test(trimmed)) {
+    return { type: "project-memory-status" };
+  }
+  const projectRemember = /^\/project\s+remember\s+(context|decision|issue)(?:\s+([\s\S]+))?$/i.exec(trimmed);
+  if (projectRemember) {
+    return {
+      type: "project-memory-record",
+      kind: projectRemember[1]!.toLowerCase() as "context" | "decision" | "issue",
+      text: projectRemember[2]?.trim() || undefined,
+    };
   }
   const project = /^\/project(?:\s+(.+))?$/i.exec(trimmed);
   if (project) {

@@ -105,3 +105,12 @@ This section supersedes the conflicting Phase 5.2/5.3 bullets above for Codex-na
 - The shared context files are project guidance, not a permission authority. They cannot raise Workspace Root, remote mode ceiling, sandbox, MCP capability, or artifact egress policy.
 - Phase 7.3A performs no automatic chat summarization or memory extraction. Context documents are read-mostly unless the owner/user explicitly asks to update them.
 
+## Phase 7.3B durable project memory boundary
+
+- Project-memory mutation is explicit and owner-only; ordinary user messages are never auto-extracted into durable project files.
+- Mutation is rejected while the conversation has an active Agent run, avoiding concurrent model/file updates.
+- The target must be an initialized project-local `.floral` regular file with no symlink/hardlink substitution.
+- A single normalized memory entry is limited to 1,200 characters, each managed file is capped at 64 KiB, and each file accepts at most 256 FLORAL-managed entries.
+- Exact categorized entries are deduplicated by SHA-256-derived marker. Audit records retain the fingerprint and metadata, not the raw durable-memory text.
+- Malformed FLORAL memory markers or concurrent file changes fail closed.
+

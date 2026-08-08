@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import {
   lstat,
   mkdir,
@@ -18,6 +19,31 @@ const AGENTS_OVERRIDE_FILE = "AGENTS.override.md";
 const FLORAL_CONTEXT_BEGIN = "<!-- FLORAL:PROJECT-CONTEXT:BEGIN -->";
 const FLORAL_CONTEXT_END = "<!-- FLORAL:PROJECT-CONTEXT:END -->";
 const MAX_STANDARD_INSTRUCTION_BYTES = 32 * 1024;
+const MAX_MEMORY_ENTRY_CHARACTERS = 1_200;
+const MAX_MEMORY_FILE_BYTES = 64 * 1024;
+const MAX_MEMORY_ENTRIES_PER_FILE = 256;
+const FLORAL_MEMORY_BEGIN = "<!-- FLORAL:PROJECT-MEMORY:BEGIN -->";
+const FLORAL_MEMORY_END = "<!-- FLORAL:PROJECT-MEMORY:END -->";
+
+export type ProjectMemoryKind = "context" | "decision" | "issue";
+
+export interface ProjectMemoryStatus {
+  contextEntries: number;
+  decisionEntries: number;
+  issueEntries: number;
+  contextBytes: number;
+  decisionBytes: number;
+  issueBytes: number;
+}
+
+export interface ProjectMemoryRecordResult {
+  changed: boolean;
+  duplicate: boolean;
+  kind: ProjectMemoryKind;
+  fingerprint: string;
+  entryCount: number;
+  fileBytes: number;
+}
 
 export interface ProjectContextStatus {
   initialized: boolean;
@@ -229,6 +255,202 @@ export async function bootstrapProjectContext(
     instructionAction,
     status,
   };
+}
+
+export async function inspectProjectMemory(
+  project: WorkspaceProject,
+): Promise<ProjectMemoryStatus> {
+  const status = await inspectProjectContext(project);
+  if (!status.initialized) {
+    throw new Error("Project shared context is not initialized");
+  }
+  const canonicalProject = await canonicalProjectDirectory(project);
+  const contextDirectory = await canonicalContextDirectory(canonicalProject);
+  const context = await readMemoryFile(contextDirectory, CONTEXT_FILE);
+  const decisions = await readMemoryFile(contextDirectory, DECISIONS_FILE);
+  const issues = await readMemoryFile(contextDirectory, KNOWN_ISSUES_FILE);
+  return {
+    contextEntries: countManagedMemoryEntries(context),
+    decisionEntries: countManagedMemoryEntries(decisions),
+    issueEntries: countManagedMemoryEntries(issues),
+    contextBytes: Buffer.byteLength(context, "utf8"),
+    decisionBytes: Buffer.byteLength(decisions, "utf8"),
+    issueBytes: Buffer.byteLength(issues, "utf8"),
+  };
+}
+
+export async function recordProjectMemory(
+  project: WorkspaceProject,
+  kind: ProjectMemoryKind,
+  text: string,
+  now: Date = new Date(),
+): Promise<ProjectMemoryRecordResult> {
+  const normalized = normalizeMemoryText(text);
+  const status = await inspectProjectContext(project);
+  if (!status.initialized) {
+    throw new Error("Project shared context is not initialized");
+  }
+
+  const canonicalProject = await canonicalProjectDirectory(project);
+  const contextDirectory = await canonicalContextDirectory(canonicalProject);
+  const fileName = memoryFileForKind(kind);
+  const filePath = join(contextDirectory, fileName);
+  const current = await readMemoryFile(contextDirectory, fileName);
+  validateMemoryMarkers(current);
+
+  const fingerprint = createHash("sha256")
+    .update(`${kind}\u0000${normalized}`, "utf8")
+    .digest("hex");
+  const marker = `<!-- FLORAL:MEM:${fingerprint.slice(0, 16)} -->`;
+  const currentCount = countManagedMemoryEntries(current);
+  if (current.includes(marker)) {
+    return {
+      changed: false,
+      duplicate: true,
+      kind,
+      fingerprint,
+      entryCount: currentCount,
+      fileBytes: Buffer.byteLength(current, "utf8"),
+    };
+  }
+  if (currentCount >= MAX_MEMORY_ENTRIES_PER_FILE) {
+    throw new Error("Project memory entry limit reached");
+  }
+
+  const timestamp = now.toISOString();
+  const entry = `- [${timestamp}] ${escapeMemoryMarkdown(normalized)} ${marker}`;
+  const next = appendManagedMemoryEntry(current, entry, kind);
+  const nextBytes = Buffer.byteLength(next, "utf8");
+  if (nextBytes > MAX_MEMORY_FILE_BYTES) {
+    throw new Error("Project memory file size limit reached");
+  }
+
+  const file = await open(filePath, "r+");
+  try {
+    const fileStat = await file.stat();
+    if (!fileStat.isFile() || fileStat.nlink !== 1) {
+      throw new Error(`${CONTEXT_DIRECTORY}/${fileName} changed during memory write`);
+    }
+    const latest = await file.readFile({ encoding: "utf8" });
+    validateMemoryMarkers(latest);
+    if (latest !== current) {
+      throw new Error("Project memory changed concurrently; retry the command");
+    }
+    await file.truncate(0);
+    await file.write(next, 0, "utf8");
+  } finally {
+    await file.close();
+  }
+
+  return {
+    changed: true,
+    duplicate: false,
+    kind,
+    fingerprint,
+    entryCount: currentCount + 1,
+    fileBytes: nextBytes,
+  };
+}
+
+function memoryFileForKind(kind: ProjectMemoryKind): string {
+  if (kind === "context") return CONTEXT_FILE;
+  if (kind === "decision") return DECISIONS_FILE;
+  return KNOWN_ISSUES_FILE;
+}
+
+async function canonicalContextDirectory(canonicalProject: string): Promise<string> {
+  const contextDirectory = join(canonicalProject, CONTEXT_DIRECTORY);
+  const stat = await lstat(contextDirectory).catch(() => undefined);
+  if (!stat || stat.isSymbolicLink() || !stat.isDirectory()) {
+    throw new Error(".floral must be a real project-local directory");
+  }
+  const canonical = await realpath(contextDirectory);
+  if (dirname(canonical) !== canonicalProject) {
+    throw new Error(".floral resolves outside the project");
+  }
+  return canonical;
+}
+
+async function readMemoryFile(
+  contextDirectory: string,
+  fileName: string,
+): Promise<string> {
+  return await readValidatedRegularFile(
+    join(contextDirectory, fileName),
+    contextDirectory,
+  );
+}
+
+function normalizeMemoryText(value: string): string {
+  if (/[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F]/u.test(value)) {
+    throw new Error("Project memory contains unsupported control characters");
+  }
+  const normalized = value.replace(/\s+/gu, " ").trim();
+  if (!normalized) throw new Error("Project memory entry must not be empty");
+  if (normalized.length > MAX_MEMORY_ENTRY_CHARACTERS) {
+    throw new Error(`Project memory entry exceeds ${MAX_MEMORY_ENTRY_CHARACTERS} characters`);
+  }
+  return normalized;
+}
+
+function validateMemoryMarkers(content: string): void {
+  const beginCount = countOccurrences(content, FLORAL_MEMORY_BEGIN);
+  const endCount = countOccurrences(content, FLORAL_MEMORY_END);
+  if (beginCount !== endCount || beginCount > 1) {
+    throw new Error("FLORAL project-memory markers are malformed");
+  }
+}
+
+function countManagedMemoryEntries(content: string): number {
+  validateMemoryMarkers(content);
+  return [...content.matchAll(/<!-- FLORAL:MEM:[a-f0-9]{16} -->/gu)].length;
+}
+
+function appendManagedMemoryEntry(
+  existing: string,
+  entry: string,
+  kind: ProjectMemoryKind,
+): string {
+  const placeholder = placeholderForKind(kind);
+  const normalized = existing
+    .replace(placeholder, "")
+    .replace(/\s+$/u, "");
+  if (!normalized.includes(FLORAL_MEMORY_BEGIN)) {
+    return [
+      normalized,
+      "",
+      FLORAL_MEMORY_BEGIN,
+      "## FLORAL recorded entries",
+      "",
+      entry,
+      FLORAL_MEMORY_END,
+      "",
+    ].join("\n");
+  }
+  const endIndex = normalized.indexOf(FLORAL_MEMORY_END);
+  if (endIndex < 0) throw new Error("FLORAL project-memory markers are malformed");
+  const before = normalized.slice(0, endIndex).replace(/\s+$/u, "");
+  const after = normalized.slice(endIndex + FLORAL_MEMORY_END.length).replace(/^\s+/u, "");
+  return [
+    before,
+    entry,
+    FLORAL_MEMORY_END,
+    ...(after ? [after] : []),
+    "",
+  ].join("\n");
+}
+
+function placeholderForKind(kind: ProjectMemoryKind): string {
+  if (kind === "context") return "No shared context recorded yet.";
+  if (kind === "decision") return "No durable decisions recorded yet.";
+  return "No known issues recorded yet.";
+}
+
+function escapeMemoryMarkdown(value: string): string {
+  return value
+    .replace(/\\/gu, "\\\\")
+    .replace(/</gu, "&lt;")
+    .replace(/>/gu, "&gt;");
 }
 
 function validateInstructionEntry(

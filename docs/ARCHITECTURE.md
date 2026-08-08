@@ -58,3 +58,9 @@ Project/
 
 The `.floral/*.md` files are not automatically injected or summarized by FLORAL. The managed AGENTS block tells Codex where the shared project documents live; Codex then follows its normal project-instruction behavior. Phase 7.3A is bootstrap/read-mostly infrastructure only: automatic extraction, consolidation, and memory writing are deferred to Phase 7.3B.
 
+## Phase 7.3B explicit durable project memory
+
+Phase 7.3B keeps Codex thread history and project-shared durable memory separate. FLORAL does not summarize ordinary chats automatically. A bound owner explicitly records categorized items with `/project remember context|decision|issue <text>`; the host writes only to the current project's initialized `.floral` context files.
+
+Writes are bounded, deduplicated, audited by fingerprint rather than raw text, and rejected while an Agent run is active. Existing project files remain the source of truth; this phase does not introduce a second database or Codex-internal memory dependency.
+

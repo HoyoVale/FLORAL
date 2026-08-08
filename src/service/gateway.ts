@@ -39,7 +39,10 @@ import type { ProjectWorkspaceRoot, WorkspaceProject } from "../workspace/projec
 import {
   bootstrapProjectContext,
   inspectProjectContext,
+  inspectProjectMemory,
+  recordProjectMemory,
   type ProjectContextStatus,
+  type ProjectMemoryStatus,
 } from "../workspace/project-context.js";
 
 export interface GatewayOptions {
@@ -599,7 +602,7 @@ export class GatewayService {
           }
           await this.#send(
             message.identity.conversationId,
-            lines.join("\\n\\n"),
+            lines.join("\n\n"),
           );
         } catch {
           await this.store.appendAudit({
@@ -611,6 +614,123 @@ export class GatewayService {
           await this.#send(
             message.identity.conversationId,
             "项目共享上下文初始化失败。不会覆盖既有上下文文件；请检查 AGENTS/.floral 文件类型、标记完整性或 Codex 指令文件大小。",
+          );
+        }
+        return;
+      }
+
+      case "project-memory-status": {
+        if (!this.options.workspace) {
+          await this.#send(
+            message.identity.conversationId,
+            "Workspace Root 尚未在 Mac 本地配置。",
+          );
+          return;
+        }
+        const projectContext = await this.#requireProjectContext(
+          message.identity.conversationId,
+          resolved.conversationId,
+        );
+        if (!projectContext) return;
+        try {
+          const status = await inspectProjectMemory(projectContext.project);
+          await this.store.appendAudit({
+            userId: resolved.userId,
+            conversationId: resolved.conversationId,
+            eventType: "command.project_memory_status",
+            payload: { projectName: projectContext.project.name },
+          });
+          await this.#send(
+            message.identity.conversationId,
+            formatProjectMemoryStatus(projectContext.project.name, status),
+          );
+        } catch {
+          await this.#send(
+            message.identity.conversationId,
+            "项目长期记忆尚不可用。请先使用 /project context init 初始化共享上下文。",
+          );
+        }
+        return;
+      }
+
+      case "project-memory-record": {
+        if (!this.options.workspace) {
+          await this.#send(
+            message.identity.conversationId,
+            "Workspace Root 尚未在 Mac 本地配置。",
+          );
+          return;
+        }
+        if (!command.text) {
+          await this.#send(
+            message.identity.conversationId,
+            "用法：/project remember <context|decision|issue> <内容>",
+          );
+          return;
+        }
+        if (resolved.role !== "owner") {
+          await this.store.appendAudit({
+            userId: resolved.userId,
+            conversationId: resolved.conversationId,
+            eventType: "command.project_memory_denied",
+            payload: { reason: "owner-required", kind: command.kind },
+          });
+          await this.#send(
+            message.identity.conversationId,
+            "只有 owner 可以写入项目长期记忆。",
+          );
+          return;
+        }
+        if (this.#activeRuns.has(resolved.conversationId)) {
+          await this.#send(
+            message.identity.conversationId,
+            "当前任务运行中，不能写入项目长期记忆。请先使用 /stop。",
+          );
+          return;
+        }
+        const projectContext = await this.#requireProjectContext(
+          message.identity.conversationId,
+          resolved.conversationId,
+        );
+        if (!projectContext) return;
+        try {
+          const result = await recordProjectMemory(
+            projectContext.project,
+            command.kind,
+            command.text,
+          );
+          await this.store.appendAudit({
+            userId: resolved.userId,
+            conversationId: resolved.conversationId,
+            eventType: "command.project_memory_recorded",
+            payload: {
+              projectName: projectContext.project.name,
+              kind: command.kind,
+              changed: result.changed,
+              duplicate: result.duplicate,
+              fingerprint: result.fingerprint,
+              characterCount: command.text.length,
+            },
+          });
+          await this.#send(
+            message.identity.conversationId,
+            result.duplicate
+              ? `该 ${humanizeProjectMemoryKind(command.kind)} 已存在，未重复写入。`
+              : `已记录项目${humanizeProjectMemoryKind(command.kind)}。当前该类共有 ${String(result.entryCount)} 条 FLORAL 记录。`,
+          );
+        } catch {
+          await this.store.appendAudit({
+            userId: resolved.userId,
+            conversationId: resolved.conversationId,
+            eventType: "command.project_memory_failed",
+            payload: {
+              projectName: projectContext.project.name,
+              kind: command.kind,
+            },
+          });
+          await this.#send(
+            message.identity.conversationId,
+            "项目长期记忆写入失败。请确认共享上下文已初始化、目标文件未被替换，且单条内容与文件总量未超过限制。",
           );
         }
         return;
@@ -1912,7 +2032,32 @@ function formatProjectContextStatus(
     status.initialized
       ? "Codex 新会话会通过原生 AGENTS 指令发现获得共享上下文入口。"
       : "使用 /project context init 初始化（owner）。",
-  ].join("\\n");
+  ].join("\n");
+}
+
+function formatProjectMemoryStatus(
+  projectName: string,
+  status: ProjectMemoryStatus,
+): string {
+  return [
+    `项目长期记忆：${projectName}`,
+    `context_entries=${String(status.contextEntries)}`,
+    `decision_entries=${String(status.decisionEntries)}`,
+    `issue_entries=${String(status.issueEntries)}`,
+    `context_bytes=${String(status.contextBytes)}`,
+    `decision_bytes=${String(status.decisionBytes)}`,
+    `issue_bytes=${String(status.issueBytes)}`,
+    "写入策略=explicit-owner-only；不会从普通聊天自动提取。",
+    "使用 /project remember <context|decision|issue> <内容> 显式记录。",
+  ].join("\n");
+}
+
+function humanizeProjectMemoryKind(
+  kind: "context" | "decision" | "issue",
+): string {
+  if (kind === "decision") return "决策";
+  if (kind === "issue") return "已知问题";
+  return "上下文";
 }
 
 interface AgentExecutionPolicy {

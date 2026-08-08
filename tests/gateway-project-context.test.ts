@@ -166,6 +166,7 @@ describe("Gateway project shared context control", () => {
 
       await transport.emit("/project context", "m1");
       expect(transport.sent.at(-1)?.text).toContain("state=not-ready");
+      expect(transport.sent.at(-1)?.text).not.toContain("\\n");
 
       await transport.emit("/project context init", "m2");
       const initialized = transport.sent.at(-1)?.text ?? "";
