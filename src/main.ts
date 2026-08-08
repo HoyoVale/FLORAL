@@ -124,6 +124,7 @@ const gateway = new GatewayService(
       approvalTtlMs: authority.effective.runtime.authorization.approval_ttl_ms,
       maxPendingApprovals: authority.effective.runtime.authorization.max_pending_approvals,
       ownerOnlyRemoteApproval: authority.effective.runtime.authorization.owner_only_remote_approval,
+      remoteModeCeiling: env.FLORAL_REMOTE_MODE_CEILING,
       localConfirmation,
     },
     artifactEgress: {

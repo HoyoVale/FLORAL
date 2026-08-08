@@ -414,9 +414,14 @@ export class CodexAppServerRuntime implements AgentRuntime {
         threadId,
         input: [{ type: "text", text: request.text }],
         cwd,
-        approvalPolicy: toAppServerApprovalPolicy(this.#approvalPolicy),
+        approvalPolicy: toAppServerApprovalPolicy(
+          request.approvalPolicy ?? this.#approvalPolicy,
+        ),
         approvalsReviewer: request.approvalsReviewer ?? this.#approvalsReviewer,
-        sandboxPolicy: buildTurnSandboxPolicy(this.#sandboxMode, cwd),
+        sandboxPolicy: buildTurnSandboxPolicy(
+          request.sandboxMode ?? this.#sandboxMode,
+          cwd,
+        ),
       };
       const model = request.model ?? this.#defaultModel;
       if (model) turnParams.model = model;
@@ -882,9 +887,10 @@ function toAppServerApprovalPolicy(
 
 
 function buildTurnSandboxPolicy(
-  mode: "read-only" | "workspace-write",
+  mode: "read-only" | "workspace-write" | "danger-full-access",
   cwd: string,
 ): Record<string, unknown> {
+  if (mode === "danger-full-access") return { type: "dangerFullAccess" };
   if (mode === "read-only") return { type: "readOnly" };
   return {
     type: "workspaceWrite",

@@ -80,6 +80,14 @@ export const SECRET_ENVIRONMENT_REFERENCES: Record<SecretId, string> = {
   owner_pairing_code: "OWNER_PAIRING_CODE",
 };
 
+// Machine-local authority is inventoried and classified, but deliberately not
+// projected into the project-owned requested/effective configuration tree.
+// This prevents config/floral.toml edits from raising the remote full-access
+// ceiling. The main process reads the validated AppEnv value directly.
+export const MACHINE_LOCAL_ENVIRONMENT_KEYS = [
+  "FLORAL_REMOTE_MODE_CEILING",
+] as const satisfies readonly EnvironmentKey[];
+
 export const ENVIRONMENT_BINDINGS: readonly EnvironmentBinding[] = [
   binding("NODE_ENV", "floral.node_env"),
   binding("HOST", "floral.host"),
@@ -334,6 +342,7 @@ export function listBoundEnvironmentKeys(): string[] {
   return [
     ...ENVIRONMENT_BINDINGS.map((entry) => entry.key),
     ...Object.values(SECRET_ENVIRONMENT_REFERENCES),
+    ...MACHINE_LOCAL_ENVIRONMENT_KEYS,
   ].sort();
 }
 

@@ -151,6 +151,8 @@ export interface AgentRunRequest {
   text: string;
   cwd: string;
   model?: string;
+  approvalPolicy?: "never" | "on-request" | "untrusted";
+  sandboxMode?: "read-only" | "workspace-write" | "danger-full-access";
   approvalsReviewer?: "user" | "auto_review";
   approvalHandler?: AgentApprovalHandler;
   artifactRegistrationHandler?: AgentArtifactRegistrationHandler;

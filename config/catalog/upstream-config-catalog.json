@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "reviewedAt": "2026-08-08",
-  "purpose": "Phase 4 configuration federation, Phase 5 safety controls, Phase 5F Feishu primary-chat migration, and Phase 7.1A Codex-native approval alignment inventory.",
+  "purpose": "Phase 4 configuration federation, Phase 5 safety controls, Phase 5F Feishu primary-chat migration, and Phase 7.1A/7.1B Codex-native approval and full-access authority inventory.",
   "classifications": [
     "floral-owned",
     "upstream-managed",
@@ -45,6 +45,7 @@
             "MOCK_TRUST_OWNER",
             "AUTH_MODE",
             "OWNER_PAIRING_CODE",
+            "FLORAL_REMOTE_MODE_CEILING",
             "runtime.authorization.enabled",
             "runtime.authorization.approval_ttl_ms",
             "runtime.authorization.max_pending_approvals",
@@ -52,7 +53,7 @@
             "/approve <id>",
             "/approve-session <id>",
             "/deny <id>",
-            "/mode ask|auto|status",
+            "/mode ask|auto|full|status",
             "runtime.authorization.codex_turn_approval_policy",
             "runtime.authorization.codex_turn_sandbox_mode",
             "runtime.authorization.codex_approvals_reviewer",
@@ -68,7 +69,7 @@
             "audit_retention",
             "native_local_confirmation_ui"
           ],
-          "notes": "In ask mode, Codex-native command/file/structured permission approval requests are answered through the owner/conversation/request-scoped broker. /approve-session delegates session lifetime to Codex rather than storing a FLORAL command allowlist. FLORAL-owned system administration remains Mac-local. In auto mode FLORAL supplies approvalsReviewer=auto_review and does not attach its remote human approval handler."
+          "notes": "Ask/auto/full are conversation-scoped Codex-native execution modes. Full additionally requires the paired owner and the Mac-local FLORAL_REMOTE_MODE_CEILING=full startup ceiling. The ceiling is not a model-owned permission surface and is stripped from the Codex child environment. MCP authorization and artifact DLP remain independent."
         },
         {
           "id": "security-invariants",
@@ -1101,6 +1102,14 @@
       "file": "src/config/federation/config-schema.ts",
       "needle": "ingress_isolation: \"worker-thread\"",
       "risk": "The pinned SDK long-connection lifecycle is isolated so service shutdown remains deterministic even when the SDK connection loop does not expose a reliable close contract."
+    },
+    {
+      "id": "authorization.remote-mode-ceiling",
+      "component": "floral",
+      "classification": "locked",
+      "file": "src/service/gateway.ts",
+      "needle": "this.#remoteModeCeiling() !== \"full\"",
+      "risk": "Remote full access must require an explicit Mac-local startup ceiling in addition to the authenticated owner role."
     }
   ],
   "environmentKeyPolicies": {
@@ -1374,6 +1383,10 @@
     },
     "MIMO_API_KEY": {
       "component": "mimo-vision",
+      "classification": "locked"
+    },
+    "FLORAL_REMOTE_MODE_CEILING": {
+      "component": "floral",
       "classification": "locked"
     }
   }

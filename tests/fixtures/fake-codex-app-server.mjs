@@ -170,6 +170,20 @@ lines.on("line", (line) => {
       send({ id: message.id, error: { code: -32602, message: "approval reviewer must be auto_review" } });
       return;
     }
+    if (scenario === "full-access-turn") {
+      if (message.params?.approvalPolicy !== "untrusted") {
+        send({ id: message.id, error: { code: -32602, message: "full approval policy must be untrusted" } });
+        return;
+      }
+      if (message.params?.sandboxPolicy?.type !== "dangerFullAccess") {
+        send({ id: message.id, error: { code: -32602, message: "full sandbox must be dangerFullAccess" } });
+        return;
+      }
+      if (message.params?.approvalsReviewer !== "user") {
+        send({ id: message.id, error: { code: -32602, message: "full reviewer must remain user for client interception" } });
+        return;
+      }
+    }
     if (scenario === "on-request-file-approval") {
       const roots = message.params?.sandboxPolicy?.writableRoots;
       if (
@@ -196,6 +210,11 @@ lines.on("line", (line) => {
     setImmediate(() => {
       if (scenario === "auto-review") {
         sendSuccess(activeThreadId, activeTurnId, "auto review configured");
+        return;
+      }
+
+      if (scenario === "full-access-turn") {
+        sendSuccess(activeThreadId, activeTurnId, "full access configured");
         return;
       }
 

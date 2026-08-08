@@ -46,6 +46,7 @@ export interface GatewayOptions {
     approvalTtlMs: number;
     maxPendingApprovals: number;
     ownerOnlyRemoteApproval: boolean;
+    remoteModeCeiling?: "auto" | "full" | undefined;
     localConfirmation?: LocalConfirmationBroker | undefined;
   } | undefined;
   artifactEgress?: {
@@ -61,7 +62,7 @@ interface ArtifactCatalogEntry {
 const ARTIFACT_CATALOG_TTL_MS = 30 * 60 * 1_000;
 const ARTIFACT_CATALOG_MAX_ITEMS = 32;
 
-type AgentControlMode = "ask" | "auto";
+type AgentControlMode = "ask" | "auto" | "full";
 
 interface ActiveRun {
   threadId?: string;
@@ -308,6 +309,8 @@ export class GatewayService {
         const runtimeLines = this.options.runtimeStatusLines
           ? await this.options.runtimeStatusLines().catch(() => ["cost_guard=error"])
           : [];
+        const controlMode = this.#controlMode(resolved.conversationId);
+        const executionPolicy = executionPolicyForMode(controlMode);
         await this.#send(
           message.identity.conversationId,
           formatGatewayStatus({
@@ -316,7 +319,12 @@ export class GatewayService {
             role: resolved.role,
             threadActive: Boolean(threadId),
             runActive: active,
-            controlMode: this.#controlMode(resolved.conversationId),
+            controlMode,
+            remoteModeCeiling: this.#remoteModeCeiling(),
+            sandboxMode: executionPolicy.sandboxMode,
+            approvalPolicy: executionPolicy.approvalPolicy,
+            approvalsReviewer: executionPolicy.approvalsReviewer,
+            approvalRoute: executionPolicy.approvalRoute,
             pendingApprovals: this.#approvalBroker?.pendingCount(resolved.conversationId) ?? 0,
             runtimeLines,
           }, command.debug),
@@ -359,14 +367,21 @@ export class GatewayService {
         if (requestedMode === "status") {
           await this.#send(
             message.identity.conversationId,
-            modeStatusText(this.#controlMode(resolved.conversationId)),
+            modeStatusText(
+              this.#controlMode(resolved.conversationId),
+              this.#remoteModeCeiling(),
+            ),
           );
           return;
         }
-        if (requestedMode !== "ask" && requestedMode !== "auto") {
+        if (
+          requestedMode !== "ask"
+          && requestedMode !== "auto"
+          && requestedMode !== "full"
+        ) {
           await this.#send(
             message.identity.conversationId,
-            "用法：/mode [status|ask|auto]",
+            "用法：/mode [status|ask|auto|full]",
           );
           return;
         }
@@ -377,16 +392,40 @@ export class GatewayService {
           );
           return;
         }
-        if (requestedMode === "auto" && resolved.role !== "owner") {
+        if (
+          (requestedMode === "auto" || requestedMode === "full")
+          && resolved.role !== "owner"
+        ) {
           await this.store.appendAudit({
             userId: resolved.userId,
             conversationId: resolved.conversationId,
             eventType: "command.mode_denied",
-            payload: { requestedMode },
+            payload: { requestedMode, reason: "owner-required" },
           });
           await this.#send(
             message.identity.conversationId,
-            "当前身份无权启用自动审查模式。",
+            requestedMode === "auto"
+              ? "当前身份无权启用自动审查模式。"
+              : "当前身份无权提升执行模式。",
+          );
+          return;
+        }
+        if (
+          requestedMode === "full"
+          && (
+            this.#remoteModeCeiling() !== "full"
+            || !this.#approvalBroker
+          )
+        ) {
+          await this.store.appendAudit({
+            userId: resolved.userId,
+            conversationId: resolved.conversationId,
+            eventType: "command.mode_denied",
+            payload: { requestedMode, reason: "machine-ceiling" },
+          });
+          await this.#send(
+            message.identity.conversationId,
+            "本机未预授权 full 模式。请在 Mac 本地将 FLORAL_REMOTE_MODE_CEILING=full 后重启服务。",
           );
           return;
         }
@@ -394,7 +433,7 @@ export class GatewayService {
         if (requestedMode === "ask") {
           this.#controlModes.delete(resolved.conversationId);
         } else {
-          this.#controlModes.set(resolved.conversationId, "auto");
+          this.#controlModes.set(resolved.conversationId, requestedMode);
         }
         await this.store.appendAudit({
           userId: resolved.userId,
@@ -508,6 +547,7 @@ export class GatewayService {
     this.#activeRuns.set(resolved.conversationId, active);
 
     const controlMode = this.#controlMode(resolved.conversationId);
+    const executionPolicy = executionPolicyForMode(controlMode);
     await this.store.appendAudit({
       userId: resolved.userId,
       conversationId: resolved.conversationId,
@@ -515,6 +555,10 @@ export class GatewayService {
       payload: {
         characterCount: message.text.length,
         controlMode,
+        sandboxMode: executionPolicy.sandboxMode,
+        approvalPolicy: executionPolicy.approvalPolicy,
+        approvalsReviewer: executionPolicy.approvalsReviewer,
+        approvalRoute: executionPolicy.approvalRoute,
       },
     });
     this.#setConversationActivity(message.identity.conversationId, "typing");
@@ -531,7 +575,9 @@ export class GatewayService {
           ...(threadId ? { threadId } : {}),
           text: message.text,
           cwd: this.options.cwd,
-          approvalsReviewer: controlMode === "auto" ? "auto_review" : "user",
+          approvalPolicy: executionPolicy.approvalPolicy,
+          sandboxMode: executionPolicy.sandboxMode,
+          approvalsReviewer: executionPolicy.approvalsReviewer,
           ...(this.options.model ? { model: this.options.model } : {}),
           ...(this.options.artifactEgress ? {
             artifactRegistrationHandler: async (request) =>
@@ -549,8 +595,24 @@ export class GatewayService {
                 )
               ),
           } : {}),
-          ...(controlMode === "ask" && this.#approvalBroker ? {
+          ...(controlMode !== "auto" && this.#approvalBroker ? {
             approvalHandler: async (request) => {
+              if (
+                controlMode === "full"
+                && isCodexNativeFullAutoApproval(request)
+              ) {
+                await this.store.appendAudit({
+                  userId: resolved.userId,
+                  conversationId: resolved.conversationId,
+                  eventType: "authorization.full_auto_granted",
+                  payload: {
+                    kind: request.kind,
+                    capability: request.capability,
+                  },
+                }).catch(() => undefined);
+                return "approve";
+              }
+
               active.waitingForApproval = true;
               active.visibleActivitySatisfied = true;
               this.#cancelVisibleActivityFallback(active);
@@ -1100,30 +1162,93 @@ export class GatewayService {
     return this.#controlModes.get(conversationId) ?? "ask";
   }
 
+  #remoteModeCeiling(): "auto" | "full" {
+    return this.options.authorization?.remoteModeCeiling ?? "auto";
+  }
+
   async #send(conversationId: string, text: string): Promise<void> {
     await this.transport.send({ conversationId, text });
   }
 }
 
-function modeStatusText(mode: AgentControlMode): string {
+interface AgentExecutionPolicy {
+  sandboxMode: "workspace-write" | "danger-full-access";
+  approvalPolicy: "untrusted";
+  approvalsReviewer: "user" | "auto_review";
+  approvalRoute: "owner" | "auto-review" | "full-auto-codex-native";
+}
+
+function executionPolicyForMode(mode: AgentControlMode): AgentExecutionPolicy {
+  if (mode === "full") {
+    return {
+      sandboxMode: "danger-full-access",
+      approvalPolicy: "untrusted",
+      approvalsReviewer: "user",
+      approvalRoute: "full-auto-codex-native",
+    };
+  }
+  if (mode === "auto") {
+    return {
+      sandboxMode: "workspace-write",
+      approvalPolicy: "untrusted",
+      approvalsReviewer: "auto_review",
+      approvalRoute: "auto-review",
+    };
+  }
+  return {
+    sandboxMode: "workspace-write",
+    approvalPolicy: "untrusted",
+    approvalsReviewer: "user",
+    approvalRoute: "owner",
+  };
+}
+
+function isCodexNativeFullAutoApproval(
+  request: import("../core/types.js").AgentApprovalRequest,
+): boolean {
+  return request.source === "codex"
+    && (
+      request.kind === "command-execution"
+      || request.kind === "file-change"
+      || request.kind === "permission-request"
+    );
+}
+
+function modeStatusText(
+  mode: AgentControlMode,
+  ceiling: "auto" | "full",
+): string {
+  const policy = executionPolicyForMode(mode);
+  if (mode === "full") {
+    return [
+      "执行模式=full",
+      "Codex sandbox=danger-full-access。",
+      "Codex 原生命令/文件/结构化权限请求自动批准；GUI shell bypass 仍硬拒绝，MCP/Artifact 策略保持独立。",
+      `本机权限上限=${ceiling}`,
+    ].join("\n");
+  }
   if (mode === "auto") {
     return [
       "执行模式=auto",
       "Codex approvalsReviewer=auto_review。",
       "FLORAL 不会为本模式补做远程人工审批；未被 Codex 自动审查接管的请求将拒绝。",
-      "当前 sandbox 不因模式切换而扩大。",
+      `sandbox=${policy.sandboxMode}；本机权限上限=${ceiling}`,
     ].join("\n");
   }
   return [
     "执行模式=ask",
     "Codex 原生审批请求会转交当前已绑定 owner 处理。",
     "可使用 /approve、/approve-session 或 /deny。",
+    `sandbox=${policy.sandboxMode}；本机权限上限=${ceiling}`,
   ].join("\n");
 }
 
 function modeChangedText(mode: AgentControlMode): string {
+  if (mode === "full") {
+    return "已切换到 full：Codex 使用 danger-full-access，Codex-native 执行审批自动通过；GUI/MCP/Artifact 的 FLORAL 专属边界不随之取消。服务重启后恢复 ask。";
+  }
   return mode === "auto"
-    ? "已切换到 auto：Codex 使用 auto_review；当前 sandbox 保持不变。服务重启后会恢复 ask。"
+    ? "已切换到 auto：Codex 使用 auto_review；当前 sandbox 保持 workspace-write。服务重启后会恢复 ask。"
     : "已切换到 ask：Codex 原生审批请求会转交当前 owner。";
 }
 

@@ -558,6 +558,9 @@ function createCodexRuntime(
     FLORAL_BRIDGE_TOKEN: bridgeToken,
   };
   delete processEnv.DEEPSEEK_API_KEY;
+  // The remote elevation ceiling belongs to the FLORAL parent process,
+  // not to Codex or model-visible shell environments.
+  delete processEnv.FLORAL_REMOTE_MODE_CEILING;
 
   return new CodexAppServerRuntime({
     command: env.CODEX_COMMAND,

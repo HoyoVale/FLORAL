@@ -65,3 +65,15 @@ QQ AppSecret, DeepSeek API key, Better Auth secret, and any future OAuth tokens 
 - A local decision must match public ID, service-session ID, and exact request fingerprint. Old-session or forged decision files are ignored.
 - Approved Codex requests are answered only with one-shot `accept`; FLORAL does not emit `acceptForSession`, persistent exec-policy amendments, or session-scoped permission-profile grants.
 - `item/permissions/requestApproval` remains fail-closed until a later phase implements bounded granular permission subsets.
+
+## Phase 7.1 Codex-native remote execution modes
+
+This section supersedes the conflicting Phase 5.2/5.3 bullets above for Codex-native command, file-change, and structured permission approvals.
+
+- `ask` keeps `workspace-write + untrusted + reviewer=user`; Codex-native approvals are answered by the authenticated owner through FLORAL.
+- `auto` keeps `workspace-write + untrusted` and selects Codex `auto_review`; FLORAL does not silently widen the sandbox.
+- `full` is unavailable by default. It requires both the paired `owner` role and the Mac-local startup ceiling `FLORAL_REMOTE_MODE_CEILING=full`.
+- The ceiling defaults to `auto`, is read by the FLORAL parent process, and is removed from the Codex child-process environment.
+- `full` uses Codex `dangerFullAccess` with `untrusted`, not `never`. FLORAL automatically accepts only Codex-native command/file/structured-permission approval requests. Keeping the native approval event preserves the hard GUI-shell bypass rejection before any automatic grant.
+- MCP capability authorization and artifact DLP remain separate FLORAL boundaries in every execution mode. `full` does not convert a prompted MCP mutation into an automatic grant.
+- Execution-mode selection is in-memory and conversation-scoped; service restart returns every conversation to `ask`.

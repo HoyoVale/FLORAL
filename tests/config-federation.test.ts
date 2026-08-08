@@ -39,6 +39,7 @@ describe("configuration federation authority", () => {
     expect(listBoundEnvironmentKeys()).toEqual(
       Object.keys(catalog.environmentKeyPolicies).sort(),
     );
+    expect(listBoundEnvironmentKeys()).toContain("FLORAL_REMOTE_MODE_CEILING");
   });
 
   it("resolves requested and effective config with provenance and no secret values", async () => {

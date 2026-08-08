@@ -5,7 +5,12 @@ export interface GatewayStatusSnapshot {
   threadActive: boolean;
   runActive: boolean;
   pendingApprovals: number;
-  controlMode?: "ask" | "auto" | undefined;
+  controlMode?: "ask" | "auto" | "full" | undefined;
+  remoteModeCeiling?: "auto" | "full" | undefined;
+  sandboxMode?: "workspace-write" | "danger-full-access" | undefined;
+  approvalPolicy?: "untrusted" | undefined;
+  approvalsReviewer?: "user" | "auto_review" | undefined;
+  approvalRoute?: "owner" | "auto-review" | "full-auto-codex-native" | undefined;
   runtimeLines: string[];
 }
 
@@ -22,6 +27,11 @@ export function formatGatewayStatus(
       `thread=${snapshot.threadActive ? "active" : "none"}`,
       `run=${snapshot.runActive ? "active" : "idle"}`,
       `mode=${snapshot.controlMode ?? "ask"}`,
+      `mode_ceiling=${snapshot.remoteModeCeiling ?? "auto"}`,
+      `sandbox=${snapshot.sandboxMode ?? "workspace-write"}`,
+      `approval_policy=${snapshot.approvalPolicy ?? "untrusted"}`,
+      `reviewer=${snapshot.approvalsReviewer ?? "user"}`,
+      `approval_route=${snapshot.approvalRoute ?? "owner"}`,
       `approvals_pending=${String(snapshot.pendingApprovals)}`,
       ...snapshot.runtimeLines,
     ].join("\n");
@@ -33,7 +43,8 @@ export function formatGatewayStatus(
     "",
     `状态：${snapshot.runActive ? "正在处理" : "空闲"}`,
     `会话：${snapshot.threadActive ? "已建立" : "未建立"}`,
-    `执行模式：${snapshot.controlMode === "auto" ? "自动审查" : "询问"}`,
+    `执行模式：${humanizeControlMode(snapshot.controlMode ?? "ask")}`,
+    `权限上限：${snapshot.remoteModeCeiling ?? "auto"}`,
     `待审批：${String(snapshot.pendingApprovals)}`,
   ];
 
@@ -61,11 +72,18 @@ export function gatewayHelpText(): string {
     "/mode     查看执行模式",
     "/mode ask 使用 Codex 原生审批 + 飞书确认",
     "/mode auto 使用 Codex auto_review（owner）",
+    "/mode full 使用本机预授权的 Codex danger-full-access（owner）",
     "/stop     停止当前任务",
     "/help     查看帮助",
     "",
     "需要审批时，FLORAL 会单独提示。",
   ].join("\n");
+}
+
+function humanizeControlMode(mode: "ask" | "auto" | "full"): string {
+  if (mode === "full") return "完全权限";
+  if (mode === "auto") return "自动审查";
+  return "询问";
 }
 
 function parseRuntimeStatusLines(lines: string[]): Map<string, string> {

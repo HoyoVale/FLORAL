@@ -23,6 +23,10 @@ const envSchema = z.object({
   FLORAL_INSTANCE_LOCK_PATH: z.string().trim().min(1).default("./data/floral.lock"),
   FLORAL_SERVICE_STATE_PATH: z.string().trim().min(1).default("./data/service-state.json"),
   FLORAL_SERVICE_MODE: z.enum(["foreground", "launchagent"]).default("foreground"),
+  // Machine-local ceiling for remote execution-mode elevation. This is
+  // intentionally not sourced from config/floral.toml because an Agent
+  // working inside the project must not be able to raise its own ceiling.
+  FLORAL_REMOTE_MODE_CEILING: z.enum(["auto", "full"]).default("auto"),
   MOCK_TRUST_OWNER: booleanString.default(true),
   CHAT_TRANSPORT: z.preprocess(
     (value: unknown) => typeof value === "string" && value.trim() === "" ? undefined : value,
