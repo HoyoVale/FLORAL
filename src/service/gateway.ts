@@ -61,6 +61,8 @@ interface ArtifactCatalogEntry {
 const ARTIFACT_CATALOG_TTL_MS = 30 * 60 * 1_000;
 const ARTIFACT_CATALOG_MAX_ITEMS = 32;
 
+type AgentControlMode = "ask" | "auto";
+
 interface ActiveRun {
   threadId?: string;
   stopRequested: boolean;
@@ -76,6 +78,7 @@ interface ActiveRun {
 export class GatewayService {
   readonly #activeRuns = new Map<string, ActiveRun>();
   readonly #artifactCatalogs = new Map<string, Map<string, ArtifactCatalogEntry>>();
+  readonly #controlModes = new Map<string, AgentControlMode>();
   readonly #pairingLimiter = new PairingAttemptLimiter();
   readonly #approvalBroker: QqApprovalBroker | undefined;
   #started = false;
@@ -133,6 +136,7 @@ export class GatewayService {
     await Promise.allSettled([this.transport.stop(), this.agent.stop()]);
     this.#activeRuns.clear();
     this.#artifactCatalogs.clear();
+    this.#controlModes.clear();
     await this.store.close();
   }
 
@@ -312,6 +316,7 @@ export class GatewayService {
             role: resolved.role,
             threadActive: Boolean(threadId),
             runActive: active,
+            controlMode: this.#controlMode(resolved.conversationId),
             pendingApprovals: this.#approvalBroker?.pendingCount(resolved.conversationId) ?? 0,
             runtimeLines,
           }, command.debug),
@@ -349,7 +354,63 @@ export class GatewayService {
         );
         return;
 
+      case "mode": {
+        const requestedMode = command.value ?? "status";
+        if (requestedMode === "status") {
+          await this.#send(
+            message.identity.conversationId,
+            modeStatusText(this.#controlMode(resolved.conversationId)),
+          );
+          return;
+        }
+        if (requestedMode !== "ask" && requestedMode !== "auto") {
+          await this.#send(
+            message.identity.conversationId,
+            "用法：/mode [status|ask|auto]",
+          );
+          return;
+        }
+        if (this.#activeRuns.has(resolved.conversationId)) {
+          await this.#send(
+            message.identity.conversationId,
+            "当前任务运行中，执行模式将在任务结束后才能切换。",
+          );
+          return;
+        }
+        if (requestedMode === "auto" && resolved.role !== "owner") {
+          await this.store.appendAudit({
+            userId: resolved.userId,
+            conversationId: resolved.conversationId,
+            eventType: "command.mode_denied",
+            payload: { requestedMode },
+          });
+          await this.#send(
+            message.identity.conversationId,
+            "当前身份无权启用自动审查模式。",
+          );
+          return;
+        }
+
+        if (requestedMode === "ask") {
+          this.#controlModes.delete(resolved.conversationId);
+        } else {
+          this.#controlModes.set(resolved.conversationId, "auto");
+        }
+        await this.store.appendAudit({
+          userId: resolved.userId,
+          conversationId: resolved.conversationId,
+          eventType: "command.mode_changed",
+          payload: { mode: requestedMode },
+        });
+        await this.#send(
+          message.identity.conversationId,
+          modeChangedText(requestedMode),
+        );
+        return;
+      }
+
       case "approve":
+      case "approve-session":
       case "deny": {
         if (!command.approvalId) {
           await this.#send(
@@ -369,7 +430,11 @@ export class GatewayService {
             conversationId: resolved.conversationId,
           },
           command.approvalId,
-          command.type === "approve" ? "approve" : "deny",
+          command.type === "approve"
+            ? "approve"
+            : command.type === "approve-session"
+              ? "approve-session"
+              : "deny",
         );
         await this.store.appendAudit({
           userId: resolved.userId,
@@ -442,11 +507,15 @@ export class GatewayService {
     };
     this.#activeRuns.set(resolved.conversationId, active);
 
+    const controlMode = this.#controlMode(resolved.conversationId);
     await this.store.appendAudit({
       userId: resolved.userId,
       conversationId: resolved.conversationId,
       eventType: "agent.run_requested",
-      payload: { characterCount: message.text.length },
+      payload: {
+        characterCount: message.text.length,
+        controlMode,
+      },
     });
     this.#setConversationActivity(message.identity.conversationId, "typing");
     this.#scheduleVisibleActivityFallback(
@@ -462,6 +531,7 @@ export class GatewayService {
           ...(threadId ? { threadId } : {}),
           text: message.text,
           cwd: this.options.cwd,
+          approvalsReviewer: controlMode === "auto" ? "auto_review" : "user",
           ...(this.options.model ? { model: this.options.model } : {}),
           ...(this.options.artifactEgress ? {
             artifactRegistrationHandler: async (request) =>
@@ -479,7 +549,7 @@ export class GatewayService {
                 )
               ),
           } : {}),
-          ...(this.#approvalBroker ? {
+          ...(controlMode === "ask" && this.#approvalBroker ? {
             approvalHandler: async (request) => {
               active.waitingForApproval = true;
               active.visibleActivitySatisfied = true;
@@ -1026,9 +1096,35 @@ export class GatewayService {
     });
   }
 
+  #controlMode(conversationId: string): AgentControlMode {
+    return this.#controlModes.get(conversationId) ?? "ask";
+  }
+
   async #send(conversationId: string, text: string): Promise<void> {
     await this.transport.send({ conversationId, text });
   }
+}
+
+function modeStatusText(mode: AgentControlMode): string {
+  if (mode === "auto") {
+    return [
+      "执行模式=auto",
+      "Codex approvalsReviewer=auto_review。",
+      "FLORAL 不会为本模式补做远程人工审批；未被 Codex 自动审查接管的请求将拒绝。",
+      "当前 sandbox 不因模式切换而扩大。",
+    ].join("\n");
+  }
+  return [
+    "执行模式=ask",
+    "Codex 原生审批请求会转交当前已绑定 owner 处理。",
+    "可使用 /approve、/approve-session 或 /deny。",
+  ].join("\n");
+}
+
+function modeChangedText(mode: AgentControlMode): string {
+  return mode === "auto"
+    ? "已切换到 auto：Codex 使用 auto_review；当前 sandbox 保持不变。服务重启后会恢复 ask。"
+    : "已切换到 ask：Codex 原生审批请求会转交当前 owner。";
 }
 
 function visibleActivityProgress(toolName: string | undefined): {
@@ -1049,11 +1145,12 @@ function visibleActivityProgress(toolName: string | undefined): {
 }
 
 function approvalCommandReply(
-  _command: "approve" | "deny",
-  outcome: "approved" | "denied" | "not-found" | "not-authorized",
+  _command: "approve" | "approve-session" | "deny",
+  outcome: "approved" | "approved-session" | "denied" | "not-found" | "not-authorized",
 ): string {
   if (outcome === "approved") return "一次性授权已批准。";
-  if (outcome === "denied") return "一次性授权已拒绝。";
+  if (outcome === "approved-session") return "当前 Codex 会话授权已批准。";
+  if (outcome === "denied") return "Codex 授权已拒绝。";
   return "未找到可由当前会话处理的有效审批，可能已处理、过期或不属于当前会话。";
 }
 

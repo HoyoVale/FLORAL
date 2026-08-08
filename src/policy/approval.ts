@@ -10,6 +10,7 @@ const chatConfirmation = new Set<Capability>([
   "application.control",
   "browser.submit",
   "message.send",
+  "codex.permission.grant",
 ]);
 
 export function approvalLevelFor(capability: Capability): ApprovalLevel {

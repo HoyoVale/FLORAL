@@ -32,6 +32,7 @@ const roleCapabilities: Record<Role, ReadonlySet<Capability>> = {
     "browser.submit",
     "message.send",
     "web.search",
+    "codex.permission.grant",
     "system.restart",
     "system.admin",
   ]),

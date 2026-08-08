@@ -10,7 +10,7 @@ import {
 } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
 import type {
-  AgentApprovalDecision,
+  AgentLocalApprovalDecision,
   AgentApprovalRequest,
   GatewayRole,
 } from "../core/types.js";
@@ -31,7 +31,7 @@ export interface LocalConfirmationNotice {
 
 export interface LocalConfirmationHandle {
   notice: LocalConfirmationNotice;
-  decision: Promise<AgentApprovalDecision>;
+  decision: Promise<AgentLocalApprovalDecision>;
 }
 
 export interface LocalConfirmationBrokerOptions {
@@ -64,7 +64,7 @@ interface DecisionRecord {
   publicId: string;
   sessionId: string;
   requestFingerprint: string;
-  decision: AgentApprovalDecision;
+  decision: AgentLocalApprovalDecision;
   decidedAt: string;
 }
 
@@ -73,7 +73,7 @@ interface PendingState {
   scope: LocalConfirmationScope;
   timer: NodeJS.Timeout;
   pollTimer: NodeJS.Timeout | undefined;
-  resolve: (decision: AgentApprovalDecision) => void;
+  resolve: (decision: AgentLocalApprovalDecision) => void;
 }
 
 export class LocalConfirmationBroker {
@@ -142,8 +142,8 @@ export class LocalConfirmationBroker {
     };
     await writePrivateJson(this.#pendingPath(publicId), record);
 
-    let resolveDecision!: (decision: AgentApprovalDecision) => void;
-    const decision = new Promise<AgentApprovalDecision>((resolve) => {
+    let resolveDecision!: (decision: AgentLocalApprovalDecision) => void;
+    const decision = new Promise<AgentLocalApprovalDecision>((resolve) => {
       resolveDecision = resolve;
     });
     const timer = setTimeout(() => {
@@ -227,7 +227,7 @@ export class LocalConfirmationBroker {
     pending.pollTimer = timer;
   }
 
-  async #finish(publicId: string, decision: AgentApprovalDecision): Promise<void> {
+  async #finish(publicId: string, decision: AgentLocalApprovalDecision): Promise<void> {
     const pending = this.#pending.get(publicId);
     if (!pending) return;
     this.#pending.delete(publicId);
@@ -290,7 +290,7 @@ export async function listLocalApprovalRecords(
 export async function writeLocalApprovalDecision(
   directory: string,
   publicId: string,
-  decision: AgentApprovalDecision,
+  decision: AgentLocalApprovalDecision,
   now = Date.now(),
 ): Promise<"written" | "not-found" | "expired" | "already-decided"> {
   const normalizedId = publicId.trim().toUpperCase();

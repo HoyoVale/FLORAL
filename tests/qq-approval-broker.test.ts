@@ -75,6 +75,39 @@ describe("QqApprovalBroker", () => {
     }, "ABC12345", "approve")).resolves.toBe("not-found");
   });
 
+  it("returns a Codex-native session approval without a FLORAL command allowlist", async () => {
+    const broker = new QqApprovalBroker({
+      ttlMs: 5_000,
+      maxPending: 4,
+      ownerOnly: true,
+      authority: writableAuthority(),
+      send: async () => undefined,
+      audit: async () => undefined,
+      createPublicId: () => "SESSION77",
+    });
+    const scope = {
+      userId: "owner-1",
+      role: "owner" as const,
+      conversationId: "conversation-1",
+      deliveryConversationId: "qq-conversation-1",
+    };
+    const decisionPromise = broker.request(scope, {
+      requestId: "codex-session",
+      kind: "command-execution",
+      capability: "shell.execute",
+      summary: "git status",
+      source: "codex",
+    });
+    await Promise.resolve();
+
+    await expect(
+      broker.resolve(scope, "SESSION77", "approve-session"),
+    ).resolves.toBe("approved-session");
+    await expect(decisionPromise).resolves.toBe("approve-session");
+    expect(broker.pendingCount()).toBe(0);
+  });
+
+
   it("prefers an interactive one-shot prompt and keeps the approval ID out of text", async () => {
     const sent: string[] = [];
     const interactive: Array<{ approvalId: string; capability: string; summary: string }> = [];
@@ -324,8 +357,8 @@ describe("QqApprovalBroker", () => {
     }, {
       requestId: "req-local",
       kind: "command-execution",
-      capability: "shell.execute",
-      summary: "echo local",
+      capability: "system.admin",
+      summary: "system administration",
       source: "codex",
     });
 
@@ -333,7 +366,7 @@ describe("QqApprovalBroker", () => {
     expect(interactiveCalls).toBe(0);
     expect(prompt).toContain("本地审批编号=LOCAL777");
     expect(prompt).toContain("请求详情仅在 Mac 本地显示");
-    expect(prompt).not.toContain("echo local");
+    expect(prompt).not.toContain("system administration");
     expect(prompt).toContain("远程 /approve 无法授权");
     expect(broker.pendingCount("conversation-1")).toBe(1);
     expect(await writeLocalApprovalDecision(directory, "LOCAL777", "approve")).toBe("written");
@@ -372,7 +405,7 @@ describe("QqApprovalBroker", () => {
     }, {
       requestId: "req-1",
       kind: "command-execution",
-      capability: "shell.execute",
+      capability: "system.admin",
       summary: "sudo something",
       source: "codex",
     })).resolves.toBe("deny");

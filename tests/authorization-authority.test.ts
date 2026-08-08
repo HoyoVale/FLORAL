@@ -108,15 +108,36 @@ describe("AuthorizationAuthority", () => {
     })).toMatchObject({ status: "deny", reason: "sandbox-capability-denied" });
   });
 
-  it("never turns an opaque Codex command escalation into a remote QQ approval", () => {
+  it("trusts Codex to classify native command escalation and requires owner chat confirmation", () => {
     expect(authority("danger-full-access").evaluate({
       role: "owner",
       capability: "shell.execute",
       source: "codex-command",
     })).toEqual({
       status: "approval-required",
-      approvalLevel: "local-confirmation",
+      approvalLevel: "chat-confirmation",
       reason: "policy",
+    });
+  });
+
+  it("allows only the owner to answer a Codex structured permission request", () => {
+    expect(authority("workspace-write").evaluate({
+      role: "owner",
+      capability: "codex.permission.grant",
+      source: "codex-permission-request",
+    })).toEqual({
+      status: "approval-required",
+      approvalLevel: "chat-confirmation",
+      reason: "policy",
+    });
+
+    expect(authority("workspace-write").evaluate({
+      role: "operator",
+      capability: "codex.permission.grant",
+      source: "codex-permission-request",
+    })).toMatchObject({
+      status: "deny",
+      reason: "role-capability-denied",
     });
   });
 

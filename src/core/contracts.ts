@@ -40,6 +40,7 @@ export interface InteractiveApprovalPrompt {
   capability: string;
   summary: string;
   ttlMs: number;
+  allowSession?: boolean | undefined;
 }
 
 export interface InteractiveApprovalTransport {

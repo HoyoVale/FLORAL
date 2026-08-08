@@ -6,7 +6,9 @@ export type GatewayCommand =
   | { type: "status"; debug: boolean }
   | { type: "help" }
   | { type: "stop" }
+  | { type: "mode"; value: string | undefined }
   | { type: "approve"; approvalId: string | undefined }
+  | { type: "approve-session"; approvalId: string | undefined }
   | { type: "deny"; approvalId: string | undefined };
 
 export function parseGatewayCommand(text: string): GatewayCommand | undefined {
@@ -23,6 +25,17 @@ export function parseGatewayCommand(text: string): GatewayCommand | undefined {
   if (status) return { type: "status", debug: Boolean(status[1]) };
   if (/^\/help$/i.test(trimmed)) return { type: "help" };
   if (/^\/stop$/i.test(trimmed)) return { type: "stop" };
+  const mode = /^\/mode(?:\s+([A-Za-z-]+))?$/i.exec(trimmed);
+  if (mode) {
+    return { type: "mode", value: mode[1]?.trim().toLowerCase() || undefined };
+  }
+  const approveSession = /^\/approve-session(?:\s+([A-Za-z0-9]+))?$/i.exec(trimmed);
+  if (approveSession) {
+    return {
+      type: "approve-session",
+      approvalId: approveSession[1]?.trim().toUpperCase() || undefined,
+    };
+  }
   const approve = /^\/approve(?:\s+([A-Za-z0-9]+))?$/i.exec(trimmed);
   if (approve) {
     return { type: "approve", approvalId: approve[1]?.trim().toUpperCase() || undefined };

@@ -76,6 +76,10 @@ export function buildFeishuApprovalCard(
             escapeMarkdown(summary),
             "",
             `能力：\`${escapeInlineCode(capability)}\``,
+            `审批编号：\`${escapeInlineCode(approvalId)}\``,
+            ...(prompt.allowSession === true
+              ? [`本会话允许：\`/approve-session ${escapeInlineCode(approvalId)}\``]
+              : []),
             `有效期：${String(seconds)} 秒`,
           ].join("\n"),
         },

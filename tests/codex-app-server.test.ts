@@ -12,7 +12,7 @@ function createRuntime(
   options: {
     approvalPolicy?: "never" | "on-request" | "untrusted";
     sandboxMode?: "read-only" | "workspace-write";
-    approvalsReviewer?: "user";
+    approvalsReviewer?: "user" | "auto_review";
   } = {},
 ): CodexAppServerRuntime {
   return new CodexAppServerRuntime({
@@ -222,6 +222,61 @@ describe("CodexAppServerRuntime", () => {
       await runtime.stop();
     }
   });
+
+  it("supports a run-scoped Codex auto_review reviewer", async () => {
+    const runtime = createRuntime("auto-review");
+    try {
+      await runtime.start();
+      const result = await runtime.run({
+        text: "work autonomously",
+        cwd: process.cwd(),
+        approvalsReviewer: "auto_review",
+      });
+      expect(result.finalText).toBe("auto review configured");
+    } finally {
+      await runtime.stop();
+    }
+  });
+
+  it("grants an exact Codex permission request for one turn", async () => {
+    const runtime = createRuntime("permission-approval");
+    try {
+      await runtime.start();
+      const result = await runtime.run({
+        text: "request permission",
+        cwd: process.cwd(),
+        approvalHandler: async (request) => {
+          expect(request).toMatchObject({
+            kind: "permission-request",
+            capability: "codex.permission.grant",
+            source: "codex",
+          });
+          expect(request.summary).toContain("network");
+          expect(request.summary).toContain("/tmp/shared");
+          return "approve";
+        },
+      });
+      expect(result.finalText).toBe("permission approval accepted safely");
+    } finally {
+      await runtime.stop();
+    }
+  });
+
+  it("uses Codex native session scope for approved permission requests", async () => {
+    const runtime = createRuntime("permission-session-approval");
+    try {
+      await runtime.start();
+      const result = await runtime.run({
+        text: "request session permission",
+        cwd: process.cwd(),
+        approvalHandler: async () => "approve-session",
+      });
+      expect(result.finalText).toBe("permission session approval accepted safely");
+    } finally {
+      await runtime.stop();
+    }
+  });
+
 
   it("emits bounded MCP tool lifecycle events", async () => {
     const runtime = createRuntime("mcp-tool");

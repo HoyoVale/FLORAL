@@ -31,6 +31,7 @@ export interface QqApprovalBrokerOptions {
 
 export type ApprovalResolveResult =
   | "approved"
+  | "approved-session"
   | "denied"
   | "not-found"
   | "not-authorized";
@@ -173,6 +174,7 @@ export class QqApprovalBroker {
             capability: request.capability,
             summary: boundedSummary(request.summary),
             ttlMs: this.options.ttlMs,
+            allowSession: request.kind !== "mcp-tool",
           });
           presentation = "interactive";
         } catch (error) {
@@ -233,11 +235,15 @@ export class QqApprovalBroker {
       pending.scope,
       decision === "approve"
         ? "authorization.approval_granted"
-        : "authorization.approval_denied",
+        : decision === "approve-session"
+          ? "authorization.approval_granted_session"
+          : "authorization.approval_denied",
       pending.request,
       { approvalId: normalizedId },
     );
-    return decision === "approve" ? "approved" : "denied";
+    if (decision === "approve") return "approved";
+    if (decision === "approve-session") return "approved-session";
+    return "denied";
   }
 
   pendingCount(conversationId?: string): number {
@@ -307,9 +313,10 @@ export class QqApprovalBroker {
 
 function sourceFor(
   request: AgentApprovalRequest,
-): "codex-command" | "codex-file-change" | "codex-permission-profile" | "mcp-tool" | "floral" {
+): "codex-command" | "codex-file-change" | "codex-permission-request" | "codex-permission-profile" | "mcp-tool" | "floral" {
   if (request.kind === "command-execution") return "codex-command";
   if (request.kind === "file-change") return "codex-file-change";
+  if (request.kind === "permission-request") return "codex-permission-request";
   if (request.kind === "permission-profile") return "codex-permission-profile";
   if (request.kind === "mcp-tool") return "mcp-tool";
   return "floral";
@@ -340,16 +347,22 @@ function approvalPrompt(
   ttlMs: number,
 ): string {
   const seconds = Math.max(1, Math.ceil(ttlMs / 1_000));
-  return [
+  const lines = [
     "FLORAL 请求一次性授权",
     `审批编号=${publicId}`,
     `能力=${request.capability}`,
     `请求=${boundedSummary(request.summary)}`,
     `有效期=${seconds} 秒`,
-    `允许：/approve ${publicId}`,
+    `允许一次：/approve ${publicId}`,
+  ];
+  if (request.kind !== "mcp-tool") {
+    lines.push(`本会话允许：/approve-session ${publicId}`);
+  }
+  lines.push(
     `拒绝：/deny ${publicId}`,
-    "授权仅对当前所有者、当前会话、当前请求生效。",
-  ].join("\n");
+    "权限决定由 Codex 原生审批/会话缓存执行；FLORAL 不维护影子命令白名单。",
+  );
+  return lines.join("\n");
 }
 
 function boundedSummary(value: string): string {

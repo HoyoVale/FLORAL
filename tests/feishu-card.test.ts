@@ -44,6 +44,30 @@ describe("Feishu approval cards", () => {
     });
   });
 
+  it("shows the approval id and native session command when session scope is supported", () => {
+    const card = buildFeishuApprovalCard({
+      conversationId: "oc_chat",
+      approvalId: "SESSION123",
+      capability: "shell.execute",
+      summary: "run a Codex-approved command",
+      ttlMs: 60_000,
+      allowSession: true,
+    }) as {
+      body?: {
+        elements?: Array<{
+          tag?: unknown;
+          content?: unknown;
+        }>;
+      };
+    };
+    const markdown = card.body?.elements?.find((element) =>
+      element.tag === "markdown"
+    )?.content;
+    expect(String(markdown)).toContain("SESSION123");
+    expect(String(markdown)).toContain("/approve-session SESSION123");
+  });
+
+
   it("normalizes the flattened SDK card.action.trigger payload", () => {
     const result = normalizeFeishuApprovalCardAction({
       event_id: "evt_card",

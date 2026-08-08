@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "reviewedAt": "2026-08-08",
-  "purpose": "Phase 4 configuration federation, Phase 5 safety controls, and Phase 5F Feishu primary-chat migration inventory.",
+  "purpose": "Phase 4 configuration federation, Phase 5 safety controls, Phase 5F Feishu primary-chat migration, and Phase 7.1A Codex-native approval alignment inventory.",
   "classifications": [
     "floral-owned",
     "upstream-managed",
@@ -50,7 +50,9 @@
             "runtime.authorization.max_pending_approvals",
             "runtime.authorization.owner_only_remote_approval",
             "/approve <id>",
+            "/approve-session <id>",
             "/deny <id>",
+            "/mode ask|auto|status",
             "runtime.authorization.codex_turn_approval_policy",
             "runtime.authorization.codex_turn_sandbox_mode",
             "runtime.authorization.codex_approvals_reviewer",
@@ -66,7 +68,7 @@
             "audit_retention",
             "native_local_confirmation_ui"
           ],
-          "notes": "Remote file-change approvals are owner/conversation/request scoped and one-shot. Opaque Codex command escalation is never remotely approvable; it uses a private Mac-local file mailbox with process-session binding, short TTL, and one-shot decisions."
+          "notes": "In ask mode, Codex-native command/file/structured permission approval requests are answered through the owner/conversation/request-scoped broker. /approve-session delegates session lifetime to Codex rather than storing a FLORAL command allowlist. FLORAL-owned system administration remains Mac-local. In auto mode FLORAL supplies approvalsReviewer=auto_review and does not attach its remote human approval handler."
         },
         {
           "id": "security-invariants",
@@ -166,7 +168,7 @@
             "project trust",
             "permission profiles"
           ],
-          "notes": "Phase 5.3A keeps the native/default Codex fail-safe at read-only/never, while FLORAL explicitly starts reviewed app-server turns with workspaceWrite + untrusted (pinned 0.146.1 app-server wire values) and reviewer=user. File-change approval may be granted once through the owner-scoped remote approval broker; opaque command escalation remains Mac-local only. Granular permission-profile expansion remains denied."
+          "notes": "The native/default Codex fail-safe remains read-only/never while FLORAL starts controlled turns with workspaceWrite + untrusted. Phase 7.1A supports reviewer=user (ask) and reviewer=auto_review (auto) without widening the workspaceWrite sandbox. Native command/file approvals and item/permissions/requestApproval remain Codex protocol decisions; FLORAL authenticates the remote owner and forwards approved turn/session scope without inventing a second permission profile format."
         },
         {
           "id": "mcp-client",
@@ -1029,20 +1031,20 @@
       "risk": "Remote approval must never be delegated to an operator/viewer by configuration drift."
     },
     {
-      "id": "authorization.codex-command-local",
+      "id": "authorization.codex-command-native-owner",
       "component": "floral",
       "classification": "locked",
       "file": "src/policy/authorization-authority.ts",
       "needle": "request.source === \"codex-command\"",
-      "risk": "Opaque Codex command escalation cannot be safely classified as a bounded remote capability yet, so QQ approval must not authorize it."
+      "risk": "Codex, not FLORAL, classifies native command escalation. FLORAL must still authenticate role and approval scope before forwarding an owner decision in ask mode."
     },
     {
-      "id": "authorization.permission-profile-local",
+      "id": "authorization.permission-request-native",
       "component": "codex",
       "classification": "locked",
       "file": "src/agent/codex-app-server.ts",
-      "needle": "Granular permission grants are deliberately not remotely delegable",
-      "risk": "Granular filesystem/network permission profiles can widen the sandbox and therefore remain fail-closed for remote approval."
+      "needle": "kind: \"permission-request\"",
+      "risk": "Structured filesystem/network grants can widen a turn or session. FLORAL may only return the validated permission subset that Codex requested, and only after the owner-scoped ask-mode approval path; absent a handler the request fails closed."
     },
     {
       "id": "authorization.mcp-capability-coverage",

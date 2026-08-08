@@ -166,6 +166,10 @@ lines.on("line", (line) => {
       send({ id: message.id, error: { code: -32602, message: "approval reviewer must be user" } });
       return;
     }
+    if (scenario === "auto-review" && message.params?.approvalsReviewer !== "auto_review") {
+      send({ id: message.id, error: { code: -32602, message: "approval reviewer must be auto_review" } });
+      return;
+    }
     if (scenario === "on-request-file-approval") {
       const roots = message.params?.sandboxPolicy?.writableRoots;
       if (
@@ -190,6 +194,36 @@ lines.on("line", (line) => {
     send({ id: message.id, result: { turn: { id: activeTurnId, status: "inProgress" } } });
 
     setImmediate(() => {
+      if (scenario === "auto-review") {
+        sendSuccess(activeThreadId, activeTurnId, "auto review configured");
+        return;
+      }
+
+      if (scenario === "permission-approval" || scenario === "permission-session-approval") {
+        waitingForApproval = true;
+        send({
+          id: "approval_permission_1",
+          method: "item/permissions/requestApproval",
+          params: {
+            threadId: activeThreadId,
+            turnId: activeTurnId,
+            itemId: "permission_1",
+            environmentId: null,
+            startedAtMs: Date.now(),
+            cwd: process.cwd(),
+            reason: "need network and one extra read root",
+            permissions: {
+              network: { enabled: true },
+              fileSystem: {
+                read: ["/tmp/shared"],
+                write: null,
+              },
+            },
+          },
+        });
+        return;
+      }
+
       if (scenario === "quota") {
         const error = {
           message: "You've hit your usage limit.",
@@ -684,6 +718,44 @@ lines.on("line", (line) => {
     return;
   }
 
+  if (
+    waitingForApproval
+    && message.id === "approval_permission_1"
+    && "result" in message
+  ) {
+    waitingForApproval = false;
+    const expectedScope = scenario === "permission-session-approval" ? "session" : "turn";
+    const permissions = message.result?.permissions;
+    const valid = message.result?.scope === expectedScope
+      && permissions?.network?.enabled === true
+      && Array.isArray(permissions?.fileSystem?.read)
+      && permissions.fileSystem.read.length === 1
+      && permissions.fileSystem.read[0] === "/tmp/shared"
+      && permissions?.fileSystem?.write === null;
+    if (valid) {
+      sendSuccess(
+        activeThreadId,
+        activeTurnId,
+        scenario === "permission-session-approval"
+          ? "permission session approval accepted safely"
+          : "permission approval accepted safely",
+      );
+    } else {
+      const error = {
+        message: `unexpected permission response: ${JSON.stringify(message.result)}`,
+        codexErrorInfo: "Other",
+      };
+      send({
+        method: "turn/completed",
+        params: {
+          threadId: activeThreadId,
+          turn: { id: activeTurnId, status: "failed", error, items: [] },
+        },
+      });
+    }
+    return;
+  }
+
   if (message.method === "turn/interrupt") {
     send({ id: message.id, result: {} });
     send({
@@ -748,6 +820,8 @@ lines.on("line", (line) => {
       sendSuccess(activeThreadId, activeTurnId, "approval declined safely");
     } else if (decision === "accept") {
       sendSuccess(activeThreadId, activeTurnId, "approval accepted safely");
+    } else if (decision === "acceptForSession") {
+      sendSuccess(activeThreadId, activeTurnId, "approval session accepted safely");
     } else {
       const error = { message: `unexpected approval decision: ${String(decision)}`, codexErrorInfo: "Other" };
       send({

@@ -6,6 +6,7 @@ import { roleAllows } from "./permissions.js";
 export type AuthorizationSource =
   | "codex-command"
   | "codex-file-change"
+  | "codex-permission-request"
   | "codex-permission-profile"
   | "mcp-tool"
   | "floral";
@@ -89,11 +90,14 @@ export class AuthorizationAuthority {
       && request.capability === "application.control"
       && request.mcpServerId === "floral_peekaboo"
       && request.mcpToolName === "click";
+    const scopedCodexPermissionGrant = request.source === "codex-permission-request"
+      && request.capability === "codex.permission.grant";
 
     if (
       !sandboxAllows(this.options.sandboxMode, request.capability)
       && !scopedFileChangeGrant
       && !scopedPeekabooClickGrant
+      && !scopedCodexPermissionGrant
     ) {
       return {
         status: "deny",
@@ -102,12 +106,19 @@ export class AuthorizationAuthority {
       };
     }
 
-    // A Codex command approval is an escalation request. Until FLORAL has a
-    // command classifier, remote chat must never be allowed to turn an opaque
-    // shell request into an unsandboxed command. The Mac-local confirmation
-    // phase will be the only route for these requests.
-    const level: ApprovalLevel = request.source === "codex-command"
-      ? "local-confirmation"
+    // Codex is the execution-policy authority for native command/file/
+    // permission escalations. FLORAL authenticates who may answer the
+    // already-issued Codex request; it does not maintain a second shell-risk
+    // classifier.
+    const codexNativeRemotePrompt = (
+      request.source === "codex-command"
+      && request.capability === "shell.execute"
+    ) || (
+      request.source === "codex-file-change"
+      && request.capability === "files.write"
+    ) || scopedCodexPermissionGrant;
+    const level: ApprovalLevel = codexNativeRemotePrompt
+      ? "chat-confirmation"
       : defaultLevel;
 
     if (level === "automatic") {

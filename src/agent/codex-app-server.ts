@@ -83,7 +83,7 @@ export interface CodexAppServerOptions {
   defaultModel: string | undefined;
   approvalPolicy?: "never" | "on-request" | "untrusted" | undefined;
   sandboxMode?: "read-only" | "workspace-write" | undefined;
-  approvalsReviewer?: "user" | undefined;
+  approvalsReviewer?: "user" | "auto_review" | undefined;
   developerInstructions?: string | undefined;
   processCwd?: string | undefined;
   processEnv?: NodeJS.ProcessEnv | undefined;
@@ -188,7 +188,7 @@ export class CodexAppServerRuntime implements AgentRuntime {
   readonly #turnTimeoutMs: number;
   readonly #approvalPolicy: "never" | "on-request" | "untrusted";
   readonly #sandboxMode: "read-only" | "workspace-write";
-  readonly #approvalsReviewer: "user";
+  readonly #approvalsReviewer: "user" | "auto_review";
   readonly #developerInstructions: string;
   readonly #loadedThreads = new Set<string>();
   readonly #activeTurns = new Map<string, string>();
@@ -415,7 +415,7 @@ export class CodexAppServerRuntime implements AgentRuntime {
         input: [{ type: "text", text: request.text }],
         cwd,
         approvalPolicy: toAppServerApprovalPolicy(this.#approvalPolicy),
-        approvalsReviewer: this.#approvalsReviewer,
+        approvalsReviewer: request.approvalsReviewer ?? this.#approvalsReviewer,
         sandboxPolicy: buildTurnSandboxPolicy(this.#sandboxMode, cwd),
       };
       const model = request.model ?? this.#defaultModel;
@@ -622,18 +622,23 @@ export class CodexAppServerRuntime implements AgentRuntime {
       const decision = handler
         ? await handler(approval).catch(() => "deny" as const)
         : "deny";
-      this.#respondSafely(request.id, { decision: decision === "approve" ? "accept" : "decline" });
+      this.#respondSafely(request.id, {
+        decision: decision === "approve"
+          ? "accept"
+          : decision === "approve-session"
+            ? "acceptForSession"
+            : "decline",
+      });
       return;
     }
 
     if (request.method === "item/permissions/requestApproval") {
-      const approval: AgentApprovalRequest = {
-        requestId: String(request.id),
-        kind: "permission-profile",
-        capability: "system.admin",
-        summary: "Codex 请求扩大当前沙箱权限范围。",
-        source: "codex",
-      };
+      const permissions = readCodexRequestedPermissions(params?.permissions);
+      if (!permissions) {
+        this.#respondSafely(request.id, { scope: "turn", permissions: {} });
+        return;
+      }
+      const approval = buildCodexPermissionApprovalRequest(request, permissions);
       onEvent?.({
         type: "approval.requested",
         requestId: approval.requestId,
@@ -641,10 +646,19 @@ export class CodexAppServerRuntime implements AgentRuntime {
         kind: approval.kind,
         detail: { summary: approval.summary },
       });
-      // Granular permission grants are deliberately not remotely delegable in
-      // Phase 5.3. Returning an empty subset is fail-closed and keeps the
-      // stronger local-confirmation boundary intact.
-      this.#respondSafely(request.id, { scope: "turn", permissions: {} });
+      const handler = threadId ? this.#approvalHandlers.get(threadId) : undefined;
+      const decision = handler
+        ? await handler(approval).catch(() => "deny" as const)
+        : "deny";
+      this.#respondSafely(
+        request.id,
+        decision === "approve" || decision === "approve-session"
+          ? {
+              scope: decision === "approve-session" ? "session" : "turn",
+              permissions,
+            }
+          : { scope: "turn", permissions: {} },
+      );
       return;
     }
 
@@ -673,7 +687,7 @@ export class CodexAppServerRuntime implements AgentRuntime {
         : "deny";
       this.#respondSafely(
         request.id,
-        decision === "approve"
+        decision === "approve" || decision === "approve-session"
           ? { action: "accept", content: {}, _meta: null }
           : { action: "decline", content: null, _meta: null },
       );
@@ -938,6 +952,113 @@ function buildCodexApprovalRequest(
         : "Codex 请求执行一个需要额外权限的命令。",
     source: "codex",
   };
+}
+
+function buildCodexPermissionApprovalRequest(
+  request: CodexServerRequest,
+  permissions: Record<string, unknown>,
+): AgentApprovalRequest {
+  const params = asRecord(request.params);
+  const reason = redactApprovalText(readString(params?.reason));
+  const requested = redactApprovalText(JSON.stringify(permissions));
+  const detail = requested
+    ? `请求权限=${requested}${reason ? `；原因=${reason}` : ""}`
+    : reason
+      ? `原因=${reason}`
+      : "请求结构化 filesystem/network 权限";
+  return {
+    requestId: String(request.id),
+    kind: "permission-request",
+    capability: "codex.permission.grant",
+    summary: `Codex 请求扩大当前权限：${detail}`,
+    source: "codex",
+  };
+}
+
+function readCodexRequestedPermissions(
+  value: unknown,
+): Record<string, unknown> | undefined {
+  const profile = asPlainRecord(value);
+  if (!profile) return undefined;
+  const keys = Object.keys(profile);
+  if (keys.some((key) => key !== "network" && key !== "fileSystem")) {
+    return undefined;
+  }
+
+  const output: Record<string, unknown> = {};
+
+  if (profile.network !== undefined && profile.network !== null) {
+    const network = asPlainRecord(profile.network);
+    if (!network) return undefined;
+    if (Object.keys(network).some((key) => key !== "enabled")) return undefined;
+    if (network.enabled !== undefined && typeof network.enabled !== "boolean") {
+      return undefined;
+    }
+    output.network = {
+      ...(typeof network.enabled === "boolean" ? { enabled: network.enabled } : {}),
+    };
+  }
+
+  if (profile.fileSystem !== undefined && profile.fileSystem !== null) {
+    const fileSystem = asPlainRecord(profile.fileSystem);
+    if (!fileSystem) return undefined;
+    const allowed = new Set(["read", "write", "globScanMaxDepth", "entries"]);
+    if (Object.keys(fileSystem).some((key) => !allowed.has(key))) return undefined;
+
+    const normalized: Record<string, unknown> = {};
+    for (const key of ["read", "write"] as const) {
+      const entry = fileSystem[key];
+      if (entry === undefined) continue;
+      if (entry === null) {
+        normalized[key] = null;
+        continue;
+      }
+      if (!Array.isArray(entry) || !entry.every((item) => typeof item === "string")) {
+        return undefined;
+      }
+      normalized[key] = [...entry];
+    }
+
+    const globScanMaxDepth = fileSystem.globScanMaxDepth;
+    if (globScanMaxDepth !== undefined) {
+      if (
+        typeof globScanMaxDepth !== "number"
+        || !Number.isInteger(globScanMaxDepth)
+        || globScanMaxDepth < 1
+      ) {
+        return undefined;
+      }
+      normalized.globScanMaxDepth = globScanMaxDepth;
+    }
+
+    if (fileSystem.entries !== undefined) {
+      if (!Array.isArray(fileSystem.entries) || !isJsonSafe(fileSystem.entries)) {
+        return undefined;
+      }
+      normalized.entries = structuredClone(fileSystem.entries);
+    }
+    output.fileSystem = normalized;
+  }
+
+  return output;
+}
+
+function isJsonSafe(value: unknown, depth = 0): boolean {
+  if (depth > 16) return false;
+  if (
+    value === null
+    || typeof value === "string"
+    || typeof value === "boolean"
+    || (typeof value === "number" && Number.isFinite(value))
+  ) {
+    return true;
+  }
+  if (Array.isArray(value)) {
+    return value.length <= 512 && value.every((item) => isJsonSafe(item, depth + 1));
+  }
+  const record = asPlainRecord(value);
+  if (!record || Object.keys(record).length > 64) return false;
+  return Object.values(record).every((item) => isJsonSafe(item, depth + 1));
 }
 
 function buildMcpToolApprovalRequest(

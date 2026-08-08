@@ -5,6 +5,7 @@ export interface GatewayStatusSnapshot {
   threadActive: boolean;
   runActive: boolean;
   pendingApprovals: number;
+  controlMode?: "ask" | "auto" | undefined;
   runtimeLines: string[];
 }
 
@@ -20,6 +21,7 @@ export function formatGatewayStatus(
       `role=${snapshot.role}`,
       `thread=${snapshot.threadActive ? "active" : "none"}`,
       `run=${snapshot.runActive ? "active" : "idle"}`,
+      `mode=${snapshot.controlMode ?? "ask"}`,
       `approvals_pending=${String(snapshot.pendingApprovals)}`,
       ...snapshot.runtimeLines,
     ].join("\n");
@@ -31,6 +33,7 @@ export function formatGatewayStatus(
     "",
     `状态：${snapshot.runActive ? "正在处理" : "空闲"}`,
     `会话：${snapshot.threadActive ? "已建立" : "未建立"}`,
+    `执行模式：${snapshot.controlMode === "auto" ? "自动审查" : "询问"}`,
     `待审批：${String(snapshot.pendingApprovals)}`,
   ];
 
@@ -55,6 +58,9 @@ export function gatewayHelpText(): string {
     "",
     "/new      开始新会话",
     "/status   查看运行状态",
+    "/mode     查看执行模式",
+    "/mode ask 使用 Codex 原生审批 + 飞书确认",
+    "/mode auto 使用 Codex auto_review（owner）",
     "/stop     停止当前任务",
     "/help     查看帮助",
     "",

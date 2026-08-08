@@ -14,16 +14,19 @@ export type Capability =
   | "browser.submit"
   | "message.send"
   | "web.search"
+  | "codex.permission.grant"
   | "system.restart"
   | "system.admin";
 
 export type AgentApprovalKind =
   | "command-execution"
   | "file-change"
+  | "permission-request"
   | "permission-profile"
   | "mcp-tool";
 
-export type AgentApprovalDecision = "approve" | "deny";
+export type AgentApprovalDecision = "approve" | "approve-session" | "deny";
+export type AgentLocalApprovalDecision = Exclude<AgentApprovalDecision, "approve-session">;
 
 export interface AgentApprovalRequest {
   requestId: string;
@@ -148,6 +151,7 @@ export interface AgentRunRequest {
   text: string;
   cwd: string;
   model?: string;
+  approvalsReviewer?: "user" | "auto_review";
   approvalHandler?: AgentApprovalHandler;
   artifactRegistrationHandler?: AgentArtifactRegistrationHandler;
   artifactDeliveryHandler?: AgentArtifactDeliveryHandler;
