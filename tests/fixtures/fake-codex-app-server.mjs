@@ -181,6 +181,17 @@ lines.on("line", (line) => {
     return;
   }
 
+  if (message.method === "test/batched-server-request") {
+    const response = { id: message.id, result: { accepted: true } };
+    const serverRequest = {
+      id: "batched_request_1",
+      method: "test/serverRequest",
+      params: { source: "same-stdout-chunk" },
+    };
+    process.stdout.write(`${JSON.stringify(response)}\n${JSON.stringify(serverRequest)}\n`);
+    return;
+  }
+
   if (message.method === "turn/start") {
     if (scenario === "on-request-file-approval" && message.params?.approvalPolicy !== "untrusted") {
       send({

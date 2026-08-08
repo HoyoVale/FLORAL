@@ -29,6 +29,35 @@ describe("CodexRpcClient", () => {
     }
   });
 
+  it("publishes a batched server request after the preceding response continuation", async () => {
+    const client = createClient("normal");
+    const order: string[] = [];
+    const observedRequest = new Promise<void>((resolve) => {
+      client.once("serverRequest", (request) => {
+        order.push("server-request");
+        expect(request).toMatchObject({
+          id: "batched_request_1",
+          method: "test/serverRequest",
+          params: { source: "same-stdout-chunk" },
+        });
+        client.respond(request.id, { accepted: true });
+        resolve();
+      });
+    });
+
+    try {
+      await client.start();
+      await client.initialize({ name: "test", title: "Test", version: "0.1.0" });
+      await client.request("test/batched-server-request", {}).then(() => {
+        order.push("response-continuation");
+      });
+      await observedRequest;
+      expect(order).toEqual(["response-continuation", "server-request"]);
+    } finally {
+      await client.stop();
+    }
+  });
+
   it("rejects pending requests when the child exits", async () => {
     const client = createClient("normal");
     try {

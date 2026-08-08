@@ -276,7 +276,13 @@ export class CodexRpcClient extends EventEmitter {
         method: message.method,
         params: message.params,
       };
-      this.emit("serverRequest", request);
+      // A Codex response and the immediately following server request can be
+      // coalesced into one stdout chunk. readline may emit both lines
+      // synchronously before the Promise continuation for the response runs.
+      // Defer server requests by one microtask so callers can commit state
+      // derived from the preceding response (for example the active turn id)
+      // before authorization observes the following request.
+      queueMicrotask(() => this.emit("serverRequest", request));
       return;
     }
 
