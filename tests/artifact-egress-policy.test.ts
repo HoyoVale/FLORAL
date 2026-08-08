@@ -1,4 +1,4 @@
-import { mkdtemp, realpath, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, realpath, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
@@ -141,6 +141,7 @@ describe("ArtifactEgressPolicy", () => {
     const root = join(dir, "outbound");
     const inside = join(root, "report.txt");
     const outside = join(dir, "outside.txt");
+    await mkdir(root, { recursive: true });
     await writeFile(inside, "report");
     await writeFile(outside, "outside");
 
