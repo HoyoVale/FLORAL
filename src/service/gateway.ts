@@ -409,7 +409,7 @@ export class GatewayService {
             lines.push(`${String(index + 1)}. ${project.name}${marker}`);
           });
         }
-        lines.push("", "使用 /project <name> 切换项目。");
+        lines.push("", "使用 /project <name> 切换；/project new <name> 创建项目（owner）。");
         await this.store.appendAudit({
           userId: resolved.userId,
           conversationId: resolved.conversationId,
@@ -417,6 +417,79 @@ export class GatewayService {
           payload: { count: projects.length },
         });
         await this.#send(message.identity.conversationId, lines.join("\n"));
+        return;
+      }
+
+      case "project-new": {
+        if (!this.options.workspace) {
+          await this.#send(
+            message.identity.conversationId,
+            "Workspace Root 尚未在 Mac 本地配置。",
+          );
+          return;
+        }
+        if (!command.name) {
+          await this.#send(
+            message.identity.conversationId,
+            "用法：/project new <name>",
+          );
+          return;
+        }
+        if (resolved.role !== "owner") {
+          await this.store.appendAudit({
+            userId: resolved.userId,
+            conversationId: resolved.conversationId,
+            eventType: "command.project_create_denied",
+            payload: { reason: "owner-required" },
+          });
+          await this.#send(
+            message.identity.conversationId,
+            "只有 owner 可以创建项目。",
+          );
+          return;
+        }
+        if (this.#activeRuns.has(resolved.conversationId)) {
+          await this.#send(
+            message.identity.conversationId,
+            "当前任务运行中，不能创建项目。请先使用 /stop。",
+          );
+          return;
+        }
+        try {
+          const project = await this.options.workspace.createProject(command.name);
+          const workspaceStore = this.#workspaceStore();
+          await workspaceStore.setSelectedProject(
+            resolved.conversationId,
+            project.name,
+          );
+          await workspaceStore.clearProjectActiveThread(
+            resolved.conversationId,
+            project.name,
+          );
+          this.#chatListCaches.delete(resolved.conversationId);
+          this.#artifactCatalogs.delete(resolved.conversationId);
+          await this.store.appendAudit({
+            userId: resolved.userId,
+            conversationId: resolved.conversationId,
+            eventType: "command.project_created",
+            payload: { projectName: project.name },
+          });
+          await this.#send(
+            message.identity.conversationId,
+            `已创建并切换到项目：${project.name}。下一条普通消息会创建第一个 Codex 会话。`,
+          );
+        } catch {
+          await this.store.appendAudit({
+            userId: resolved.userId,
+            conversationId: resolved.conversationId,
+            eventType: "command.project_create_failed",
+            payload: {},
+          });
+          await this.#send(
+            message.identity.conversationId,
+            "项目创建失败。名称必须是 Workspace Root 下可创建的真实一级目录名，且不能已存在。",
+          );
+        }
         return;
       }
 
@@ -512,7 +585,7 @@ export class GatewayService {
             lines.push(`${String(index + 1)}. ${formatThreadPreview(entry.preview)}${marker}`);
           });
         }
-        lines.push("", "使用 /chat <序号> 切换；/chat new 新建会话。");
+        lines.push("", "使用 /chat <序号> 切换；/chat new 新建；/chat archive <序号> 归档（owner）。");
         await this.store.appendAudit({
           userId: resolved.userId,
           conversationId: resolved.conversationId,
@@ -523,6 +596,119 @@ export class GatewayService {
           },
         });
         await this.#send(message.identity.conversationId, lines.join("\n"));
+        return;
+      }
+
+      case "chat-archive": {
+        const value = command.value?.trim();
+        if (!value) {
+          await this.#send(
+            message.identity.conversationId,
+            "用法：/chat archive <序号>。请先使用 /chats 获取序号。",
+          );
+          return;
+        }
+        if (resolved.role !== "owner") {
+          await this.store.appendAudit({
+            userId: resolved.userId,
+            conversationId: resolved.conversationId,
+            eventType: "command.chat_archive_denied",
+            payload: { reason: "owner-required" },
+          });
+          await this.#send(
+            message.identity.conversationId,
+            "只有 owner 可以归档 Codex 会话。",
+          );
+          return;
+        }
+        if (this.#activeRuns.has(resolved.conversationId)) {
+          await this.#send(
+            message.identity.conversationId,
+            "当前任务运行中，不能归档会话。请先使用 /stop。",
+          );
+          return;
+        }
+        const index = Number(value);
+        if (!Number.isSafeInteger(index) || index < 1) {
+          await this.#send(
+            message.identity.conversationId,
+            "用法：/chat archive <序号>。请先使用 /chats 获取序号。",
+          );
+          return;
+        }
+        const projectContext = await this.#requireProjectContext(
+          message.identity.conversationId,
+          resolved.conversationId,
+        );
+        if (!projectContext) return;
+        if (!supportsAgentThreadManagement(this.agent)) {
+          await this.#send(
+            message.identity.conversationId,
+            "当前 Agent runtime 未开放 Codex thread/archive。",
+          );
+          return;
+        }
+        const cache = this.#chatListCaches.get(resolved.conversationId);
+        if (
+          !cache
+          || cache.projectName !== projectContext.project.name
+          || Date.now() - cache.createdAtMs > CHAT_LIST_CACHE_TTL_MS
+        ) {
+          this.#chatListCaches.delete(resolved.conversationId);
+          await this.#send(
+            message.identity.conversationId,
+            "会话列表不存在或已过期。请先重新使用 /chats。",
+          );
+          return;
+        }
+        const selected = cache.entries[index - 1];
+        if (!selected) {
+          await this.#send(
+            message.identity.conversationId,
+            "该会话序号不存在。请重新使用 /chats。",
+          );
+          return;
+        }
+        try {
+          await this.agent.archiveThread(selected.id);
+          const wasActive = selected.id === projectContext.threadId;
+          if (wasActive) {
+            await this.#workspaceStore().clearProjectActiveThread(
+              resolved.conversationId,
+              projectContext.project.name,
+            );
+          }
+          this.#chatListCaches.delete(resolved.conversationId);
+          this.#artifactCatalogs.delete(resolved.conversationId);
+          await this.store.appendAudit({
+            userId: resolved.userId,
+            conversationId: resolved.conversationId,
+            eventType: "command.chat_archived",
+            payload: {
+              projectName: projectContext.project.name,
+              listIndex: index,
+              wasActive,
+            },
+          });
+          await this.#send(
+            message.identity.conversationId,
+            `已归档会话：${formatThreadPreview(selected.preview)}。请重新使用 /chats 刷新列表。`,
+          );
+        } catch {
+          await this.store.appendAudit({
+            userId: resolved.userId,
+            conversationId: resolved.conversationId,
+            eventType: "command.chat_archive_failed",
+            payload: {
+              projectName: projectContext.project.name,
+              listIndex: index,
+            },
+          });
+          await this.#send(
+            message.identity.conversationId,
+            "Codex 会话归档失败；当前活动会话状态未改变。",
+          );
+        }
         return;
       }
 

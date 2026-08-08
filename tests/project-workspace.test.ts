@@ -35,6 +35,23 @@ describe("ProjectWorkspaceRoot", () => {
     }
   });
 
+  it("creates only a new real direct-child project directory", async () => {
+    const root = await mkdtemp(join(tmpdir(), "floral-workspace-create-"));
+    try {
+      const workspace = new ProjectWorkspaceRoot(root);
+      await workspace.initialize();
+
+      await expect(workspace.createProject("NewProject"))
+        .resolves.toMatchObject({ name: "NewProject" });
+      await expect(workspace.resolveExistingProject("NewProject"))
+        .resolves.toMatchObject({ name: "NewProject" });
+      await expect(workspace.createProject("NewProject")).rejects.toThrow();
+      await expect(workspace.createProject("../escape")).rejects.toThrow();
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
   it("rejects hidden, relative, and separator-bearing project names", () => {
     expect(() => normalizeProjectName(".")).toThrow();
     expect(() => normalizeProjectName(".." )).toThrow();

@@ -87,3 +87,10 @@ This section supersedes the conflicting Phase 5.2/5.3 bullets above for Codex-na
 - User-facing chat selection uses a short-lived numbered list. Raw Codex thread IDs are not exposed by `/status`, `/chats`, or `/chat`.
 - Changing project or chat clears the conversation artifact catalog to prevent stale cross-project artifact references.
 - Terminal-produced outbound files must still be under the selected run's `<project>/artifacts/outbound` staging root. Adding a Workspace Root does not permit arbitrary project files to be registered for chat delivery.
+
+## Phase 7.2B lifecycle mutation boundary
+
+- `/project new <name>` is owner-only and may create only a non-hidden, non-symlink direct child directory under the Mac-local Workspace Root. It cannot import an arbitrary path and therefore does not expand the configured root.
+- `/chat archive <index>` is owner-only, requires a fresh cwd-scoped `/chats` list, and forwards only the cached opaque ID to Codex `thread/archive`.
+- Both lifecycle mutations are rejected while a run is active and are audited.
+- Project import/delete and filesystem deletion remain unsupported in this phase.

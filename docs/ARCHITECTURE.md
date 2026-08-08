@@ -36,3 +36,7 @@ Workspace Root (Mac-local trust boundary)
 Codex remains the authority for thread storage and history. `/chats` calls app-server `thread/list` with the selected project cwd and renders a temporary numbered view. SQLite stores only the selected project name and the active Codex thread ID for each `(conversation, project)` pair. Switching projects therefore changes both cwd and the thread-state bucket; a thread is never intentionally resumed across projects.
 
 `/projects`, `/project <name>`, `/chats`, `/chat <n>`, and `/chat new` form the first control-plane surface. Project creation/import and thread archival are intentionally deferred to the next subphase.
+
+## Phase 7.2B project/chat lifecycle control
+
+FLORAL may create a new project only as a real direct child of the already configured Workspace Root via `/project new <name>`. The command is owner-only and does not expand the Workspace Root trust boundary. FLORAL still maps each project to its directory `cwd` and leaves conversation history in Codex native threads. `/chat archive <index>` resolves an opaque thread ID only from a fresh `/chats` cache and delegates the mutation to Codex `thread/archive`; raw thread IDs are never accepted from chat.

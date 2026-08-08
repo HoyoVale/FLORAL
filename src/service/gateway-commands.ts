@@ -9,8 +9,10 @@ export type GatewayCommand =
   | { type: "mode"; value: string | undefined }
   | { type: "projects" }
   | { type: "project"; name: string | undefined }
+  | { type: "project-new"; name: string | undefined }
   | { type: "chats" }
   | { type: "chat"; value: string | undefined }
+  | { type: "chat-archive"; value: string | undefined }
   | { type: "approve"; approvalId: string | undefined }
   | { type: "approve-session"; approvalId: string | undefined }
   | { type: "deny"; approvalId: string | undefined };
@@ -30,11 +32,19 @@ export function parseGatewayCommand(text: string): GatewayCommand | undefined {
   if (/^\/help$/i.test(trimmed)) return { type: "help" };
   if (/^\/stop$/i.test(trimmed)) return { type: "stop" };
   if (/^\/projects$/i.test(trimmed)) return { type: "projects" };
+  const projectNew = /^\/project\s+new(?:\s+(.+))?$/i.exec(trimmed);
+  if (projectNew) {
+    return { type: "project-new", name: projectNew[1]?.trim() || undefined };
+  }
   const project = /^\/project(?:\s+(.+))?$/i.exec(trimmed);
   if (project) {
     return { type: "project", name: project[1]?.trim() || undefined };
   }
   if (/^\/chats$/i.test(trimmed)) return { type: "chats" };
+  const chatArchive = /^\/chat\s+archive(?:\s+(.+))?$/i.exec(trimmed);
+  if (chatArchive) {
+    return { type: "chat-archive", value: chatArchive[1]?.trim() || undefined };
+  }
   const chat = /^\/chat(?:\s+(.+))?$/i.exec(trimmed);
   if (chat) {
     return { type: "chat", value: chat[1]?.trim() || undefined };
