@@ -85,6 +85,43 @@ lines.on("line", (line) => {
     return;
   }
 
+  if (scenario === "thread-management" && message.method === "thread/list") {
+    if (typeof message.params?.cwd !== "string" || !isAbsolute(message.params.cwd)) {
+      send({ id: message.id, error: { code: -32602, message: "thread list cwd must be absolute" } });
+      return;
+    }
+    send({
+      id: message.id,
+      result: {
+        data: [
+          {
+            id: "thr_project_newer",
+            preview: "Newest project thread\nwith extra spacing",
+            createdAt: 200,
+            updatedAt: 250,
+          },
+          {
+            id: "thr_project_older",
+            preview: "Older project thread",
+            createdAt: 100,
+            updatedAt: 150,
+          },
+        ],
+        nextCursor: null,
+      },
+    });
+    return;
+  }
+
+  if (scenario === "thread-management" && message.method === "thread/archive") {
+    if (message.params?.threadId !== "thr_project_older") {
+      send({ id: message.id, error: { code: -32602, message: "unexpected archive thread id" } });
+      return;
+    }
+    send({ id: message.id, result: {} });
+    return;
+  }
+
   if (message.method === "thread/start") {
     if (
       (scenario === "developer-instructions" || scenario === "delivery-dynamic-tools")

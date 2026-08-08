@@ -72,6 +72,58 @@ export interface AgentRuntime {
   stop(): Promise<void>;
 }
 
+export interface AgentThreadSummary {
+  id: string;
+  preview: string;
+  createdAt?: number | undefined;
+  updatedAt?: number | undefined;
+}
+
+export interface AgentThreadManagementRuntime {
+  listThreads(input: {
+    cwd: string;
+    limit?: number | undefined;
+  }): Promise<AgentThreadSummary[]>;
+  archiveThread(threadId: string): Promise<void>;
+}
+
+export function supportsAgentThreadManagement(
+  runtime: AgentRuntime,
+): runtime is AgentRuntime & AgentThreadManagementRuntime {
+  const candidate = runtime as Partial<AgentThreadManagementRuntime>;
+  return typeof candidate.listThreads === "function"
+    && typeof candidate.archiveThread === "function";
+}
+
+export interface WorkspaceStateStore {
+  getSelectedProject(conversationId: string): Promise<string | undefined>;
+  setSelectedProject(conversationId: string, projectName: string): Promise<void>;
+  getProjectActiveThread(
+    conversationId: string,
+    projectName: string,
+  ): Promise<string | undefined>;
+  setProjectActiveThread(
+    conversationId: string,
+    projectName: string,
+    threadId: string,
+  ): Promise<void>;
+  clearProjectActiveThread(
+    conversationId: string,
+    projectName: string,
+  ): Promise<void>;
+}
+
+export function supportsWorkspaceStateStore(
+  store: GatewayStore,
+): store is GatewayStore & WorkspaceStateStore {
+  const candidate = store as Partial<WorkspaceStateStore>;
+  return typeof candidate.getSelectedProject === "function"
+    && typeof candidate.setSelectedProject === "function"
+    && typeof candidate.getProjectActiveThread === "function"
+    && typeof candidate.setProjectActiveThread === "function"
+    && typeof candidate.clearProjectActiveThread === "function";
+}
+
 export interface GatewayStore {
   resolveIdentity(identity: ExternalIdentity): Promise<ResolvedGatewayIdentity | undefined>;
   claimOwner(identity: ExternalIdentity): Promise<ResolvedGatewayIdentity>;

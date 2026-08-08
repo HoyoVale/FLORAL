@@ -1,7 +1,10 @@
 import { randomUUID } from "node:crypto";
 import { mkdir } from "node:fs/promises";
 import { dirname } from "node:path";
-import type { GatewayStore } from "../core/contracts.js";
+import type {
+  GatewayStore,
+  WorkspaceStateStore,
+} from "../core/contracts.js";
 import type {
   AuditEventInput,
   ExternalIdentity,
@@ -33,12 +36,13 @@ export interface GatewayStorageDiagnostics {
   users: number;
   identities: number;
   conversations: number;
+  conversationProjects: number;
   messageReceipts: number;
   auditEvents: number;
   owners: number;
 }
 
-export class SqliteGatewayStore implements GatewayStore {
+export class SqliteGatewayStore implements GatewayStore, WorkspaceStateStore {
   #closed = false;
 
   private constructor(private readonly db: SqliteDatabase) {}
@@ -262,6 +266,100 @@ export class SqliteGatewayStore implements GatewayStore {
     }
   }
 
+  async getSelectedProject(conversationId: string): Promise<string | undefined> {
+    this.#assertOpen();
+    const row = asRecord(this.db.prepare(`
+      SELECT selected_project_name
+      FROM conversations
+      WHERE id = ?
+      LIMIT 1
+    `).get(conversationId));
+    return readOptionalString(row?.selected_project_name);
+  }
+
+  async setSelectedProject(
+    conversationId: string,
+    projectName: string,
+  ): Promise<void> {
+    this.#assertOpen();
+    assertStoredProjectName(projectName);
+    const now = Date.now();
+    const update = this.db.prepare(`
+      UPDATE conversations
+      SET selected_project_name = ?, updated_at = ?
+      WHERE id = ?
+    `).run(projectName, now, conversationId);
+    if (update.changes !== 1) {
+      throw new Error(`Conversation not found: ${conversationId}`);
+    }
+    this.db.prepare(`
+      INSERT INTO conversation_project_state (
+        conversation_id, project_name, active_codex_thread_id,
+        created_at, updated_at
+      )
+      VALUES (?, ?, NULL, ?, ?)
+      ON CONFLICT(conversation_id, project_name)
+      DO UPDATE SET updated_at = excluded.updated_at
+    `).run(conversationId, projectName, now, now);
+  }
+
+  async getProjectActiveThread(
+    conversationId: string,
+    projectName: string,
+  ): Promise<string | undefined> {
+    this.#assertOpen();
+    assertStoredProjectName(projectName);
+    const row = asRecord(this.db.prepare(`
+      SELECT active_codex_thread_id
+      FROM conversation_project_state
+      WHERE conversation_id = ? AND project_name = ?
+      LIMIT 1
+    `).get(conversationId, projectName));
+    return readOptionalString(row?.active_codex_thread_id);
+  }
+
+  async setProjectActiveThread(
+    conversationId: string,
+    projectName: string,
+    threadId: string,
+  ): Promise<void> {
+    this.#assertOpen();
+    assertStoredProjectName(projectName);
+    if (!threadId.trim()) throw new Error("Thread id must not be empty");
+    const now = Date.now();
+    this.db.prepare(`
+      INSERT INTO conversation_project_state (
+        conversation_id, project_name, active_codex_thread_id,
+        created_at, updated_at
+      )
+      VALUES (?, ?, ?, ?, ?)
+      ON CONFLICT(conversation_id, project_name)
+      DO UPDATE SET
+        active_codex_thread_id = excluded.active_codex_thread_id,
+        updated_at = excluded.updated_at
+    `).run(conversationId, projectName, threadId, now, now);
+  }
+
+  async clearProjectActiveThread(
+    conversationId: string,
+    projectName: string,
+  ): Promise<void> {
+    this.#assertOpen();
+    assertStoredProjectName(projectName);
+    const now = Date.now();
+    this.db.prepare(`
+      INSERT INTO conversation_project_state (
+        conversation_id, project_name, active_codex_thread_id,
+        created_at, updated_at
+      )
+      VALUES (?, ?, NULL, ?, ?)
+      ON CONFLICT(conversation_id, project_name)
+      DO UPDATE SET
+        active_codex_thread_id = NULL,
+        updated_at = excluded.updated_at
+    `).run(conversationId, projectName, now, now);
+  }
+
   async appendAudit(event: AuditEventInput): Promise<void> {
     this.#assertOpen();
     if (!/^[a-z0-9_.-]{1,96}$/i.test(event.eventType)) {
@@ -297,6 +395,7 @@ export class SqliteGatewayStore implements GatewayStore {
       users: countRows(this.db, "users"),
       identities: countRows(this.db, "external_identities"),
       conversations: countRows(this.db, "conversations"),
+      conversationProjects: countRows(this.db, "conversation_project_state"),
       messageReceipts: countRows(this.db, "message_receipts"),
       auditEvents: countRows(this.db, "audit_events"),
       owners: countRows(this.db, "owner_bindings"),
@@ -396,6 +495,24 @@ function migrateGatewaySchema(db: SqliteDatabase): void {
     "bot_id",
     "TEXT NOT NULL DEFAULT ''",
   );
+  ensureColumn(
+    db,
+    "conversations",
+    "selected_project_name",
+    "TEXT",
+  );
+
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS conversation_project_state (
+      conversation_id TEXT NOT NULL,
+      project_name TEXT NOT NULL,
+      active_codex_thread_id TEXT,
+      created_at INTEGER NOT NULL,
+      updated_at INTEGER NOT NULL,
+      PRIMARY KEY(conversation_id, project_name),
+      FOREIGN KEY(conversation_id) REFERENCES conversations(id) ON DELETE CASCADE
+    );
+  `);
 
   db.exec(`
     INSERT OR IGNORE INTO owner_bindings (
@@ -416,7 +533,7 @@ function migrateGatewaySchema(db: SqliteDatabase): void {
     CREATE INDEX IF NOT EXISTS audit_events_user_created_idx
       ON audit_events(user_id, created_at);
 
-    PRAGMA user_version = 3;
+    PRAGMA user_version = 4;
   `);
 }
 
@@ -513,6 +630,16 @@ function requireString(value: unknown, label: string): string {
 
 function readOptionalString(value: unknown): string | undefined {
   return typeof value === "string" && value.length > 0 ? value : undefined;
+}
+
+function assertStoredProjectName(projectName: string): void {
+  const normalized = projectName.trim();
+  if (!normalized || Array.from(normalized).length > 96) {
+    throw new Error("Stored project name is invalid");
+  }
+  if (/[\u0000-\u001f\u007f]/u.test(normalized)) {
+    throw new Error("Stored project name contains control characters");
+  }
 }
 
 function assertExternalIdentity(identity: ExternalIdentity): void {

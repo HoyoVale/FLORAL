@@ -1,5 +1,8 @@
 import { resolve } from "node:path";
-import type { AgentRuntime } from "../core/contracts.js";
+import type {
+  AgentRuntime,
+  AgentThreadSummary,
+} from "../core/contracts.js";
 import type {
   AgentApprovalHandler,
   AgentApprovalRequest,
@@ -25,6 +28,16 @@ import {
 
 interface ThreadResponse {
   thread: { id: string };
+}
+
+interface ThreadListResponse {
+  data?: Array<{
+    id?: unknown;
+    preview?: unknown;
+    createdAt?: unknown;
+    updatedAt?: unknown;
+  }>;
+  nextCursor?: unknown;
 }
 
 interface TurnResponse {
@@ -243,6 +256,56 @@ export class CodexAppServerRuntime implements AgentRuntime {
       await this.#client.stop();
       throw error;
     }
+  }
+
+  async listThreads(input: {
+    cwd: string;
+    limit?: number | undefined;
+  }): Promise<AgentThreadSummary[]> {
+    this.#ensureStarted();
+    const cwd = resolve(input.cwd);
+    const limit = Math.max(1, Math.min(50, input.limit ?? 20));
+    const response = await this.#client.request<ThreadListResponse>(
+      "thread/list",
+      {
+        cursor: null,
+        limit,
+        cwd,
+      },
+    );
+    const data = Array.isArray(response?.data) ? response.data : [];
+    const output: AgentThreadSummary[] = [];
+    for (const entry of data) {
+      const id = typeof entry?.id === "string" ? entry.id.trim() : "";
+      if (!id) continue;
+      const preview = sanitizeThreadPreview(entry.preview);
+      output.push({
+        id,
+        preview,
+        ...(readFiniteTimestamp(entry.createdAt) !== undefined
+          ? { createdAt: readFiniteTimestamp(entry.createdAt) }
+          : {}),
+        ...(readFiniteTimestamp(entry.updatedAt) !== undefined
+          ? { updatedAt: readFiniteTimestamp(entry.updatedAt) }
+          : {}),
+      });
+    }
+    return output;
+  }
+
+  async archiveThread(threadId: string): Promise<void> {
+    this.#ensureStarted();
+    const normalized = threadId.trim();
+    if (!normalized) throw new Error("Thread id must not be empty");
+    await this.#client.request("thread/archive", { threadId: normalized });
+    this.#loadedThreads.delete(normalized);
+    this.#activeTurns.delete(normalized);
+    this.#eventHandlers.delete(normalized);
+    this.#approvalHandlers.delete(normalized);
+    this.#artifactRegistrationHandlers.delete(normalized);
+    this.#artifactDeliveryHandlers.delete(normalized);
+    this.#deleteApprovalItemSummaries(normalized);
+    this.#deleteInFlightMcpToolCalls(normalized);
   }
 
   async run(request: AgentRunRequest, onEvent?: (event: AgentEvent) => void): Promise<AgentRunResult> {
@@ -1326,6 +1389,22 @@ function asRecord(value: unknown): Record<string, unknown> | undefined {
 function asPlainRecord(value: unknown): Record<string, unknown> | undefined {
   if (typeof value !== "object" || value === null || Array.isArray(value)) return undefined;
   return value as Record<string, unknown>;
+}
+
+function sanitizeThreadPreview(value: unknown): string {
+  if (typeof value !== "string") return "未命名会话";
+  const normalized = value
+    .replace(/[\u0000-\u001f\u007f]+/gu, " ")
+    .replace(/\s+/gu, " ")
+    .trim();
+  if (!normalized) return "未命名会话";
+  return Array.from(normalized).slice(0, 120).join("");
+}
+
+function readFiniteTimestamp(value: unknown): number | undefined {
+  return typeof value === "number" && Number.isFinite(value) && value >= 0
+    ? value
+    : undefined;
 }
 
 function readString(value: unknown): string | undefined {

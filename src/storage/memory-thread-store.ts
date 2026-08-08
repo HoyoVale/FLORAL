@@ -1,5 +1,8 @@
 import { randomUUID } from "node:crypto";
-import type { GatewayStore } from "../core/contracts.js";
+import type {
+  GatewayStore,
+  WorkspaceStateStore,
+} from "../core/contracts.js";
 import type {
   AuditEventInput,
   ExternalIdentity,
@@ -21,8 +24,10 @@ interface StoredConversation {
   conversationId: string;
 }
 
-export class MemoryThreadStore implements GatewayStore {
+export class MemoryThreadStore implements GatewayStore, WorkspaceStateStore {
   readonly #threads = new Map<string, string>();
+  readonly #selectedProjects = new Map<string, string>();
+  readonly #projectThreads = new Map<string, string>();
   readonly #identities = new Map<string, StoredUserIdentity>();
   readonly #conversations = new Map<string, StoredConversation>();
   readonly #messages = new Set<string>();
@@ -108,6 +113,42 @@ export class MemoryThreadStore implements GatewayStore {
     this.#threads.delete(conversationId);
   }
 
+  async getSelectedProject(conversationId: string): Promise<string | undefined> {
+    return this.#selectedProjects.get(conversationId);
+  }
+
+  async setSelectedProject(
+    conversationId: string,
+    projectName: string,
+  ): Promise<void> {
+    this.#selectedProjects.set(conversationId, projectName);
+  }
+
+  async getProjectActiveThread(
+    conversationId: string,
+    projectName: string,
+  ): Promise<string | undefined> {
+    return this.#projectThreads.get(projectThreadKey(conversationId, projectName));
+  }
+
+  async setProjectActiveThread(
+    conversationId: string,
+    projectName: string,
+    threadId: string,
+  ): Promise<void> {
+    this.#projectThreads.set(
+      projectThreadKey(conversationId, projectName),
+      threadId,
+    );
+  }
+
+  async clearProjectActiveThread(
+    conversationId: string,
+    projectName: string,
+  ): Promise<void> {
+    this.#projectThreads.delete(projectThreadKey(conversationId, projectName));
+  }
+
   async appendAudit(event: AuditEventInput): Promise<void> {
     this.#audits.push(structuredClone(event));
   }
@@ -150,4 +191,8 @@ function conversationKey(identity: ExternalIdentity): string {
     identity.botId,
     identity.conversationId,
   ].join("\u0000");
+}
+
+function projectThreadKey(conversationId: string, projectName: string): string {
+  return `${conversationId}\u0000${projectName}`;
 }

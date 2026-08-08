@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "reviewedAt": "2026-08-08",
-  "purpose": "Phase 4 configuration federation, Phase 5 safety controls, Phase 5F Feishu primary-chat migration, and Phase 7.1A/7.1B Codex-native approval and full-access authority inventory.",
+  "purpose": "Phase 4 configuration federation, Phase 5 safety controls, Phase 5F Feishu migration, Phase 7.1 Codex-native permission authority, and Phase 7.2A workspace/project/chat routing inventory.",
   "classifications": [
     "floral-owned",
     "upstream-managed",
@@ -117,6 +117,24 @@
             "runtime.cost_guard.pricing.*"
           ],
           "notes": "Rolling request/token/cost budgets are enforced before DeepSeek provider attempts. Cost estimates use provider-returned cache hit/miss/output usage and operator-reviewed price coefficients."
+        },
+        {
+          "id": "workspace-control",
+          "classification": "locked",
+          "coverage": "machine-local-root-plus-codex-thread-control",
+          "knownKeys": [
+            "FLORAL_WORKSPACE_ROOT",
+            "/projects",
+            "/project <name>",
+            "/chats",
+            "/chat <index>",
+            "/chat new"
+          ],
+          "futureKeys": [
+            "/project new <name>",
+            "/chat archive <index>"
+          ],
+          "notes": "FLORAL_WORKSPACE_ROOT is a Mac-local trust boundary and is not projected into config/floral.toml. Projects are existing real direct-child directories only. Chat history remains Codex-owned; FLORAL stores only selected project and per-project active thread IDs."
         }
       ],
       "runtimeIntrospection": [
@@ -1110,6 +1128,14 @@
       "file": "src/service/gateway.ts",
       "needle": "this.#remoteModeCeiling() !== \"full\"",
       "risk": "Remote full access must require an explicit Mac-local startup ceiling in addition to the authenticated owner role."
+    },
+    {
+      "id": "workspace.direct-child-root",
+      "component": "floral",
+      "classification": "locked",
+      "file": "src/workspace/project-workspace.ts",
+      "needle": "Project must be a direct child of the workspace root",
+      "risk": "Remote project selection must not turn a project name into arbitrary filesystem path access or follow a symlink outside the Mac-local workspace root."
     }
   ],
   "environmentKeyPolicies": {
@@ -1386,6 +1412,10 @@
       "classification": "locked"
     },
     "FLORAL_REMOTE_MODE_CEILING": {
+      "component": "floral",
+      "classification": "locked"
+    },
+    "FLORAL_WORKSPACE_ROOT": {
       "component": "floral",
       "classification": "locked"
     }

@@ -24,6 +24,12 @@ describe("SqliteGatewayStore", () => {
       const owner = await first.claimOwner(identity);
       expect(owner.role).toBe("owner");
       await first.setActiveThread(owner.conversationId, "thread-persisted");
+      await first.setSelectedProject(owner.conversationId, "FLORAL");
+      await first.setProjectActiveThread(
+        owner.conversationId,
+        "FLORAL",
+        "thread-project-persisted",
+      );
       await first.appendAudit({
         userId: owner.userId,
         conversationId: owner.conversationId,
@@ -31,10 +37,11 @@ describe("SqliteGatewayStore", () => {
         payload: { count: 1 },
       });
       expect(first.diagnostics()).toMatchObject({
-        schemaVersion: 3,
+        schemaVersion: 4,
         users: 1,
         identities: 1,
         conversations: 1,
+        conversationProjects: 1,
         messageReceipts: 1,
         auditEvents: 1,
         owners: 1,
@@ -53,6 +60,19 @@ describe("SqliteGatewayStore", () => {
           ? await reopened.getActiveThread(resolved.conversationId)
           : undefined,
       ).toBe("thread-persisted");
+      expect(
+        resolved
+          ? await reopened.getSelectedProject(resolved.conversationId)
+          : undefined,
+      ).toBe("FLORAL");
+      expect(
+        resolved
+          ? await reopened.getProjectActiveThread(
+              resolved.conversationId,
+              "FLORAL",
+            )
+          : undefined,
+      ).toBe("thread-project-persisted");
 
       await reopened.clearActiveThread(owner.conversationId);
       expect(await reopened.getActiveThread(owner.conversationId)).toBeUndefined();

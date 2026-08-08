@@ -77,3 +77,13 @@ This section supersedes the conflicting Phase 5.2/5.3 bullets above for Codex-na
 - `full` uses Codex `dangerFullAccess` with `untrusted`, not `never`. FLORAL automatically accepts only Codex-native command/file/structured-permission approval requests. Keeping the native approval event preserves the hard GUI-shell bypass rejection before any automatic grant.
 - MCP capability authorization and artifact DLP remain separate FLORAL boundaries in every execution mode. `full` does not convert a prompted MCP mutation into an automatic grant.
 - Execution-mode selection is in-memory and conversation-scoped; service restart returns every conversation to `ask`.
+
+## Phase 7.2A workspace/project/chat routing
+
+- `FLORAL_WORKSPACE_ROOT` is a Mac-local trust boundary. It is inventoried and classified but is not projected into project-owned `config/floral.toml`, and it is removed from the Codex child-process environment.
+- A remotely selectable project must be an existing, real, non-symlink direct child directory of the canonical Workspace Root. Remote project names are never accepted as arbitrary paths.
+- Project switching changes the Codex turn `cwd`. A Codex thread ID is persisted only in the state bucket for the project whose cwd created/listed it; FLORAL must never resume one project's thread under another project's cwd.
+- `/chats` is backed by Codex `thread/list(cwd=projectPath)`. FLORAL does not copy turns, messages, or rollout content into SQLite; it stores only control-plane selection metadata.
+- User-facing chat selection uses a short-lived numbered list. Raw Codex thread IDs are not exposed by `/status`, `/chats`, or `/chat`.
+- Changing project or chat clears the conversation artifact catalog to prevent stale cross-project artifact references.
+- Terminal-produced outbound files must still be under the selected run's `<project>/artifacts/outbound` staging root. Adding a Workspace Root does not permit arbitrary project files to be registered for chat delivery.

@@ -11,6 +11,8 @@ export interface GatewayStatusSnapshot {
   approvalPolicy?: "untrusted" | undefined;
   approvalsReviewer?: "user" | "auto_review" | undefined;
   approvalRoute?: "owner" | "auto-review" | "full-auto-codex-native" | undefined;
+  selectedProject?: string | undefined;
+  workspaceEnabled?: boolean | undefined;
   runtimeLines: string[];
 }
 
@@ -32,6 +34,8 @@ export function formatGatewayStatus(
       `approval_policy=${snapshot.approvalPolicy ?? "untrusted"}`,
       `reviewer=${snapshot.approvalsReviewer ?? "user"}`,
       `approval_route=${snapshot.approvalRoute ?? "owner"}`,
+      `workspace=${snapshot.workspaceEnabled === true ? "enabled" : "legacy"}`,
+      `project=${snapshot.selectedProject ?? "none"}`,
       `approvals_pending=${String(snapshot.pendingApprovals)}`,
       ...snapshot.runtimeLines,
     ].join("\n");
@@ -45,6 +49,9 @@ export function formatGatewayStatus(
     `会话：${snapshot.threadActive ? "已建立" : "未建立"}`,
     `执行模式：${humanizeControlMode(snapshot.controlMode ?? "ask")}`,
     `权限上限：${snapshot.remoteModeCeiling ?? "auto"}`,
+    ...(snapshot.workspaceEnabled === true
+      ? [`项目：${snapshot.selectedProject ?? "未选择"}`]
+      : []),
     `待审批：${String(snapshot.pendingApprovals)}`,
   ];
 
@@ -69,6 +76,12 @@ export function gatewayHelpText(): string {
     "",
     "/new      开始新会话",
     "/status   查看运行状态",
+    "/projects 列出 Workspace Root 下的项目",
+    "/project  查看当前项目",
+    "/project <name> 切换项目",
+    "/chats    列出当前项目的 Codex 会话",
+    "/chat <序号> 切换到列表中的会话",
+    "/chat new 在当前项目开始新会话",
     "/mode     查看执行模式",
     "/mode ask 使用 Codex 原生审批 + 飞书确认",
     "/mode auto 使用 Codex auto_review（owner）",

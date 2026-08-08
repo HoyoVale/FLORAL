@@ -27,6 +27,10 @@ const envSchema = z.object({
   // intentionally not sourced from config/floral.toml because an Agent
   // working inside the project must not be able to raise its own ceiling.
   FLORAL_REMOTE_MODE_CEILING: z.enum(["auto", "full"]).default("auto"),
+  // Optional machine-local parent directory whose direct child directories are
+  // remotely selectable Codex projects. Like the full-access ceiling, this is
+  // intentionally outside config/floral.toml.
+  FLORAL_WORKSPACE_ROOT: optionalNonEmptyString,
   MOCK_TRUST_OWNER: booleanString.default(true),
   CHAT_TRANSPORT: z.preprocess(
     (value: unknown) => typeof value === "string" && value.trim() === "" ? undefined : value,

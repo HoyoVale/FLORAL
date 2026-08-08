@@ -7,6 +7,10 @@ export type GatewayCommand =
   | { type: "help" }
   | { type: "stop" }
   | { type: "mode"; value: string | undefined }
+  | { type: "projects" }
+  | { type: "project"; name: string | undefined }
+  | { type: "chats" }
+  | { type: "chat"; value: string | undefined }
   | { type: "approve"; approvalId: string | undefined }
   | { type: "approve-session"; approvalId: string | undefined }
   | { type: "deny"; approvalId: string | undefined };
@@ -25,6 +29,16 @@ export function parseGatewayCommand(text: string): GatewayCommand | undefined {
   if (status) return { type: "status", debug: Boolean(status[1]) };
   if (/^\/help$/i.test(trimmed)) return { type: "help" };
   if (/^\/stop$/i.test(trimmed)) return { type: "stop" };
+  if (/^\/projects$/i.test(trimmed)) return { type: "projects" };
+  const project = /^\/project(?:\s+(.+))?$/i.exec(trimmed);
+  if (project) {
+    return { type: "project", name: project[1]?.trim() || undefined };
+  }
+  if (/^\/chats$/i.test(trimmed)) return { type: "chats" };
+  const chat = /^\/chat(?:\s+(.+))?$/i.exec(trimmed);
+  if (chat) {
+    return { type: "chat", value: chat[1]?.trim() || undefined };
+  }
   const mode = /^\/mode(?:\s+([A-Za-z-]+))?$/i.exec(trimmed);
   if (mode) {
     return { type: "mode", value: mode[1]?.trim().toLowerCase() || undefined };

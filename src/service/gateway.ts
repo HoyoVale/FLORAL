@@ -1,9 +1,14 @@
 import { randomUUID } from "node:crypto";
+import { realpath } from "node:fs/promises";
+import { isAbsolute, relative, resolve, sep } from "node:path";
 import {
+  supportsAgentThreadManagement,
   supportsConversationActivity,
   supportsInteractiveApproval,
   supportsMediaTransport,
+  supportsWorkspaceStateStore,
   type AgentRuntime,
+  type AgentThreadSummary,
   type ChatTransport,
   type ConversationActivityState,
   type GatewayStore,
@@ -30,9 +35,11 @@ import type {
   ArtifactEgressRunBudget,
 } from "../policy/artifact-egress-policy.js";
 import { formatGatewayStatus, gatewayHelpText } from "./gateway-status.js";
+import type { ProjectWorkspaceRoot, WorkspaceProject } from "../workspace/project-workspace.js";
 
 export interface GatewayOptions {
   cwd: string;
+  workspace?: ProjectWorkspaceRoot | undefined;
   model?: string;
   ownerPairingCode?: string;
   trustMockOwner?: boolean;
@@ -59,6 +66,19 @@ interface ArtifactCatalogEntry {
   registeredAtMs: number;
 }
 
+interface ChatListCache {
+  projectName: string;
+  entries: AgentThreadSummary[];
+  createdAtMs: number;
+}
+
+interface SelectedProjectContext {
+  project: WorkspaceProject;
+  threadId?: string | undefined;
+}
+
+const CHAT_LIST_CACHE_TTL_MS = 5 * 60 * 1_000;
+
 const ARTIFACT_CATALOG_TTL_MS = 30 * 60 * 1_000;
 const ARTIFACT_CATALOG_MAX_ITEMS = 32;
 
@@ -79,6 +99,7 @@ interface ActiveRun {
 export class GatewayService {
   readonly #activeRuns = new Map<string, ActiveRun>();
   readonly #artifactCatalogs = new Map<string, Map<string, ArtifactCatalogEntry>>();
+  readonly #chatListCaches = new Map<string, ChatListCache>();
   readonly #controlModes = new Map<string, AgentControlMode>();
   readonly #pairingLimiter = new PairingAttemptLimiter();
   readonly #approvalBroker: QqApprovalBroker | undefined;
@@ -117,6 +138,14 @@ export class GatewayService {
     if (this.#stopped) throw new Error("Gateway service cannot be restarted after stop");
 
     try {
+      if (this.options.workspace) {
+        await this.options.workspace.initialize();
+        if (!supportsWorkspaceStateStore(this.store)) {
+          throw new Error(
+            "Configured workspace requires a WorkspaceStateStore-capable gateway store",
+          );
+        }
+      }
       await this.agent.start();
       await this.transport.start((message) => this.#handle(message));
       this.#started = true;
@@ -137,6 +166,7 @@ export class GatewayService {
     await Promise.allSettled([this.transport.stop(), this.agent.stop()]);
     this.#activeRuns.clear();
     this.#artifactCatalogs.clear();
+    this.#chatListCaches.clear();
     this.#controlModes.clear();
     await this.store.close();
   }
@@ -298,7 +328,13 @@ export class GatewayService {
         return;
 
       case "status": {
-        const threadId = await this.store.getActiveThread(resolved.conversationId);
+        const projectContext = await this.#resolveSelectedProjectContext(
+          resolved.conversationId,
+        );
+        const threadId = projectContext?.threadId
+          ?? (!this.options.workspace
+            ? await this.store.getActiveThread(resolved.conversationId)
+            : undefined);
         const active = this.#activeRuns.has(resolved.conversationId);
         await this.store.appendAudit({
           userId: resolved.userId,
@@ -325,6 +361,8 @@ export class GatewayService {
             approvalPolicy: executionPolicy.approvalPolicy,
             approvalsReviewer: executionPolicy.approvalsReviewer,
             approvalRoute: executionPolicy.approvalRoute,
+            workspaceEnabled: Boolean(this.options.workspace),
+            ...(projectContext ? { selectedProject: projectContext.project.name } : {}),
             pendingApprovals: this.#approvalBroker?.pendingCount(resolved.conversationId) ?? 0,
             runtimeLines,
           }, command.debug),
@@ -341,26 +379,239 @@ export class GatewayService {
         await this.#send(message.identity.conversationId, gatewayHelpText());
         return;
 
-      case "new":
-        if (this.#activeRuns.has(resolved.conversationId)) {
+      case "new": {
+        await this.#startNewChat(
+          message.identity.conversationId,
+          resolved,
+          "command.new",
+        );
+        return;
+      }
+
+      case "projects": {
+        if (!this.options.workspace) {
           await this.#send(
             message.identity.conversationId,
-            "当前仍有任务运行，请先使用 /stop。",
+            "Workspace Root 尚未在 Mac 本地配置。",
           );
           return;
         }
-        await this.store.clearActiveThread(resolved.conversationId);
+        const projects = await this.options.workspace.listProjects();
+        const selected = await this.#resolveSelectedProjectContext(
+          resolved.conversationId,
+        );
+        const lines = ["可用项目："];
+        if (projects.length === 0) {
+          lines.push("（Workspace Root 下暂无可用项目目录）");
+        } else {
+          projects.slice(0, 50).forEach((project, index) => {
+            const marker = selected?.project.name === project.name ? " ← 当前" : "";
+            lines.push(`${String(index + 1)}. ${project.name}${marker}`);
+          });
+        }
+        lines.push("", "使用 /project <name> 切换项目。");
+        await this.store.appendAudit({
+          userId: resolved.userId,
+          conversationId: resolved.conversationId,
+          eventType: "command.projects",
+          payload: { count: projects.length },
+        });
+        await this.#send(message.identity.conversationId, lines.join("\n"));
+        return;
+      }
+
+      case "project": {
+        if (!this.options.workspace) {
+          await this.#send(
+            message.identity.conversationId,
+            "Workspace Root 尚未在 Mac 本地配置。",
+          );
+          return;
+        }
+        if (!command.name) {
+          const selected = await this.#resolveSelectedProjectContext(
+            resolved.conversationId,
+          );
+          await this.#send(
+            message.identity.conversationId,
+            selected
+              ? `当前项目=${selected.project.name}`
+              : "当前尚未选择项目。使用 /projects 查看项目。",
+          );
+          return;
+        }
+        if (this.#activeRuns.has(resolved.conversationId)) {
+          await this.#send(
+            message.identity.conversationId,
+            "当前任务运行中，不能切换项目。请先使用 /stop。",
+          );
+          return;
+        }
+        try {
+          const project = await this.options.workspace.resolveExistingProject(
+            command.name,
+          );
+          const workspaceStore = this.#workspaceStore();
+          await workspaceStore.setSelectedProject(
+            resolved.conversationId,
+            project.name,
+          );
+          await this.#migrateLegacyThreadIfApplicable(
+            resolved.conversationId,
+            project,
+          );
+          this.#chatListCaches.delete(resolved.conversationId);
+          this.#artifactCatalogs.delete(resolved.conversationId);
+          await this.store.appendAudit({
+            userId: resolved.userId,
+            conversationId: resolved.conversationId,
+            eventType: "command.project_selected",
+            payload: { projectName: project.name },
+          });
+          await this.#send(
+            message.identity.conversationId,
+            `已切换到项目：${project.name}`,
+          );
+        } catch {
+          await this.#send(
+            message.identity.conversationId,
+            "未找到可选择的项目。项目必须是 Workspace Root 下的真实一级目录。",
+          );
+        }
+        return;
+      }
+
+      case "chats": {
+        const projectContext = await this.#requireProjectContext(
+          message.identity.conversationId,
+          resolved.conversationId,
+        );
+        if (!projectContext) return;
+        if (!supportsAgentThreadManagement(this.agent)) {
+          await this.#send(
+            message.identity.conversationId,
+            "当前 Agent runtime 未开放 Codex thread/list。",
+          );
+          return;
+        }
+        const entries = await this.agent.listThreads({
+          cwd: projectContext.project.path,
+          limit: 20,
+        });
+        this.#chatListCaches.set(resolved.conversationId, {
+          projectName: projectContext.project.name,
+          entries,
+          createdAtMs: Date.now(),
+        });
+        const lines = [`项目 ${projectContext.project.name} 的会话：`];
+        if (entries.length === 0) {
+          lines.push("（暂无 Codex 会话；下一条普通消息会创建第一个会话）");
+        } else {
+          entries.forEach((entry, index) => {
+            const marker = entry.id === projectContext.threadId ? " ← 当前" : "";
+            lines.push(`${String(index + 1)}. ${formatThreadPreview(entry.preview)}${marker}`);
+          });
+        }
+        lines.push("", "使用 /chat <序号> 切换；/chat new 新建会话。");
+        await this.store.appendAudit({
+          userId: resolved.userId,
+          conversationId: resolved.conversationId,
+          eventType: "command.chats",
+          payload: {
+            projectName: projectContext.project.name,
+            count: entries.length,
+          },
+        });
+        await this.#send(message.identity.conversationId, lines.join("\n"));
+        return;
+      }
+
+      case "chat": {
+        const value = command.value?.trim();
+        if (!value) {
+          const projectContext = await this.#requireProjectContext(
+            message.identity.conversationId,
+            resolved.conversationId,
+          );
+          if (!projectContext) return;
+          await this.#send(
+            message.identity.conversationId,
+            projectContext.threadId
+              ? `当前项目=${projectContext.project.name}；当前会话已建立。使用 /chats 查看可切换会话。`
+              : `当前项目=${projectContext.project.name}；当前尚无活动会话。`,
+          );
+          return;
+        }
+        if (value.toLowerCase() === "new") {
+          await this.#startNewChat(
+            message.identity.conversationId,
+            resolved,
+            "command.chat_new",
+          );
+          return;
+        }
+        if (this.#activeRuns.has(resolved.conversationId)) {
+          await this.#send(
+            message.identity.conversationId,
+            "当前任务运行中，不能切换会话。请先使用 /stop。",
+          );
+          return;
+        }
+        const index = Number(value);
+        if (!Number.isSafeInteger(index) || index < 1) {
+          await this.#send(
+            message.identity.conversationId,
+            "用法：/chat <序号> 或 /chat new。请先使用 /chats 获取序号。",
+          );
+          return;
+        }
+        const projectContext = await this.#requireProjectContext(
+          message.identity.conversationId,
+          resolved.conversationId,
+        );
+        if (!projectContext) return;
+        const cache = this.#chatListCaches.get(resolved.conversationId);
+        if (
+          !cache
+          || cache.projectName !== projectContext.project.name
+          || Date.now() - cache.createdAtMs > CHAT_LIST_CACHE_TTL_MS
+        ) {
+          this.#chatListCaches.delete(resolved.conversationId);
+          await this.#send(
+            message.identity.conversationId,
+            "会话列表不存在或已过期。请先重新使用 /chats。",
+          );
+          return;
+        }
+        const selected = cache.entries[index - 1];
+        if (!selected) {
+          await this.#send(
+            message.identity.conversationId,
+            "该会话序号不存在。请重新使用 /chats。",
+          );
+          return;
+        }
+        await this.#workspaceStore().setProjectActiveThread(
+          resolved.conversationId,
+          projectContext.project.name,
+          selected.id,
+        );
         this.#artifactCatalogs.delete(resolved.conversationId);
         await this.store.appendAudit({
           userId: resolved.userId,
           conversationId: resolved.conversationId,
-          eventType: "command.new",
+          eventType: "command.chat_selected",
+          payload: {
+            projectName: projectContext.project.name,
+            listIndex: index,
+          },
         });
         await this.#send(
           message.identity.conversationId,
-          "新会话已建立。下一条消息会从新的上下文开始。",
+          `已切换会话：${formatThreadPreview(selected.preview)}`,
         );
         return;
+      }
 
       case "mode": {
         const requestedMode = command.value ?? "status";
@@ -534,6 +785,20 @@ export class GatewayService {
       return;
     }
 
+    const projectContext = this.options.workspace
+      ? await this.#requireProjectContext(
+          message.identity.conversationId,
+          resolved.conversationId,
+        )
+      : undefined;
+    if (this.options.workspace && !projectContext) return;
+
+    const runCwd = projectContext?.project.path ?? this.options.cwd;
+    const persistedThreadId = projectContext?.threadId
+      ?? (!this.options.workspace
+        ? await this.store.getActiveThread(resolved.conversationId)
+        : undefined);
+
     const active: ActiveRun = {
       stopRequested: false,
       interruptSent: false,
@@ -559,6 +824,7 @@ export class GatewayService {
         approvalPolicy: executionPolicy.approvalPolicy,
         approvalsReviewer: executionPolicy.approvalsReviewer,
         approvalRoute: executionPolicy.approvalRoute,
+        ...(projectContext ? { projectName: projectContext.project.name } : {}),
       },
     });
     this.#setConversationActivity(message.identity.conversationId, "typing");
@@ -569,12 +835,11 @@ export class GatewayService {
     );
 
     try {
-      const threadId = await this.store.getActiveThread(resolved.conversationId);
       const result = await this.agent.run(
         {
-          ...(threadId ? { threadId } : {}),
+          ...(persistedThreadId ? { threadId: persistedThreadId } : {}),
           text: message.text,
-          cwd: this.options.cwd,
+          cwd: runCwd,
           approvalPolicy: executionPolicy.approvalPolicy,
           sandboxMode: executionPolicy.sandboxMode,
           approvalsReviewer: executionPolicy.approvalsReviewer,
@@ -582,7 +847,7 @@ export class GatewayService {
           ...(this.options.artifactEgress ? {
             artifactRegistrationHandler: async (request) =>
               await this.#queueArtifactOperation(active, () =>
-                this.#registerOutboundFile(resolved, request)
+                this.#registerOutboundFile(resolved, runCwd, request)
               ),
             artifactDeliveryHandler: async (request) =>
               await this.#queueArtifactOperation(active, () =>
@@ -652,7 +917,15 @@ export class GatewayService {
       );
 
       await active.artifactEgressTail.catch(() => undefined);
-      await this.store.setActiveThread(resolved.conversationId, result.threadId);
+      if (projectContext) {
+        await this.#workspaceStore().setProjectActiveThread(
+          resolved.conversationId,
+          projectContext.project.name,
+          result.threadId,
+        );
+      } else {
+        await this.store.setActiveThread(resolved.conversationId, result.threadId);
+      }
       await this.store.appendAudit({
         userId: resolved.userId,
         conversationId: resolved.conversationId,
@@ -861,12 +1134,25 @@ export class GatewayService {
 
   async #registerOutboundFile(
     resolved: ResolvedGatewayIdentity,
+    runCwd: string,
     request: {
       localPath: string;
       fileName?: string | undefined;
       caption?: string | undefined;
     },
   ): Promise<AgentArtifactRegistrationResult> {
+    if (!await isWithinRunOutboundRoot(runCwd, request.localPath)) {
+      await this.store.appendAudit({
+        userId: resolved.userId,
+        conversationId: resolved.conversationId,
+        eventType: "artifact.registration_denied",
+        payload: {
+          kind: "file",
+          reason: "outside-run-outbound-root",
+        },
+      }).catch(() => undefined);
+      return { status: "denied", reason: "outside-run-outbound-root" };
+    }
     return await this.#registerArtifact(resolved, {
       id: `artifact-file-${randomUUID()}`,
       kind: "file",
@@ -1158,6 +1444,137 @@ export class GatewayService {
     });
   }
 
+  async #startNewChat(
+    deliveryConversationId: string,
+    resolved: ResolvedGatewayIdentity,
+    eventType: "command.new" | "command.chat_new",
+  ): Promise<void> {
+    if (this.#activeRuns.has(resolved.conversationId)) {
+      await this.#send(
+        deliveryConversationId,
+        "当前仍有任务运行，请先使用 /stop。",
+      );
+      return;
+    }
+
+    let projectName: string | undefined;
+    if (this.options.workspace) {
+      const projectContext = await this.#requireProjectContext(
+        deliveryConversationId,
+        resolved.conversationId,
+      );
+      if (!projectContext) return;
+      projectName = projectContext.project.name;
+      await this.#workspaceStore().clearProjectActiveThread(
+        resolved.conversationId,
+        projectName,
+      );
+    } else {
+      await this.store.clearActiveThread(resolved.conversationId);
+    }
+
+    this.#chatListCaches.delete(resolved.conversationId);
+    this.#artifactCatalogs.delete(resolved.conversationId);
+    await this.store.appendAudit({
+      userId: resolved.userId,
+      conversationId: resolved.conversationId,
+      eventType,
+      payload: {
+        ...(projectName ? { projectName } : {}),
+      },
+    });
+    await this.#send(
+      deliveryConversationId,
+      projectName
+        ? `项目 ${projectName} 已准备新会话。下一条普通消息会创建新的 Codex thread。`
+        : "新会话已建立。下一条消息会从新的上下文开始。",
+    );
+  }
+
+  async #requireProjectContext(
+    deliveryConversationId: string,
+    conversationId: string,
+  ): Promise<SelectedProjectContext | undefined> {
+    if (!this.options.workspace) {
+      await this.#send(
+        deliveryConversationId,
+        "Workspace Root 尚未在 Mac 本地配置。",
+      );
+      return undefined;
+    }
+    const context = await this.#resolveSelectedProjectContext(conversationId);
+    if (context) return context;
+    await this.#send(
+      deliveryConversationId,
+      "当前尚未选择项目。使用 /projects 查看项目，再用 /project <name> 选择。",
+    );
+    return undefined;
+  }
+
+  async #resolveSelectedProjectContext(
+    conversationId: string,
+  ): Promise<SelectedProjectContext | undefined> {
+    const workspace = this.options.workspace;
+    if (!workspace) return undefined;
+    const store = this.#workspaceStore();
+
+    let selected = await store.getSelectedProject(conversationId);
+    if (!selected) {
+      selected = await workspace.projectNameForPath(this.options.cwd);
+      if (selected) {
+        await store.setSelectedProject(conversationId, selected);
+      }
+    }
+    if (!selected) return undefined;
+
+    let project: WorkspaceProject;
+    try {
+      project = await workspace.resolveExistingProject(selected);
+    } catch {
+      return undefined;
+    }
+
+    await this.#migrateLegacyThreadIfApplicable(conversationId, project);
+    const threadId = await store.getProjectActiveThread(
+      conversationId,
+      project.name,
+    );
+    return {
+      project,
+      ...(threadId ? { threadId } : {}),
+    };
+  }
+
+  async #migrateLegacyThreadIfApplicable(
+    conversationId: string,
+    project: WorkspaceProject,
+  ): Promise<void> {
+    const workspace = this.options.workspace;
+    if (!workspace) return;
+    const legacyProject = await workspace.projectNameForPath(this.options.cwd);
+    if (legacyProject !== project.name) return;
+
+    const store = this.#workspaceStore();
+    if (await store.getProjectActiveThread(conversationId, project.name)) return;
+    const legacyThread = await this.store.getActiveThread(conversationId);
+    if (!legacyThread) return;
+    await store.setProjectActiveThread(
+      conversationId,
+      project.name,
+      legacyThread,
+    );
+    // Consume the legacy single-project pointer exactly once. Keeping it would
+    // resurrect the old thread after `/chat new` clears the project bucket.
+    await this.store.clearActiveThread(conversationId);
+  }
+
+  #workspaceStore() {
+    if (!supportsWorkspaceStateStore(this.store)) {
+      throw new Error("Gateway store does not support workspace state");
+    }
+    return this.store;
+  }
+
   #controlMode(conversationId: string): AgentControlMode {
     return this.#controlModes.get(conversationId) ?? "ask";
   }
@@ -1250,6 +1667,33 @@ function modeChangedText(mode: AgentControlMode): string {
   return mode === "auto"
     ? "已切换到 auto：Codex 使用 auto_review；当前 sandbox 保持 workspace-write。服务重启后会恢复 ask。"
     : "已切换到 ask：Codex 原生审批请求会转交当前 owner。";
+}
+
+async function isWithinRunOutboundRoot(
+  runCwd: string,
+  localPath: string,
+): Promise<boolean> {
+  if (!isAbsolute(localPath)) return false;
+  try {
+    const outboundRoot = await realpath(resolve(runCwd, "artifacts", "outbound"));
+    const candidate = await realpath(localPath);
+    const rel = relative(outboundRoot, candidate);
+    return rel === "" || (!rel.startsWith(`..${sep}`) && rel !== "..");
+  } catch {
+    return false;
+  }
+}
+
+function formatThreadPreview(value: string): string {
+  const normalized = value
+    .replace(/[\u0000-\u001f\u007f]+/gu, " ")
+    .replace(/\s+/gu, " ")
+    .trim();
+  if (!normalized) return "未命名会话";
+  const characters = Array.from(normalized);
+  return characters.length > 88
+    ? `${characters.slice(0, 88).join("")}…`
+    : normalized;
 }
 
 function visibleActivityProgress(toolName: string | undefined): {

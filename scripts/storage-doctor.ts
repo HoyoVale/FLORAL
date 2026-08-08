@@ -15,6 +15,7 @@ try {
   console.log(`storage.users=${diagnostics.users}`);
   console.log(`storage.identities=${diagnostics.identities}`);
   console.log(`storage.conversations=${diagnostics.conversations}`);
+  console.log(`storage.conversation_projects=${diagnostics.conversationProjects}`);
   console.log(`storage.message_receipts=${diagnostics.messageReceipts}`);
   console.log(`storage.audit_events=${diagnostics.auditEvents}`);
   console.log(`storage.owners=${diagnostics.owners}`);

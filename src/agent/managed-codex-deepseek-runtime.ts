@@ -19,7 +19,11 @@ import {
   type McpRegistryAdoptionReport,
 } from "../config/adoption/mcp-registry-adoption.js";
 import type { AppEnv } from "../config/env.js";
-import type { AgentRuntime } from "../core/contracts.js";
+import {
+  supportsAgentThreadManagement,
+  type AgentRuntime,
+  type AgentThreadSummary,
+} from "../core/contracts.js";
 import type {
   AgentEvent,
   AgentRunRequest,
@@ -136,6 +140,25 @@ export class ManagedCodexDeepSeekRuntime implements AgentRuntime {
   async interrupt(threadId: string, turnId?: string): Promise<void> {
     const runtime = this.#requireRuntime();
     await runtime.interrupt(threadId, turnId);
+  }
+
+  async listThreads(input: {
+    cwd: string;
+    limit?: number | undefined;
+  }): Promise<AgentThreadSummary[]> {
+    const runtime = this.#requireRuntime();
+    if (!supportsAgentThreadManagement(runtime)) {
+      throw new Error("Managed Codex runtime does not expose thread management");
+    }
+    return await runtime.listThreads(input);
+  }
+
+  async archiveThread(threadId: string): Promise<void> {
+    const runtime = this.#requireRuntime();
+    if (!supportsAgentThreadManagement(runtime)) {
+      throw new Error("Managed Codex runtime does not expose thread management");
+    }
+    await runtime.archiveThread(threadId);
   }
 
   async stop(): Promise<void> {
@@ -558,9 +581,10 @@ function createCodexRuntime(
     FLORAL_BRIDGE_TOKEN: bridgeToken,
   };
   delete processEnv.DEEPSEEK_API_KEY;
-  // The remote elevation ceiling belongs to the FLORAL parent process,
+  // Machine-local trust boundaries belong to the FLORAL parent process,
   // not to Codex or model-visible shell environments.
   delete processEnv.FLORAL_REMOTE_MODE_CEILING;
+  delete processEnv.FLORAL_WORKSPACE_ROOT;
 
   return new CodexAppServerRuntime({
     command: env.CODEX_COMMAND,

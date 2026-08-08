@@ -252,7 +252,7 @@ describe("Gateway generic artifact delivery", () => {
   it("registers and sends a terminal-staged outbound file through the same DLP boundary", async () => {
     const dir = await mkdtemp(join(tmpdir(), "floral-artifact-file-"));
     temporary.push(dir);
-    const root = join(dir, "outbound");
+    const root = join(dir, "artifacts", "outbound");
     const file = join(root, "report.txt");
     const policy = await createPolicy(root);
     await writeFile(file, "report");

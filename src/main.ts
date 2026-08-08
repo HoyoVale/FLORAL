@@ -26,10 +26,16 @@ import { SqliteGatewayStore } from "./storage/sqlite.js";
 import { FeishuTransport } from "./transport/feishu/feishu-transport.js";
 import { MockQqTransport } from "./transport/qq/mock-qq-transport.js";
 import { QqRuntimeAdoptionTransport } from "./transport/qq/qq-runtime-adoption-transport.js";
+import { ProjectWorkspaceRoot } from "./workspace/project-workspace.js";
 
 loadProjectEnv();
 const env = loadEnv();
 const repositoryRoot = process.cwd();
+const projectWorkspace = env.FLORAL_WORKSPACE_ROOT
+  ? new ProjectWorkspaceRoot(env.FLORAL_WORKSPACE_ROOT)
+  : undefined;
+await projectWorkspace?.initialize();
+
 const authority = await resolveConfigurationAuthority({
   repositoryRoot,
   environment: process.env,
@@ -75,6 +81,7 @@ const artifactEgressPolicy = new ArtifactEgressPolicy({
   enabled: chatTransport === "feishu",
   allowedRoots: [
     resolve(env.CODEX_CWD, "artifacts", "outbound"),
+    ...(projectWorkspace ? [projectWorkspace.root] : []),
   ],
   allowedMcpProducers: [
     ...authority.effective.mcp.macos.enabled_tools
@@ -99,6 +106,7 @@ const gateway = new GatewayService(
   store,
   {
     cwd: env.CODEX_CWD,
+    ...(projectWorkspace ? { workspace: projectWorkspace } : {}),
     ...(env.CODEX_MODEL ? { model: env.CODEX_MODEL } : {}),
     ...(env.OWNER_PAIRING_CODE
       ? { ownerPairingCode: env.OWNER_PAIRING_CODE }
