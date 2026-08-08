@@ -1,4 +1,4 @@
-import { lstat, mkdir, mkdtemp, realpath, rm } from "node:fs/promises";
+import { lstat, mkdir, mkdtemp, readFile, realpath, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
@@ -180,6 +180,12 @@ describe("Gateway project/chat lifecycle", () => {
       await transport.emit("/project new NewProject", "m1");
       expect(transport.sent.at(-1)?.text).toContain("已创建并切换到项目：NewProject");
       expect((await lstat(join(root, "NewProject"))).isDirectory()).toBe(true);
+      expect(await readFile(join(root, "NewProject", "AGENTS.md"), "utf8"))
+        .toContain("FLORAL:PROJECT-CONTEXT:BEGIN");
+      expect(await readFile(
+        join(root, "NewProject", ".floral", "CONTEXT.md"),
+        "utf8",
+      )).toContain("Project: NewProject");
       expect(store.selected.get("conversation-1")).toBe("NewProject");
 
       await transport.emit("hello project", "m2");

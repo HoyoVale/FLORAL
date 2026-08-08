@@ -36,6 +36,11 @@ import type {
 } from "../policy/artifact-egress-policy.js";
 import { formatGatewayStatus, gatewayHelpText } from "./gateway-status.js";
 import type { ProjectWorkspaceRoot, WorkspaceProject } from "../workspace/project-workspace.js";
+import {
+  bootstrapProjectContext,
+  inspectProjectContext,
+  type ProjectContextStatus,
+} from "../workspace/project-context.js";
 
 export interface GatewayOptions {
   cwd: string;
@@ -409,7 +414,7 @@ export class GatewayService {
             lines.push(`${String(index + 1)}. ${project.name}${marker}`);
           });
         }
-        lines.push("", "使用 /project <name> 切换；/project new <name> 创建项目（owner）。");
+        lines.push("", "使用 /project <name> 切换；/project new <name> 创建项目（owner）；/project context 查看共享上下文。");
         await this.store.appendAudit({
           userId: resolved.userId,
           conversationId: resolved.conversationId,
@@ -476,7 +481,11 @@ export class GatewayService {
           });
           await this.#send(
             message.identity.conversationId,
-            `已创建并切换到项目：${project.name}。下一条普通消息会创建第一个 Codex 会话。`,
+            [
+              `已创建并切换到项目：${project.name}。`,
+              "已初始化 AGENTS.md 与 .floral 项目共享上下文。",
+              "下一条普通消息会创建第一个 Codex 会话，并由 Codex 原生加载项目 AGENTS.md。",
+            ].join("\n"),
           );
         } catch {
           await this.store.appendAudit({
@@ -488,6 +497,120 @@ export class GatewayService {
           await this.#send(
             message.identity.conversationId,
             "项目创建失败。名称必须是 Workspace Root 下可创建的真实一级目录名，且不能已存在。",
+          );
+        }
+        return;
+      }
+
+      case "project-context-status": {
+        if (!this.options.workspace) {
+          await this.#send(
+            message.identity.conversationId,
+            "Workspace Root 尚未在 Mac 本地配置。",
+          );
+          return;
+        }
+        const projectContext = await this.#requireProjectContext(
+          message.identity.conversationId,
+          resolved.conversationId,
+        );
+        if (!projectContext) return;
+        try {
+          const status = await inspectProjectContext(projectContext.project);
+          await this.store.appendAudit({
+            userId: resolved.userId,
+            conversationId: resolved.conversationId,
+            eventType: "command.project_context_status",
+            payload: {
+              projectName: projectContext.project.name,
+              initialized: status.initialized,
+              instructionLinked: status.instructionLinked,
+            },
+          });
+          await this.#send(
+            message.identity.conversationId,
+            formatProjectContextStatus(projectContext.project.name, status),
+          );
+        } catch {
+          await this.#send(
+            message.identity.conversationId,
+            "项目共享上下文状态检查失败；请检查项目内 AGENTS/.floral 是否为真实常规文件。",
+          );
+        }
+        return;
+      }
+
+      case "project-context-init": {
+        if (!this.options.workspace) {
+          await this.#send(
+            message.identity.conversationId,
+            "Workspace Root 尚未在 Mac 本地配置。",
+          );
+          return;
+        }
+        if (resolved.role !== "owner") {
+          await this.store.appendAudit({
+            userId: resolved.userId,
+            conversationId: resolved.conversationId,
+            eventType: "command.project_context_init_denied",
+            payload: { reason: "owner-required" },
+          });
+          await this.#send(
+            message.identity.conversationId,
+            "只有 owner 可以初始化项目共享上下文。",
+          );
+          return;
+        }
+        if (this.#activeRuns.has(resolved.conversationId)) {
+          await this.#send(
+            message.identity.conversationId,
+            "当前任务运行中，不能初始化项目共享上下文。请先使用 /stop。",
+          );
+          return;
+        }
+        const projectContext = await this.#requireProjectContext(
+          message.identity.conversationId,
+          resolved.conversationId,
+        );
+        if (!projectContext) return;
+        try {
+          const result = await bootstrapProjectContext(projectContext.project);
+          await this.store.appendAudit({
+            userId: resolved.userId,
+            conversationId: resolved.conversationId,
+            eventType: "command.project_context_initialized",
+            payload: {
+              projectName: projectContext.project.name,
+              changed: result.changed,
+              instructionAction: result.instructionAction,
+              createdFileCount: result.createdFiles.length,
+            },
+          });
+          const lines = [
+            result.changed
+              ? `项目 ${projectContext.project.name} 的共享上下文已初始化。`
+              : `项目 ${projectContext.project.name} 的共享上下文已经就绪，无需修改。`,
+            formatProjectContextStatus(projectContext.project.name, result.status),
+          ];
+          if (projectContext.threadId) {
+            lines.push(
+              "当前项目已有活动 Codex 会话。为确保新的 AGENTS.md 指令链重新加载，建议使用 /chat new 开始新会话。",
+            );
+          }
+          await this.#send(
+            message.identity.conversationId,
+            lines.join("\\n\\n"),
+          );
+        } catch {
+          await this.store.appendAudit({
+            userId: resolved.userId,
+            conversationId: resolved.conversationId,
+            eventType: "command.project_context_init_failed",
+            payload: { projectName: projectContext.project.name },
+          });
+          await this.#send(
+            message.identity.conversationId,
+            "项目共享上下文初始化失败。不会覆盖既有上下文文件；请检查 AGENTS/.floral 文件类型、标记完整性或 Codex 指令文件大小。",
           );
         }
         return;
@@ -1772,6 +1895,24 @@ export class GatewayService {
   async #send(conversationId: string, text: string): Promise<void> {
     await this.transport.send({ conversationId, text });
   }
+}
+
+function formatProjectContextStatus(
+  projectName: string,
+  status: ProjectContextStatus,
+): string {
+  return [
+    `项目共享上下文：${projectName}`,
+    `state=${status.initialized ? "ready" : "not-ready"}`,
+    `instruction=${status.activeInstructionFile ?? "missing"}`,
+    `instruction_link=${status.instructionLinked ? "linked" : "missing"}`,
+    `context=${status.contextPresent ? "present" : "missing"}`,
+    `decisions=${status.decisionsPresent ? "present" : "missing"}`,
+    `known_issues=${status.knownIssuesPresent ? "present" : "missing"}`,
+    status.initialized
+      ? "Codex 新会话会通过原生 AGENTS 指令发现获得共享上下文入口。"
+      : "使用 /project context init 初始化（owner）。",
+  ].join("\\n");
 }
 
 interface AgentExecutionPolicy {

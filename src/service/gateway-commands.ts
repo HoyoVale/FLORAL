@@ -10,6 +10,8 @@ export type GatewayCommand =
   | { type: "projects" }
   | { type: "project"; name: string | undefined }
   | { type: "project-new"; name: string | undefined }
+  | { type: "project-context-init" }
+  | { type: "project-context-status" }
   | { type: "chats" }
   | { type: "chat"; value: string | undefined }
   | { type: "chat-archive"; value: string | undefined }
@@ -35,6 +37,12 @@ export function parseGatewayCommand(text: string): GatewayCommand | undefined {
   const projectNew = /^\/project\s+new(?:\s+(.+))?$/i.exec(trimmed);
   if (projectNew) {
     return { type: "project-new", name: projectNew[1]?.trim() || undefined };
+  }
+  if (/^\/project\s+context\s+init$/i.test(trimmed)) {
+    return { type: "project-context-init" };
+  }
+  if (/^\/project\s+context(?:\s+status)?$/i.test(trimmed)) {
+    return { type: "project-context-status" };
   }
   const project = /^\/project(?:\s+(.+))?$/i.exec(trimmed);
   if (project) {

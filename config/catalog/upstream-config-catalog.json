@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "reviewedAt": "2026-08-08",
-  "purpose": "Phase 4 configuration federation, Phase 5 safety controls, Phase 5F Feishu migration, Phase 7.1 Codex-native permission authority, and Phase 7.2A workspace/project/chat routing inventory.",
+  "purpose": "Phase 4 configuration federation, Phase 5 safety controls, Phase 5F Feishu migration, Phase 7.1 Codex-native permission authority, Phase 7.2 project/chat control, and Phase 7.3A project-shared context bootstrap inventory.",
   "classifications": [
     "floral-owned",
     "upstream-managed",
@@ -121,20 +121,21 @@
         {
           "id": "workspace-control",
           "classification": "locked",
-          "coverage": "machine-local-root-plus-codex-thread-control",
+          "coverage": "machine-local-root-plus-codex-thread-and-project-context-control",
           "knownKeys": [
             "FLORAL_WORKSPACE_ROOT",
             "/projects",
             "/project <name>",
+            "/project new <name>",
+            "/project context",
+            "/project context init",
             "/chats",
             "/chat <index>",
-            "/chat new"
-          ],
-          "futureKeys": [
-            "/project new <name>",
+            "/chat new",
             "/chat archive <index>"
           ],
-          "notes": "FLORAL_WORKSPACE_ROOT is a Mac-local trust boundary and is not projected into config/floral.toml. Projects are existing real direct-child directories only. Chat history remains Codex-owned; FLORAL stores only selected project and per-project active thread IDs."
+          "futureKeys": [],
+          "notes": "FLORAL_WORKSPACE_ROOT is a Mac-local trust boundary and is not projected into config/floral.toml. Projects are real direct-child directories. Project creation bootstraps Codex-native AGENTS guidance plus read-mostly .floral shared context. Chat history remains Codex-owned; FLORAL stores only selected project and per-project active thread IDs."
         }
       ],
       "runtimeIntrospection": [
@@ -1136,6 +1137,22 @@
       "file": "src/workspace/project-workspace.ts",
       "needle": "Project must be a direct child of the workspace root",
       "risk": "Remote project selection must not turn a project name into arbitrary filesystem path access or follow a symlink outside the Mac-local workspace root."
+    },
+    {
+      "id": "workspace.project-context-bootstrap",
+      "component": "floral",
+      "classification": "locked",
+      "file": "src/workspace/project-context.ts",
+      "needle": "FLORAL:PROJECT-CONTEXT:BEGIN",
+      "risk": "Project context bootstrap must preserve existing Codex instruction files, avoid symlink/hardlink writes, and remain bounded instead of becoming an unbounded hidden memory prompt."
+    },
+    {
+      "id": "workspace.project-context-owner-init",
+      "component": "floral",
+      "classification": "locked",
+      "file": "src/service/gateway.ts",
+      "needle": "command.project_context_init_denied",
+      "risk": "Initializing shared project context mutates project files and therefore remains owner-only and unavailable while an agent run is active."
     }
   ],
   "environmentKeyPolicies": {

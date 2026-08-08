@@ -94,3 +94,14 @@ This section supersedes the conflicting Phase 5.2/5.3 bullets above for Codex-na
 - `/chat archive <index>` is owner-only, requires a fresh cwd-scoped `/chats` list, and forwards only the cached opaque ID to Codex `thread/archive`.
 - Both lifecycle mutations are rejected while a run is active and are audited.
 - Project import/delete and filesystem deletion remain unsupported in this phase.
+
+## Phase 7.3A project-shared context boundary
+
+- Project-shared context is stored inside the selected real project directory as `AGENTS.md`/`AGENTS.override.md` guidance plus `.floral/CONTEXT.md`, `.floral/DECISIONS.md`, and `.floral/KNOWN_ISSUES.md`.
+- `/project new <name>` initializes the context structure before the first Codex thread. `/project context init` is owner-only and is rejected while a run is active.
+- Existing context documents are never overwritten by bootstrap. Existing active Codex instruction files are preserved and receive at most one bounded FLORAL managed block; malformed duplicate markers fail closed.
+- `AGENTS.override.md` takes precedence over `AGENTS.md` in Codex discovery, so FLORAL links the managed block to the existing override when present instead of writing an ignored AGENTS block.
+- Symlink or non-regular instruction/context entries are rejected. `.floral` must be a real project-local directory.
+- The shared context files are project guidance, not a permission authority. They cannot raise Workspace Root, remote mode ceiling, sandbox, MCP capability, or artifact egress policy.
+- Phase 7.3A performs no automatic chat summarization or memory extraction. Context documents are read-mostly unless the owner/user explicitly asks to update them.
+

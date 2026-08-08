@@ -1,5 +1,6 @@
-import { lstat, mkdir, readdir, realpath } from "node:fs/promises";
+import { lstat, mkdir, readdir, realpath, rm } from "node:fs/promises";
 import { dirname, relative, resolve, sep } from "node:path";
+import { bootstrapProjectContext } from "./project-context.js";
 
 export interface WorkspaceProject {
   name: string;
@@ -78,7 +79,14 @@ export class ProjectWorkspaceRoot {
       throw new Error("Project must be a direct child of the workspace root");
     }
     await mkdir(candidate, { recursive: false, mode: 0o755 });
-    return await this.resolveExistingProject(normalized);
+    try {
+      const project = await this.resolveExistingProject(normalized);
+      await bootstrapProjectContext(project);
+      return project;
+    } catch (error) {
+      await rm(candidate, { recursive: true, force: true }).catch(() => undefined);
+      throw error;
+    }
   }
 
   async projectNameForPath(path: string): Promise<string | undefined> {

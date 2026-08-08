@@ -40,3 +40,21 @@ Codex remains the authority for thread storage and history. `/chats` calls app-s
 ## Phase 7.2B project/chat lifecycle control
 
 FLORAL may create a new project only as a real direct child of the already configured Workspace Root via `/project new <name>`. The command is owner-only and does not expand the Workspace Root trust boundary. FLORAL still maps each project to its directory `cwd` and leaves conversation history in Codex native threads. `/chat archive <index>` resolves an opaque thread ID only from a fresh `/chats` cache and delegates the mutation to Codex `thread/archive`; raw thread IDs are never accepted from chat.
+
+## Phase 7.3A project-shared context bootstrap
+
+FLORAL uses Codex-native `AGENTS.md` discovery as the project instruction entry point rather than injecting a parallel hidden memory prompt. Project-shared durable context lives in ordinary project files:
+
+```text
+Project/
+├── AGENTS.md (or an existing AGENTS.override.md)
+└── .floral/
+    ├── CONTEXT.md
+    ├── DECISIONS.md
+    └── KNOWN_ISSUES.md
+```
+
+`/project new <name>` bootstraps this structure before the first Codex thread is created. Existing projects can opt in with `/project context init`; the command never replaces existing context files. If an `AGENTS.override.md` already exists, FLORAL links the shared-context guidance there because Codex gives it precedence over `AGENTS.md`. Otherwise it appends a bounded managed block to the existing `AGENTS.md`, or creates a minimal `AGENTS.md` if none exists.
+
+The `.floral/*.md` files are not automatically injected or summarized by FLORAL. The managed AGENTS block tells Codex where the shared project documents live; Codex then follows its normal project-instruction behavior. Phase 7.3A is bootstrap/read-mostly infrastructure only: automatic extraction, consolidation, and memory writing are deferred to Phase 7.3B.
+
