@@ -108,11 +108,13 @@ async function callPeekaboo(
 async function capture(
   kind: "image" | "see",
   appTarget: string | undefined,
-): Promise<{ artifactPath: string; upstreamText: string }> {
+): Promise<{ artifactId: string; artifactPath: string; upstreamText: string }> {
+  const token = randomUUID();
+  const artifactId = `artifact-peekaboo-${kind}-${token}`;
   const outputPath = buildObservationArtifactPath({
     allowedRoot,
     kind,
-    token: randomUUID(),
+    token,
   });
   const upstreamText = kind === "image"
     ? await callPeekaboo("image", buildPeekabooImageArguments(outputPath, { app_target: appTarget }))
@@ -124,6 +126,7 @@ async function capture(
     allowedRoot,
   });
   return {
+    artifactId,
     artifactPath: artifact.absolutePath,
     upstreamText,
   };
@@ -211,6 +214,7 @@ server.tool(
         content: [{
           type: "text",
           text: [
+            `artifactId=${result.artifactId}`,
             `artifactPath=${result.artifactPath}`,
             "source=floral_peekaboo/image",
             "next=For visual semantics or OCR call floral_vision/vision_analyze_screen with artifactPath.",
@@ -240,6 +244,7 @@ server.tool(
         content: [{
           type: "text",
           text: [
+            `artifactId=${result.artifactId}`,
             `artifactPath=${result.artifactPath}`,
             "source=floral_peekaboo/see",
             result.upstreamText ? "peekaboo_summary_begin" : "",

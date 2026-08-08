@@ -112,8 +112,16 @@ export class CodexRpcClient extends EventEmitter {
     });
   }
 
-  async initialize(clientInfo: { name: string; title: string; version: string }): Promise<unknown> {
-    const result = await this.request("initialize", { clientInfo });
+  async initialize(
+    clientInfo: { name: string; title: string; version: string },
+    capabilities: { experimentalApi?: boolean } = {},
+  ): Promise<unknown> {
+    const result = await this.request("initialize", {
+      clientInfo,
+      ...(capabilities.experimentalApi === true
+        ? { capabilities: { experimentalApi: true } }
+        : {}),
+    });
     this.notify("initialized", {});
     return result;
   }

@@ -54,6 +54,17 @@ describe("CodexAppServerRuntime", () => {
     }
   });
 
+  it("exposes FLORAL generic artifact delivery as client-hosted dynamic tools", async () => {
+    const runtime = createRuntime("delivery-dynamic-tools");
+    try {
+      await runtime.start();
+      const result = await runtime.run({ text: "hello", cwd: process.cwd() });
+      expect(result.finalText).toBe("authoritative final");
+    } finally {
+      await runtime.stop();
+    }
+  });
+
   it("resumes an existing thread before starting a turn", async () => {
     const runtime = createRuntime("resume");
     try {
@@ -241,6 +252,84 @@ describe("CodexAppServerRuntime", () => {
           status: "completed",
         },
       });
+    } finally {
+      await runtime.stop();
+    }
+  });
+
+  it("registers a trusted Peekaboo artifact from the completed MCP result", async () => {
+    const runtime = createRuntime("mcp-artifact");
+    const events: AgentEvent[] = [];
+    try {
+      await runtime.start();
+      const result = await runtime.run(
+        { text: "capture", cwd: process.cwd() },
+        (event) => events.push(event),
+      );
+      expect(result.finalText).toBe("artifact captured");
+      expect(events).toContainEqual({
+        type: "artifact.registered",
+        artifact: {
+          id: "artifact-screen-fixture",
+          kind: "image",
+          localPath: "/tmp/floral-screen.png",
+          source: {
+            type: "mcp",
+            serverId: "floral_peekaboo",
+            toolName: "image",
+          },
+        },
+      });
+    } finally {
+      await runtime.stop();
+    }
+  });
+
+  it("delegates register_outbound_file to the run-scoped artifact handler", async () => {
+    const runtime = createRuntime("delivery-register");
+    try {
+      await runtime.start();
+      const result = await runtime.run({
+        text: "register report",
+        cwd: process.cwd(),
+        artifactRegistrationHandler: async (request) => {
+          expect(request).toEqual({
+            localPath: "/tmp/outbound/report.txt",
+            fileName: "report.txt",
+          });
+          return {
+            status: "registered",
+            artifactId: "artifact-file-fixture",
+          };
+        },
+      });
+      expect(result.finalText).toBe("delivery register complete");
+    } finally {
+      await runtime.stop();
+    }
+  });
+
+  it("delegates send_artifact and returns transport-confirmed success to the model", async () => {
+    const runtime = createRuntime("delivery-send");
+    try {
+      await runtime.start();
+      const result = await runtime.run({
+        text: "send screenshot",
+        cwd: process.cwd(),
+        artifactDeliveryHandler: async (request) => {
+          expect(request).toEqual({
+            artifactId: "artifact-screen-fixture",
+            caption: "current screen",
+          });
+          return {
+            status: "sent",
+            artifactId: request.artifactId,
+            kind: "image",
+            byteLength: 123,
+          };
+        },
+      });
+      expect(result.finalText).toBe("delivery send complete");
     } finally {
       await runtime.stop();
     }

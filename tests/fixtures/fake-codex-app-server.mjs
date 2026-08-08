@@ -18,7 +18,22 @@ function hasFloralRoutingPolicy(params) {
   return typeof instructions === "string"
     && instructions.includes("floral_peekaboo/see")
     && instructions.includes("floral_peekaboo/click")
+    && instructions.includes("floral_delivery/send_artifact")
     && instructions.includes("local filesystem path");
+}
+
+function hasFloralDeliveryTools(params) {
+  const dynamicTools = params?.dynamicTools;
+  if (!Array.isArray(dynamicTools)) return false;
+  const namespace = dynamicTools.find((entry) =>
+    entry?.type === "namespace" && entry?.name === "floral_delivery"
+  );
+  if (!namespace || !Array.isArray(namespace.tools)) return false;
+  const names = namespace.tools.map((tool) => tool?.name).sort();
+  return JSON.stringify(names) === JSON.stringify([
+    "register_outbound_file",
+    "send_artifact",
+  ]);
 }
 
 function sendSuccess(threadId = activeThreadId, turnId = activeTurnId, finalText = "authoritative final") {
@@ -45,6 +60,19 @@ lines.on("line", (line) => {
 
   if (message.method === "initialize") {
     if (scenario === "malformed") process.stdout.write("this-is-not-json\n");
+    if (
+      scenario === "delivery-dynamic-tools"
+      && message.params?.capabilities?.experimentalApi !== true
+    ) {
+      send({
+        id: message.id,
+        error: {
+          code: -32602,
+          message: "dynamic tools require experimentalApi capability",
+        },
+      });
+      return;
+    }
     initialized = true;
     send({ id: message.id, result: { userAgent: "fake-codex", codexHome: "/tmp/fake" } });
     return;
@@ -58,8 +86,15 @@ lines.on("line", (line) => {
   }
 
   if (message.method === "thread/start") {
-    if (scenario === "developer-instructions" && !hasFloralRoutingPolicy(message.params)) {
+    if (
+      (scenario === "developer-instructions" || scenario === "delivery-dynamic-tools")
+      && !hasFloralRoutingPolicy(message.params)
+    ) {
       send({ id: message.id, error: { code: -32602, message: "missing FLORAL developer instructions" } });
+      return;
+    }
+    if (scenario === "delivery-dynamic-tools" && !hasFloralDeliveryTools(message.params)) {
+      send({ id: message.id, error: { code: -32602, message: "missing FLORAL delivery dynamic tools" } });
       return;
     }
     if (scenario === "on-request-file-approval") {
@@ -275,6 +310,85 @@ lines.on("line", (line) => {
             },
             message: "Allow floral_peekaboo to run tool click?",
             requestedSchema: { type: "object", properties: {} },
+          },
+        });
+        return;
+      }
+
+      if (scenario === "mcp-artifact") {
+        send({
+          method: "item/started",
+          params: {
+            threadId: activeThreadId,
+            turnId: activeTurnId,
+            item: {
+              id: "mcp_artifact_1",
+              type: "mcpToolCall",
+              server: "floral_peekaboo",
+              tool: "image",
+              status: "inProgress",
+            },
+          },
+        });
+        send({
+          method: "item/completed",
+          params: {
+            threadId: activeThreadId,
+            turnId: activeTurnId,
+            item: {
+              id: "mcp_artifact_1",
+              type: "mcpToolCall",
+              server: "floral_peekaboo",
+              tool: "image",
+              status: "completed",
+              result: {
+                content: [{
+                  type: "text",
+                  text: "artifactId=artifact-screen-fixture\nartifactPath=/tmp/floral-screen.png\nsource=floral_peekaboo/image",
+                }],
+                structuredContent: null,
+                _meta: null,
+              },
+            },
+          },
+        });
+        sendSuccess(activeThreadId, activeTurnId, "artifact captured");
+        return;
+      }
+
+      if (scenario === "delivery-register") {
+        send({
+          id: "dynamic_1",
+          method: "item/tool/call",
+          params: {
+            threadId: activeThreadId,
+            turnId: activeTurnId,
+            callId: "call_register_1",
+            namespace: "floral_delivery",
+            tool: "register_outbound_file",
+            arguments: {
+              local_path: "/tmp/outbound/report.txt",
+              file_name: "report.txt",
+            },
+          },
+        });
+        return;
+      }
+
+      if (scenario === "delivery-send") {
+        send({
+          id: "dynamic_1",
+          method: "item/tool/call",
+          params: {
+            threadId: activeThreadId,
+            turnId: activeTurnId,
+            callId: "call_send_1",
+            namespace: "floral_delivery",
+            tool: "send_artifact",
+            arguments: {
+              artifact_id: "artifact-screen-fixture",
+              caption: "current screen",
+            },
           },
         });
         return;
@@ -530,6 +644,42 @@ lines.on("line", (line) => {
             ? "recovered final"
             : "authoritative final",
       );
+    });
+    return;
+  }
+
+  if (message.id === "dynamic_1" && "result" in message) {
+    const success = message.result?.success;
+    const text = message.result?.contentItems?.[0]?.text ?? "";
+    if (
+      scenario === "delivery-register"
+      && success === true
+      && text.includes("artifact_registration=registered")
+      && text.includes("artifactId=artifact-file-fixture")
+    ) {
+      sendSuccess(activeThreadId, activeTurnId, "delivery register complete");
+      return;
+    }
+    if (
+      scenario === "delivery-send"
+      && success === true
+      && text.includes("artifact_delivery=sent")
+      && text.includes("artifactId=artifact-screen-fixture")
+    ) {
+      sendSuccess(activeThreadId, activeTurnId, "delivery send complete");
+      return;
+    }
+    send({
+      method: "turn/completed",
+      params: {
+        threadId: activeThreadId,
+        turn: {
+          id: activeTurnId,
+          status: "failed",
+          error: { message: `unexpected dynamic tool response: ${text}` },
+          items: [],
+        },
+      },
     });
     return;
   }

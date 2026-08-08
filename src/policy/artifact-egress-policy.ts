@@ -45,6 +45,18 @@ export type ArtifactEgressDecision =
       reason: ArtifactEgressDenyReason;
     };
 
+export type ArtifactEgressCandidateDecision =
+  | {
+      status: "allow";
+      artifact: AgentArtifact;
+      byteLength: number;
+      sourceCapability: Capability;
+    }
+  | {
+      status: "deny";
+      reason: ArtifactEgressDenyReason;
+    };
+
 export interface ArtifactEgressPolicyOptions {
   enabled: boolean;
   allowedRoots: string[];
@@ -97,6 +109,62 @@ export class ArtifactEgressPolicy {
       artifactCount: 0,
       byteCount: 0,
       artifactIds: new Set<string>(),
+    };
+  }
+
+  async validateCandidate(
+    artifact: AgentArtifact,
+  ): Promise<ArtifactEgressCandidateDecision> {
+    if (!this.#initialized) {
+      throw new Error("Artifact egress policy must be initialized before use");
+    }
+    if (!this.options.enabled) return deny("policy-disabled");
+
+    const artifactId = artifact.id.trim();
+    if (!/^[A-Za-z0-9][A-Za-z0-9._:-]{0,95}$/u.test(artifactId)) {
+      return deny("invalid-artifact-id");
+    }
+
+    const source = resolveSourceCapability(
+      artifact,
+      this.#allowedMcpProducers,
+      this.#allowedFloralCapabilities,
+    );
+    if (source.status === "deny") return source;
+    if (!kindMatchesCapability(artifact.kind, source.capability)) {
+      return deny("kind-capability-mismatch");
+    }
+
+    const requestedPath = artifact.localPath.trim();
+    if (!requestedPath || !isAbsolute(requestedPath)) {
+      return deny("path-not-absolute");
+    }
+
+    let stat: Awaited<ReturnType<typeof lstat>>;
+    let canonicalPath: string;
+    try {
+      stat = await lstat(requestedPath);
+      if (stat.isSymbolicLink()) return deny("path-symlink-denied");
+      if (!stat.isFile()) return deny("path-not-regular-file");
+      if (stat.nlink > 1) return deny("path-hardlink-denied");
+      canonicalPath = await realpath(requestedPath);
+    } catch {
+      return deny("path-unavailable");
+    }
+
+    if (!this.#canonicalRoots.some((root) => isInside(root, canonicalPath))) {
+      return deny("path-outside-allowed-root");
+    }
+
+    return {
+      status: "allow",
+      sourceCapability: source.capability,
+      byteLength: stat.size,
+      artifact: {
+        ...artifact,
+        id: artifactId,
+        localPath: canonicalPath,
+      },
     };
   }
 

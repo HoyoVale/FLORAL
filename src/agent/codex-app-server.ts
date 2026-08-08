@@ -3,6 +3,9 @@ import type { AgentRuntime } from "../core/contracts.js";
 import type {
   AgentApprovalHandler,
   AgentApprovalRequest,
+  AgentArtifact,
+  AgentArtifactDeliveryHandler,
+  AgentArtifactRegistrationHandler,
   AgentEvent,
   AgentRunRequest,
   AgentRunResult,
@@ -50,6 +53,8 @@ interface ItemLifecycleParams {
     tool?: string;
     status?: string;
     arguments?: unknown;
+    result?: unknown;
+    namespace?: string;
     error?: unknown;
     command?: string;
     cwd?: string;
@@ -106,8 +111,75 @@ export const FLORAL_AGENT_DEVELOPER_INSTRUCTIONS = [
   "- If the requested UI is already in the desired state, do not mutate it and do not request approval.",
   "- After every successful click, call floral_peekaboo/see again before evaluating state or doing another GUI action.",
   "- If see cannot provide a fresh target or the required GUI mutation tool does not exist, state that the action is unsupported instead of falling back to shell or coordinates.",
-  "- A local filesystem path or Markdown link/image is not a delivered chat attachment. Never claim an image or file was sent unless an explicit FLORAL delivery capability reports success.",
+  "- A local filesystem path or Markdown link/image is not a delivered chat attachment.",
+  "- When the user explicitly asks to receive a screenshot or another already-registered artifact, call floral_delivery/send_artifact with the artifactId returned by the trusted producer. Never claim delivery unless that tool reports success.",
+  "- For terminal-produced files, first create or copy the final attachment into <cwd>/artifacts/outbound, then call floral_delivery/register_outbound_file, then floral_delivery/send_artifact. Do not register or send arbitrary paths outside that staging root.",
 ].join("\n");
+
+const FLORAL_DELIVERY_DYNAMIC_TOOLS = [
+  {
+    type: "namespace",
+    name: "floral_delivery",
+    description: "FLORAL-controlled delivery of trusted local artifacts to the current chat. Registration is not delivery; outbound DLP is enforced by the host.",
+    tools: [
+      {
+        type: "function",
+        name: "register_outbound_file",
+        description: "Register one regular file already staged under <cwd>/artifacts/outbound. Returns an artifactId. This does not send the file.",
+        inputSchema: {
+          type: "object",
+          properties: {
+            local_path: {
+              type: "string",
+              minLength: 1,
+              maxLength: 4096,
+              description: "Absolute path to a file under <cwd>/artifacts/outbound.",
+            },
+            file_name: {
+              type: "string",
+              minLength: 1,
+              maxLength: 180,
+              description: "Optional attachment file name without path separators.",
+            },
+            caption: {
+              type: "string",
+              minLength: 1,
+              maxLength: 240,
+              description: "Optional short caption to keep with the artifact.",
+            },
+          },
+          required: ["local_path"],
+          additionalProperties: false,
+        },
+        deferLoading: false,
+      },
+      {
+        type: "function",
+        name: "send_artifact",
+        description: "Send one previously registered trusted artifact to the current chat. Accepts artifactId only, never an arbitrary filesystem path. Success means the transport reported the media/file message was sent.",
+        inputSchema: {
+          type: "object",
+          properties: {
+            artifact_id: {
+              type: "string",
+              pattern: "^[A-Za-z0-9][A-Za-z0-9._:-]{0,95}$",
+              description: "Artifact ID returned by a trusted producer or register_outbound_file.",
+            },
+            caption: {
+              type: "string",
+              minLength: 1,
+              maxLength: 240,
+              description: "Optional caption override for this delivery.",
+            },
+          },
+          required: ["artifact_id"],
+          additionalProperties: false,
+        },
+        deferLoading: false,
+      },
+    ],
+  },
+] as const;
 
 export class CodexAppServerRuntime implements AgentRuntime {
   readonly name = "codex-app-server";
@@ -122,6 +194,8 @@ export class CodexAppServerRuntime implements AgentRuntime {
   readonly #activeTurns = new Map<string, string>();
   readonly #eventHandlers = new Map<string, (event: AgentEvent) => void>();
   readonly #approvalHandlers = new Map<string, AgentApprovalHandler>();
+  readonly #artifactRegistrationHandlers = new Map<string, AgentArtifactRegistrationHandler>();
+  readonly #artifactDeliveryHandlers = new Map<string, AgentArtifactDeliveryHandler>();
   readonly #approvalItemSummaries = new Map<string, string>();
   readonly #inFlightMcpToolCalls = new Map<string, InFlightMcpToolCall>();
   #started = false;
@@ -156,11 +230,14 @@ export class CodexAppServerRuntime implements AgentRuntime {
 
     await this.#client.start();
     try {
-      await this.#client.initialize({
-        name: "mac_agent_gateway",
-        title: "Mac Agent Gateway",
-        version: "0.1.0",
-      });
+      await this.#client.initialize(
+        {
+          name: "mac_agent_gateway",
+          title: "Mac Agent Gateway",
+          version: "0.1.0",
+        },
+        { experimentalApi: true },
+      );
       this.#started = true;
     } catch (error) {
       await this.#client.stop();
@@ -179,6 +256,12 @@ export class CodexAppServerRuntime implements AgentRuntime {
     onEvent?.({ type: "run.started", threadId });
     if (onEvent) this.#eventHandlers.set(threadId, onEvent);
     if (request.approvalHandler) this.#approvalHandlers.set(threadId, request.approvalHandler);
+    if (request.artifactRegistrationHandler) {
+      this.#artifactRegistrationHandlers.set(threadId, request.artifactRegistrationHandler);
+    }
+    if (request.artifactDeliveryHandler) {
+      this.#artifactDeliveryHandlers.set(threadId, request.artifactDeliveryHandler);
+    }
 
     let streamedText = "";
     let authoritativeText = "";
@@ -262,6 +345,11 @@ export class CodexAppServerRuntime implements AgentRuntime {
         const key = approvalItemKey(threadId, itemId);
         this.#approvalItemSummaries.delete(key);
         this.#inFlightMcpToolCalls.delete(key);
+      }
+
+      const artifact = readRegisteredMcpArtifact(params.item);
+      if (artifact) {
+        onEvent?.({ type: "artifact.registered", artifact });
       }
 
       const tool = readMcpToolEvent(params.item);
@@ -399,6 +487,8 @@ export class CodexAppServerRuntime implements AgentRuntime {
       this.#activeTurns.delete(threadId);
       this.#eventHandlers.delete(threadId);
       this.#approvalHandlers.delete(threadId);
+      this.#artifactRegistrationHandlers.delete(threadId);
+      this.#artifactDeliveryHandlers.delete(threadId);
       this.#deleteApprovalItemSummaries(threadId);
       this.#deleteInFlightMcpToolCalls(threadId);
     }
@@ -423,6 +513,8 @@ export class CodexAppServerRuntime implements AgentRuntime {
     this.#activeTurns.clear();
     this.#eventHandlers.clear();
     this.#approvalHandlers.clear();
+    this.#artifactRegistrationHandlers.clear();
+    this.#artifactDeliveryHandlers.clear();
     this.#approvalItemSummaries.clear();
     this.#inFlightMcpToolCalls.clear();
     await this.#client.stop();
@@ -452,6 +544,7 @@ export class CodexAppServerRuntime implements AgentRuntime {
     const params: Record<string, unknown> = {
       cwd,
       developerInstructions: this.#developerInstructions,
+      dynamicTools: FLORAL_DELIVERY_DYNAMIC_TOOLS,
     };
     const model = request.model ?? this.#defaultModel;
     if (model) params.model = model;
@@ -491,6 +584,11 @@ export class CodexAppServerRuntime implements AgentRuntime {
 
     if (request.method === "currentTime/read") {
       this.#respondSafely(request.id, { currentTimeAt: Math.floor(Date.now() / 1_000) });
+      return;
+    }
+
+    if (request.method === "item/tool/call") {
+      await this.#handleArtifactDynamicToolCall(request);
       return;
     }
 
@@ -586,6 +684,113 @@ export class CodexAppServerRuntime implements AgentRuntime {
       code: -32601,
       message: `FLORAL does not support interactive server request: ${request.method}`,
     });
+  }
+
+  async #handleArtifactDynamicToolCall(
+    request: CodexServerRequest,
+  ): Promise<void> {
+    const params = asPlainRecord(request.params);
+    const threadId = readString(params?.threadId);
+    const turnId = readString(params?.turnId);
+    const namespace = readString(params?.namespace);
+    const tool = readString(params?.tool);
+    const activeTurnId = threadId ? this.#activeTurns.get(threadId) : undefined;
+
+    if (
+      !threadId
+      || !turnId
+      || activeTurnId !== turnId
+      || namespace !== "floral_delivery"
+      || !tool
+    ) {
+      this.#respondSafely(
+        request.id,
+        dynamicToolResponse(false, "artifact_delivery=denied\nreason=invalid-context"),
+      );
+      return;
+    }
+
+    const argumentsValue = asPlainRecord(params?.arguments);
+    if (!argumentsValue) {
+      this.#respondSafely(
+        request.id,
+        dynamicToolResponse(false, "artifact_delivery=denied\nreason=invalid-arguments"),
+      );
+      return;
+    }
+
+    if (tool === "register_outbound_file") {
+      const parsed = parseRegisterOutboundFileArguments(argumentsValue);
+      const handler = this.#artifactRegistrationHandlers.get(threadId);
+      if (!parsed || !handler) {
+        this.#respondSafely(
+          request.id,
+          dynamicToolResponse(false, "artifact_registration=denied\nreason=handler-or-arguments"),
+        );
+        return;
+      }
+      const result = await handler(parsed).catch(() => ({
+        status: "denied" as const,
+        reason: "registration-handler-error",
+      }));
+      this.#respondSafely(
+        request.id,
+        result.status === "registered"
+          ? dynamicToolResponse(
+              true,
+              `artifact_registration=registered\nartifactId=${result.artifactId}`,
+            )
+          : dynamicToolResponse(
+              false,
+              `artifact_registration=denied\nreason=${safeDynamicToolToken(result.reason)}`,
+            ),
+      );
+      return;
+    }
+
+    if (tool === "send_artifact") {
+      const parsed = parseSendArtifactArguments(argumentsValue);
+      const handler = this.#artifactDeliveryHandlers.get(threadId);
+      if (!parsed || !handler) {
+        this.#respondSafely(
+          request.id,
+          dynamicToolResponse(false, "artifact_delivery=denied\nreason=handler-or-arguments"),
+        );
+        return;
+      }
+      const result = await handler(parsed).catch(() => ({
+        status: "failed" as const,
+        artifactId: parsed.artifactId,
+        reason: "delivery-handler-error",
+      }));
+      this.#respondSafely(
+        request.id,
+        result.status === "sent"
+          ? dynamicToolResponse(
+              true,
+              [
+                "artifact_delivery=sent",
+                `artifactId=${result.artifactId}`,
+                `kind=${result.kind}`,
+                `bytes=${String(result.byteLength)}`,
+              ].join("\n"),
+            )
+          : dynamicToolResponse(
+              false,
+              [
+                `artifact_delivery=${result.status}`,
+                `artifactId=${result.artifactId}`,
+                `reason=${safeDynamicToolToken(result.reason)}`,
+              ].join("\n"),
+            ),
+      );
+      return;
+    }
+
+    this.#respondSafely(
+      request.id,
+      dynamicToolResponse(false, "artifact_delivery=denied\nreason=unsupported-tool"),
+    );
   }
 
   #resolveMcpToolApprovalContext(
@@ -843,6 +1048,61 @@ function readInFlightMcpToolCall(
   };
 }
 
+function readRegisteredMcpArtifact(
+  item: ItemLifecycleParams["item"],
+): AgentArtifact | undefined {
+  if (
+    item?.type !== "mcpToolCall"
+    || item.server !== "floral_peekaboo"
+    || (item.tool !== "image" && item.tool !== "see")
+    || (item.error !== undefined && item.error !== null)
+  ) {
+    return undefined;
+  }
+
+  const result = asPlainRecord(item.result);
+  const content = Array.isArray(result?.content) ? result.content : [];
+  const texts = content.flatMap((entry) => {
+    const block = asPlainRecord(entry);
+    return block?.type === "text" && typeof block.text === "string"
+      ? [block.text]
+      : [];
+  });
+  const artifactId = readUniqueTaggedLine(texts, "artifactId");
+  const artifactPath = readUniqueTaggedLine(texts, "artifactPath");
+  if (
+    !artifactId
+    || !artifactPath
+    || !/^[A-Za-z0-9][A-Za-z0-9._:-]{0,95}$/u.test(artifactId)
+  ) {
+    return undefined;
+  }
+
+  return {
+    id: artifactId,
+    kind: "image",
+    localPath: artifactPath,
+    source: {
+      type: "mcp",
+      serverId: item.server,
+      toolName: item.tool,
+    },
+  };
+}
+
+function readUniqueTaggedLine(texts: string[], key: string): string | undefined {
+  const prefix = `${key}=`;
+  const matches: string[] = [];
+  for (const text of texts) {
+    for (const line of text.split(/\r?\n/u)) {
+      if (!line.startsWith(prefix)) continue;
+      const value = line.slice(prefix.length).trim();
+      if (value) matches.push(value);
+    }
+  }
+  return matches.length === 1 ? matches[0] : undefined;
+}
+
 function readMcpToolEvent(
   item: ItemLifecycleParams["item"],
 ): { name: string; detail: Record<string, unknown> } | undefined {
@@ -953,6 +1213,76 @@ function isGuiAutomationShellBypass(command: string | undefined): boolean {
   }
   return /\bpeekaboo\b[\s\S]{0,240}\b(click|type|press|scroll|hotkey|drag|paste|move|swipe)\b/u
     .test(normalized);
+}
+
+function parseRegisterOutboundFileArguments(
+  value: Record<string, unknown>,
+): Parameters<AgentArtifactRegistrationHandler>[0] | undefined {
+  const keys = Object.keys(value).sort();
+  if (keys.some((key) => !["caption", "file_name", "local_path"].includes(key))) {
+    return undefined;
+  }
+  const localPath = readString(value.local_path);
+  if (!localPath || localPath.length > 4096 || /[\r\n\0]/u.test(localPath)) {
+    return undefined;
+  }
+  const fileName = readOptionalToolText(value.file_name, 180);
+  const caption = readOptionalToolText(value.caption, 240);
+  if (value.file_name !== undefined && !fileName) return undefined;
+  if (value.caption !== undefined && !caption) return undefined;
+  if (fileName && (fileName.includes("/") || fileName.includes("\\"))) return undefined;
+  return {
+    localPath,
+    ...(fileName ? { fileName } : {}),
+    ...(caption ? { caption } : {}),
+  };
+}
+
+function parseSendArtifactArguments(
+  value: Record<string, unknown>,
+): Parameters<AgentArtifactDeliveryHandler>[0] | undefined {
+  const keys = Object.keys(value).sort();
+  if (keys.some((key) => !["artifact_id", "caption"].includes(key))) {
+    return undefined;
+  }
+  const artifactId = readString(value.artifact_id);
+  if (!artifactId || !/^[A-Za-z0-9][A-Za-z0-9._:-]{0,95}$/u.test(artifactId)) {
+    return undefined;
+  }
+  const caption = readOptionalToolText(value.caption, 240);
+  if (value.caption !== undefined && !caption) return undefined;
+  return {
+    artifactId,
+    ...(caption ? { caption } : {}),
+  };
+}
+
+function readOptionalToolText(value: unknown, maxLength: number): string | undefined {
+  if (value === undefined) return undefined;
+  if (typeof value !== "string") return undefined;
+  const normalized = value
+    .replace(/[\u0000-\u001F\u007F]+/gu, " ")
+    .replace(/\s+/gu, " ")
+    .trim();
+  if (!normalized || Array.from(normalized).length > maxLength) return undefined;
+  return normalized;
+}
+
+function dynamicToolResponse(
+  success: boolean,
+  text: string,
+): { contentItems: Array<{ type: "inputText"; text: string }>; success: boolean } {
+  return {
+    success,
+    contentItems: [{ type: "inputText", text }],
+  };
+}
+
+function safeDynamicToolToken(value: string): string {
+  const normalized = value
+    .replace(/[^A-Za-z0-9._:-]+/gu, "-")
+    .replace(/^-+|-+$/gu, "");
+  return normalized.slice(0, 96) || "unknown";
 }
 
 async function withTimeout<T>(

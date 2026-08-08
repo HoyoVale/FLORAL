@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import {
   supportsConversationActivity,
   supportsInteractiveApproval,
@@ -8,6 +9,9 @@ import {
   type GatewayStore,
 } from "../core/contracts.js";
 import type {
+  AgentArtifact,
+  AgentArtifactDeliveryResult,
+  AgentArtifactRegistrationResult,
   AgentEvent,
   IncomingMessage,
   ResolvedGatewayIdentity,
@@ -49,6 +53,14 @@ export interface GatewayOptions {
   } | undefined;
 }
 
+interface ArtifactCatalogEntry {
+  artifact: AgentArtifact;
+  registeredAtMs: number;
+}
+
+const ARTIFACT_CATALOG_TTL_MS = 30 * 60 * 1_000;
+const ARTIFACT_CATALOG_MAX_ITEMS = 32;
+
 interface ActiveRun {
   threadId?: string;
   stopRequested: boolean;
@@ -63,6 +75,7 @@ interface ActiveRun {
 
 export class GatewayService {
   readonly #activeRuns = new Map<string, ActiveRun>();
+  readonly #artifactCatalogs = new Map<string, Map<string, ArtifactCatalogEntry>>();
   readonly #pairingLimiter = new PairingAttemptLimiter();
   readonly #approvalBroker: QqApprovalBroker | undefined;
   #started = false;
@@ -119,6 +132,7 @@ export class GatewayService {
     this.#approvalBroker?.cancelAll();
     await Promise.allSettled([this.transport.stop(), this.agent.stop()]);
     this.#activeRuns.clear();
+    this.#artifactCatalogs.clear();
     await this.store.close();
   }
 
@@ -323,6 +337,7 @@ export class GatewayService {
           return;
         }
         await this.store.clearActiveThread(resolved.conversationId);
+        this.#artifactCatalogs.delete(resolved.conversationId);
         await this.store.appendAudit({
           userId: resolved.userId,
           conversationId: resolved.conversationId,
@@ -448,6 +463,22 @@ export class GatewayService {
           text: message.text,
           cwd: this.options.cwd,
           ...(this.options.model ? { model: this.options.model } : {}),
+          ...(this.options.artifactEgress ? {
+            artifactRegistrationHandler: async (request) =>
+              await this.#queueArtifactOperation(active, () =>
+                this.#registerOutboundFile(resolved, request)
+              ),
+            artifactDeliveryHandler: async (request) =>
+              await this.#queueArtifactOperation(active, () =>
+                this.#deliverRegisteredArtifact(
+                  message.identity.conversationId,
+                  resolved,
+                  active,
+                  request.artifactId,
+                  request.caption,
+                )
+              ),
+          } : {}),
           ...(this.#approvalBroker ? {
             approvalHandler: async (request) => {
               active.waitingForApproval = true;
@@ -560,15 +591,30 @@ export class GatewayService {
       return;
     }
 
+    if (event.type === "artifact.registered") {
+      void this.#queueArtifactOperation(active, async () => {
+        await this.#registerArtifact(resolved, event.artifact);
+      }).catch((error) => {
+        process.stderr.write(
+          `artifact.registration_failed=${safeLogToken(
+            error instanceof Error ? error.name : "Error",
+          )}\n`,
+        );
+      });
+      return;
+    }
+
     if (event.type === "artifact.available") {
       active.artifactEgressTail = active.artifactEgressTail
         .catch(() => undefined)
-        .then(() => this.#deliverArtifact(
-          deliveryConversationId,
-          resolved,
-          active,
-          event.artifact,
-        ));
+        .then(async () => {
+          await this.#deliverArtifact(
+            deliveryConversationId,
+            resolved,
+            active,
+            event.artifact,
+          );
+        });
       return;
     }
 
@@ -667,12 +713,164 @@ export class GatewayService {
     }
   }
 
+  async #queueArtifactOperation<T>(
+    active: ActiveRun,
+    operation: () => Promise<T>,
+  ): Promise<T> {
+    const current = active.artifactEgressTail
+      .catch(() => undefined)
+      .then(operation);
+    active.artifactEgressTail = current.then(
+      () => undefined,
+      () => undefined,
+    );
+    return await current;
+  }
+
+  async #registerOutboundFile(
+    resolved: ResolvedGatewayIdentity,
+    request: {
+      localPath: string;
+      fileName?: string | undefined;
+      caption?: string | undefined;
+    },
+  ): Promise<AgentArtifactRegistrationResult> {
+    return await this.#registerArtifact(resolved, {
+      id: `artifact-file-${randomUUID()}`,
+      kind: "file",
+      localPath: request.localPath,
+      source: {
+        type: "floral",
+        capability: "files.read",
+      },
+      ...(request.fileName ? { fileName: request.fileName } : {}),
+      ...(request.caption ? { caption: request.caption } : {}),
+    });
+  }
+
+  async #registerArtifact(
+    resolved: ResolvedGatewayIdentity,
+    artifact: AgentArtifact,
+  ): Promise<AgentArtifactRegistrationResult> {
+    const egress = this.options.artifactEgress;
+    if (!egress) {
+      return { status: "denied", reason: "policy-disabled" };
+    }
+
+    const candidate = await egress.policy.validateCandidate(artifact);
+    if (candidate.status === "deny") {
+      await this.store.appendAudit({
+        userId: resolved.userId,
+        conversationId: resolved.conversationId,
+        eventType: "artifact.registration_denied",
+        payload: {
+          artifactId: artifact.id,
+          kind: artifact.kind,
+          reason: candidate.reason,
+        },
+      }).catch(() => undefined);
+      return { status: "denied", reason: candidate.reason };
+    }
+
+    const catalog = this.#artifactCatalog(resolved.conversationId);
+    this.#pruneArtifactCatalog(catalog);
+    const existing = catalog.get(candidate.artifact.id);
+    if (existing) {
+      const same = existing.artifact.localPath === candidate.artifact.localPath
+        && existing.artifact.kind === candidate.artifact.kind;
+      return same
+        ? { status: "registered", artifactId: candidate.artifact.id }
+        : { status: "denied", reason: "duplicate-artifact-id" };
+    }
+
+    while (catalog.size >= ARTIFACT_CATALOG_MAX_ITEMS) {
+      const oldest = catalog.keys().next().value as string | undefined;
+      if (!oldest) break;
+      catalog.delete(oldest);
+    }
+    catalog.set(candidate.artifact.id, {
+      artifact: candidate.artifact,
+      registeredAtMs: Date.now(),
+    });
+    await this.store.appendAudit({
+      userId: resolved.userId,
+      conversationId: resolved.conversationId,
+      eventType: "artifact.registered",
+      payload: {
+        artifactId: candidate.artifact.id,
+        kind: candidate.artifact.kind,
+        sourceCapability: candidate.sourceCapability,
+        bytes: candidate.byteLength,
+      },
+    }).catch(() => undefined);
+    process.stderr.write(
+      `artifact.registered=${safeLogToken(candidate.artifact.id)} kind=${safeLogToken(candidate.artifact.kind)}\n`,
+    );
+    return { status: "registered", artifactId: candidate.artifact.id };
+  }
+
+  async #deliverRegisteredArtifact(
+    deliveryConversationId: string,
+    resolved: ResolvedGatewayIdentity,
+    active: ActiveRun,
+    artifactId: string,
+    caption?: string,
+  ): Promise<AgentArtifactDeliveryResult> {
+    const catalog = this.#artifactCatalog(resolved.conversationId);
+    this.#pruneArtifactCatalog(catalog);
+    const entry = catalog.get(artifactId);
+    if (!entry) {
+      await this.store.appendAudit({
+        userId: resolved.userId,
+        conversationId: resolved.conversationId,
+        eventType: "artifact.delivery_denied",
+        payload: { artifactId, reason: "artifact-not-found" },
+      }).catch(() => undefined);
+      return {
+        status: "denied",
+        artifactId,
+        reason: "artifact-not-found",
+      };
+    }
+
+    const artifact = caption
+      ? { ...entry.artifact, caption }
+      : entry.artifact;
+    return await this.#deliverArtifact(
+      deliveryConversationId,
+      resolved,
+      active,
+      artifact,
+    );
+  }
+
+  #artifactCatalog(
+    conversationId: string,
+  ): Map<string, ArtifactCatalogEntry> {
+    const existing = this.#artifactCatalogs.get(conversationId);
+    if (existing) return existing;
+    const created = new Map<string, ArtifactCatalogEntry>();
+    this.#artifactCatalogs.set(conversationId, created);
+    return created;
+  }
+
+  #pruneArtifactCatalog(
+    catalog: Map<string, ArtifactCatalogEntry>,
+    now = Date.now(),
+  ): void {
+    for (const [artifactId, entry] of catalog) {
+      if (now - entry.registeredAtMs > ARTIFACT_CATALOG_TTL_MS) {
+        catalog.delete(artifactId);
+      }
+    }
+  }
+
   async #deliverArtifact(
     deliveryConversationId: string,
     resolved: ResolvedGatewayIdentity,
     active: ActiveRun,
-    artifact: Extract<AgentEvent, { type: "artifact.available" }>["artifact"],
-  ): Promise<void> {
+    artifact: AgentArtifact,
+  ): Promise<AgentArtifactDeliveryResult> {
     const egress = this.options.artifactEgress;
     const budget = active.artifactBudget;
     if (!egress || !budget) {
@@ -682,7 +880,11 @@ export class GatewayService {
         "denied",
         "policy-disabled",
       );
-      return;
+      return {
+        status: "denied",
+        artifactId: artifact.id,
+        reason: "policy-disabled",
+      };
     }
     const mediaTransport = supportsMediaTransport(this.transport)
       ? this.transport
@@ -694,7 +896,11 @@ export class GatewayService {
         "denied",
         "transport-media-unsupported",
       );
-      return;
+      return {
+        status: "denied",
+        artifactId: artifact.id,
+        reason: "transport-media-unsupported",
+      };
     }
 
     const decision = await egress.policy.authorizeAndReserve({
@@ -709,7 +915,11 @@ export class GatewayService {
         "denied",
         decision.reason,
       );
-      return;
+      return {
+        status: "denied",
+        artifactId: artifact.id,
+        reason: decision.reason,
+      };
     }
 
     try {
@@ -728,6 +938,12 @@ export class GatewayService {
           bytes: decision.byteLength,
         },
       });
+      return {
+        status: "sent",
+        artifactId: artifact.id,
+        kind: artifact.kind,
+        byteLength: decision.byteLength,
+      };
     } catch (error) {
       await this.store.appendAudit({
         userId: resolved.userId,
@@ -744,6 +960,11 @@ export class GatewayService {
           error instanceof Error ? error.name : "Error",
         )}\n`,
       );
+      return {
+        status: "failed",
+        artifactId: artifact.id,
+        reason: "transport-delivery-failed",
+      };
     }
   }
 

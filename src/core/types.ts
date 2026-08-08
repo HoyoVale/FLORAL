@@ -89,11 +89,49 @@ export interface AgentArtifact {
   caption?: string | undefined;
 }
 
+export interface AgentArtifactRegistrationRequest {
+  localPath: string;
+  fileName?: string | undefined;
+  caption?: string | undefined;
+}
+
+export type AgentArtifactRegistrationResult =
+  | { status: "registered"; artifactId: string }
+  | { status: "denied"; reason: string };
+
+export type AgentArtifactRegistrationHandler = (
+  request: AgentArtifactRegistrationRequest,
+) => Promise<AgentArtifactRegistrationResult>;
+
+export interface AgentArtifactDeliveryRequest {
+  artifactId: string;
+  caption?: string | undefined;
+}
+
+export type AgentArtifactDeliveryResult =
+  | {
+      status: "sent";
+      artifactId: string;
+      kind: OutgoingMediaKind;
+      byteLength: number;
+    }
+  | {
+      status: "denied" | "failed";
+      artifactId: string;
+      reason: string;
+    };
+
+export type AgentArtifactDeliveryHandler = (
+  request: AgentArtifactDeliveryRequest,
+) => Promise<AgentArtifactDeliveryResult>;
+
 export type AgentEvent =
   | { type: "run.started"; threadId: string }
   | { type: "assistant.delta"; text: string }
   | { type: "tool.started"; name: string; detail?: unknown }
   | { type: "tool.completed"; name: string; detail?: unknown }
+  | { type: "artifact.registered"; artifact: AgentArtifact }
+  // Legacy event: existing producers may still request immediate egress.
   | { type: "artifact.available"; artifact: AgentArtifact }
   | {
       type: "approval.requested";
@@ -111,6 +149,8 @@ export interface AgentRunRequest {
   cwd: string;
   model?: string;
   approvalHandler?: AgentApprovalHandler;
+  artifactRegistrationHandler?: AgentArtifactRegistrationHandler;
+  artifactDeliveryHandler?: AgentArtifactDeliveryHandler;
 }
 
 export interface AgentRunResult {

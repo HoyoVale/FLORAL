@@ -84,9 +84,10 @@ const artifactEgressPolicy = new ArtifactEgressPolicy({
       `${authority.effective.mcp.vision.id}/${toolName}`
     ),
   ],
-  // No Agent may self-label arbitrary files as a trusted FLORAL artifact yet.
-  // Phase 6 visual adapters will use MCP provenance.
-  allowedFloralCapabilities: [],
+  // Host-side generic delivery may register only files staged under the
+  // outbound DLP root. ArtifactEgressPolicy still validates the canonical path,
+  // provenance, role, size budget, and message.send permission before egress.
+  allowedFloralCapabilities: ["files.read"],
   maxArtifactsPerRun: 4,
   maxBytesPerRun: 25_000_000,
 });

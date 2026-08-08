@@ -135,6 +135,51 @@ describe("ArtifactEgressPolicy", () => {
     });
   });
 
+  it("preflights a FLORAL files.read artifact only when it is staged under the outbound root", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "floral-artifact-stage-"));
+    temporary.push(dir);
+    const root = join(dir, "outbound");
+    const inside = join(root, "report.txt");
+    const outside = join(dir, "outside.txt");
+    await writeFile(inside, "report");
+    await writeFile(outside, "outside");
+
+    const policy = new ArtifactEgressPolicy({
+      enabled: true,
+      allowedRoots: [root],
+      allowedMcpProducers: [],
+      allowedFloralCapabilities: ["files.read"],
+      maxArtifactsPerRun: 2,
+      maxBytesPerRun: 32,
+    });
+    await policy.initialize();
+
+    await expect(policy.validateCandidate({
+      id: "artifact-file-inside",
+      kind: "file",
+      localPath: inside,
+      source: { type: "floral", capability: "files.read" },
+    })).resolves.toMatchObject({
+      status: "allow",
+      sourceCapability: "files.read",
+      artifact: {
+        id: "artifact-file-inside",
+        kind: "file",
+        source: { type: "floral", capability: "files.read" },
+      },
+    });
+
+    await expect(policy.validateCandidate({
+      id: "artifact-file-outside",
+      kind: "file",
+      localPath: outside,
+      source: { type: "floral", capability: "files.read" },
+    })).resolves.toEqual({
+      status: "deny",
+      reason: "path-outside-allowed-root",
+    });
+  });
+
   it("enforces duplicate, count, and byte budgets per run", async () => {
     const { root, policy } = await fixture();
     const first = join(root, "first.png");
