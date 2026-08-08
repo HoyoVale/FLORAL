@@ -81,11 +81,11 @@ describe("MCP runtime registry", () => {
     expect(manifest).not.toContain("qq-sensitive");
   });
 
-  it("fails closed when a planned MCP adapter is enabled", async () => {
-    const { authority } = await fixture();
-    const config = structuredClone(authority.effective);
-    config.mcp.vision.enabled = true;
-    expect(() => buildMcpRuntimeRegistry(config)).toThrow(/Planned MCP server cannot be enabled/u);
+  it("fails closed when an enabled MCP server is marked planned", async () => {
+    const { registry } = await fixture();
+    const tampered = structuredClone(registry);
+    tampered.servers[1]!.integrationStatus = "planned";
+    expect(() => validateMcpRuntimeRegistry(tampered)).toThrow(/Planned MCP server cannot be enabled/u);
   });
 
   it("detects registry fingerprint tampering", async () => {

@@ -144,12 +144,26 @@ export async function prepareCodexConfigAdoption(
   const codexConfigFingerprint = fingerprintCodexConfigSemantics(unifiedConfig);
 
   if (mode === "unified") {
-    const shadowReport = await readCodexShadowReport(repositoryRoot);
-    if (!shadowReport) {
-      throw new Error("Codex unified cutover requires a compatible shadow report");
-    }
-    if (assessCodexShadowReport(shadowReport, unifiedConfig) !== "compatible") {
-      throw new Error("Codex unified cutover is blocked by shadow drift");
+    let shadowReport = await readCodexShadowReport(repositoryRoot);
+    let shadowReportPath = join(
+      repositoryRoot,
+      "data/config/adoption/codex-shadow.json",
+    );
+    if (
+      !shadowReport
+      || assessCodexShadowReport(shadowReport, unifiedConfig) !== "compatible"
+    ) {
+      const refreshedShadowReport = compareCodexShadowConfigs({
+        legacyConfig: options.legacyConfig,
+        unifiedConfig,
+        effectiveFingerprint: authority.effectiveFingerprint,
+        now: options.now,
+      });
+      if (refreshedShadowReport.status !== "compatible") {
+        throw new Error("Codex unified cutover is blocked by shadow drift");
+      }
+      shadowReportPath = await writeCodexShadowReport(repositoryRoot, refreshedShadowReport);
+      shadowReport = refreshedShadowReport;
     }
     return {
       mode,
@@ -158,7 +172,7 @@ export async function prepareCodexConfigAdoption(
       effectiveFingerprint: authority.effectiveFingerprint,
       codexConfigFingerprint,
       shadowReport,
-      shadowReportPath: join(repositoryRoot, "data/config/adoption/codex-shadow.json"),
+      shadowReportPath,
       mcpRegistry,
     };
   }

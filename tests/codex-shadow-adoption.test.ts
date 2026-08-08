@@ -178,20 +178,43 @@ describe("Codex unified shadow adoption", () => {
     }
   });
 
-  it("blocks unified output when the compatible shadow evidence is missing", async () => {
+  it("refreshes missing shadow evidence before unified cutover when current configs remain compatible", async () => {
     const root = await mkdtemp(join(tmpdir(), "floral-codex-unified-missing-"));
     try {
       const resolved = await authority();
+      const legacy = legacyConfig();
+      const result = await prepareCodexConfigAdoption({
+        repositoryRoot: root,
+        environment: {},
+        legacyConfig: legacy,
+        bridgeBaseUrl: "http://127.0.0.1:9999/v1",
+        authority: resolved,
+      });
+      expect(result.mode).toBe("unified");
+      expect(result.productionConfig).toContain("approval_policy");
+      expect(result.fallbackConfig).toBe(legacy);
+      expect(result.shadowReport?.status).toBe("compatible");
+      const refreshed = await readCodexShadowReport(root);
+      expect(refreshed?.reportFingerprint).toBe(result.shadowReport?.reportFingerprint);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it("blocks automatic unified shadow refresh when the current configs drift", async () => {
+    const root = await mkdtemp(join(tmpdir(), "floral-codex-unified-drift-"));
+    try {
+      const resolved = await authority({ DEEPSEEK_REASONING_EFFORT: "max" });
       await expect(prepareCodexConfigAdoption({
         repositoryRoot: root,
         environment: {},
         legacyConfig: legacyConfig(),
         bridgeBaseUrl: "http://127.0.0.1:9999/v1",
         authority: resolved,
-      })).rejects.toThrow(/compatible shadow report/u);
+      })).rejects.toThrow(/shadow drift/u);
+      await expect(readCodexShadowReport(root)).resolves.toBeUndefined();
     } finally {
       await rm(root, { recursive: true, force: true });
     }
   });
-
 });

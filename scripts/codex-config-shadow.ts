@@ -18,7 +18,7 @@ if (!new Set(["show", "json", "check"]).has(mode)) {
 const report = await readCodexShadowReport(repositoryRoot);
 if (!report) {
   console.log("config.codex_shadow.status=missing");
-  console.log("config.codex_shadow.instructions=restart-the-FLORAL-service-in-unified-shadow-mode");
+  console.log("config.codex_shadow.instructions=restart-the-FLORAL-service-to-refresh-compatible-shadow");
   console.log("config.codex_shadow=missing");
   if (mode === "check") process.exitCode = 2;
 } else if (mode === "json") {
