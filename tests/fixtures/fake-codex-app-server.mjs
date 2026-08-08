@@ -13,6 +13,14 @@ function send(message) {
   process.stdout.write(`${JSON.stringify(message)}\n`);
 }
 
+function hasFloralRoutingPolicy(params) {
+  const instructions = params?.developerInstructions;
+  return typeof instructions === "string"
+    && instructions.includes("floral_peekaboo/see")
+    && instructions.includes("floral_peekaboo/click")
+    && instructions.includes("local filesystem path");
+}
+
 function sendSuccess(threadId = activeThreadId, turnId = activeTurnId, finalText = "authoritative final") {
   send({
     method: "item/agentMessage/delta",
@@ -50,6 +58,10 @@ lines.on("line", (line) => {
   }
 
   if (message.method === "thread/start") {
+    if (scenario === "developer-instructions" && !hasFloralRoutingPolicy(message.params)) {
+      send({ id: message.id, error: { code: -32602, message: "missing FLORAL developer instructions" } });
+      return;
+    }
     if (scenario === "on-request-file-approval") {
       const capabilityFields = ["approvalPolicy", "approvalsReviewer", "sandbox"];
       if (capabilityFields.some((key) => key in (message.params ?? {}))) {
@@ -67,6 +79,10 @@ lines.on("line", (line) => {
   }
 
   if (message.method === "thread/resume") {
+    if (scenario === "resume" && !hasFloralRoutingPolicy(message.params)) {
+      send({ id: message.id, error: { code: -32602, message: "resume missing FLORAL developer instructions" } });
+      return;
+    }
     if (scenario === "stale-resume") {
       send({
         id: message.id,
@@ -197,6 +213,23 @@ lines.on("line", (line) => {
             command: "echo unsafe --token supersecret",
             cwd: process.cwd(),
             reason: "fixture approval",
+          },
+        });
+        return;
+      }
+
+      if (scenario === "gui-shell-bypass") {
+        waitingForApproval = true;
+        send({
+          id: "approval_1",
+          method: "item/commandExecution/requestApproval",
+          params: {
+            threadId: activeThreadId,
+            turnId: activeTurnId,
+            itemId: "command_gui_1",
+            command: "/opt/homebrew/bin/peekaboo click --on button_42",
+            cwd: process.cwd(),
+            reason: "attempt GUI control through shell",
           },
         });
         return;
@@ -545,6 +578,22 @@ lines.on("line", (line) => {
     }
 
     const decision = message.result?.decision;
+    if (scenario === "gui-shell-bypass") {
+      if (decision === "decline") {
+        sendSuccess(activeThreadId, activeTurnId, "gui shell bypass declined safely");
+      } else {
+        const error = { message: `unexpected GUI shell bypass decision: ${String(decision)}`, codexErrorInfo: "Other" };
+        send({
+          method: "turn/completed",
+          params: {
+            threadId: activeThreadId,
+            turn: { id: activeTurnId, status: "failed", error, items: [] },
+          },
+        });
+      }
+      return;
+    }
+
     if (decision === "decline") {
       sendSuccess(activeThreadId, activeTurnId, "approval declined safely");
     } else if (decision === "accept") {

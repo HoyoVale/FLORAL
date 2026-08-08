@@ -43,6 +43,17 @@ describe("CodexAppServerRuntime", () => {
     }
   });
 
+  it("injects the FLORAL routing policy as developer instructions", async () => {
+    const runtime = createRuntime("developer-instructions");
+    try {
+      await runtime.start();
+      const result = await runtime.run({ text: "hello", cwd: process.cwd() });
+      expect(result.finalText).toBe("authoritative final");
+    } finally {
+      await runtime.stop();
+    }
+  });
+
   it("resumes an existing thread before starting a turn", async () => {
     const runtime = createRuntime("resume");
     try {
@@ -147,6 +158,31 @@ describe("CodexAppServerRuntime", () => {
   });
 
 
+
+  it("declines shell GUI automation bypasses without delegating them for approval", async () => {
+    const runtime = createRuntime("gui-shell-bypass");
+    let approvalCalls = 0;
+    const events: AgentEvent[] = [];
+    try {
+      await runtime.start();
+      const result = await runtime.run(
+        {
+          text: "click through shell",
+          cwd: process.cwd(),
+          approvalHandler: async () => {
+            approvalCalls += 1;
+            return "approve";
+          },
+        },
+        (event) => events.push(event),
+      );
+      expect(result.finalText).toBe("gui shell bypass declined safely");
+      expect(approvalCalls).toBe(0);
+      expect(events.some((event) => event.type === "approval.requested")).toBe(false);
+    } finally {
+      await runtime.stop();
+    }
+  });
 
   it("keeps thread bootstrap minimal and applies approval/sandbox at turn scope", async () => {
     const runtime = createRuntime("on-request-file-approval", 5_000, {

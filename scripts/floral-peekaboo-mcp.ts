@@ -163,7 +163,7 @@ const clickIntentSchema = z
 
 server.tool(
   "click",
-  "Perform exactly one approval-gated background click on an opaque element ID from a fresh floral_peekaboo/see snapshot. Coordinates, text queries, foreground activation, right/double click, and explicit PIDs are unavailable. After success the referenced snapshot is invalidated; call floral_peekaboo/see again before any further GUI action.",
+  "Perform exactly one approval-gated background click on an opaque element ID from a fresh floral_peekaboo/see snapshot. This is FLORAL's only supported GUI mutation tool. Never substitute shell/command execution, direct Peekaboo CLI, AppleScript/osascript, cliclick, visual coordinates, text queries, foreground activation, right/double click, or explicit PIDs. After success the referenced snapshot is invalidated; call floral_peekaboo/see again before any further GUI action.",
   {
     snapshot: snapshotSchema,
     on: elementIdSchema,
@@ -200,7 +200,7 @@ server.tool(
 
 server.tool(
   "image",
-  "Capture a read-only macOS screenshot through FLORAL's Peekaboo gateway. The model cannot choose the output path, inline/base64 mode, foreground focus, or Peekaboo AI analysis. Returns artifactPath inside FLORAL's trusted screenshot root. If the task requires pixel-level visual understanding or OCR, pass artifactPath to floral_vision/vision_analyze_screen.",
+  "Capture a read-only macOS screenshot through FLORAL's Peekaboo gateway. The model cannot choose the output path, inline/base64 mode, foreground focus, or Peekaboo AI analysis. Returns artifactPath inside FLORAL's trusted screenshot root. If the task requires pixel-level visual understanding or OCR, pass artifactPath to floral_vision/vision_analyze_screen. A screenshot or vision result is not an actionable GUI target: use floral_peekaboo/see to obtain a fresh Snapshot ID and opaque element ID before any GUI mutation.",
   {
     app_target: appTargetSchema,
   },
@@ -229,7 +229,7 @@ server.tool(
 
 server.tool(
   "see",
-  "Inspect read-only macOS accessibility/UI state through FLORAL's Peekaboo gateway. The screenshot path, annotation mode, traversal budgets, and snapshot creation are controlled by FLORAL. Returns an artifactPath plus Peekaboo's accessibility summary. Use the summary directly when sufficient; otherwise pass artifactPath to floral_vision/vision_analyze_screen.",
+  "Inspect read-only macOS accessibility/UI state through FLORAL's Peekaboo gateway. For any task that may change GUI state, this is the mandatory targeting step immediately before mutation: copy the fresh Snapshot ID and opaque element ID from this accessibility output and pass them to floral_peekaboo/click. Do not use screenshot coordinates, OCR, arrow direction, vision guesses, or shell commands as mutation authority. The screenshot path, annotation mode, traversal budgets, and snapshot creation are controlled by FLORAL. Use floral_vision only when pixel semantics are needed for understanding or post-action verification.",
   {
     app_target: appTargetSchema,
   },
@@ -245,7 +245,7 @@ server.tool(
             result.upstreamText ? "peekaboo_summary_begin" : "",
             result.upstreamText,
             result.upstreamText ? "peekaboo_summary_end" : "",
-            "next=If accessibility text is insufficient, call floral_vision/vision_analyze_screen with artifactPath.",
+            "next=For GUI mutation, use the fresh Snapshot ID and opaque element ID above with floral_peekaboo/click. If pixel semantics are needed only for understanding or verification, call floral_vision/vision_analyze_screen with artifactPath.",
           ].filter(Boolean).join("\n"),
         }],
       };

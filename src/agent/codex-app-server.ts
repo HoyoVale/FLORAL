@@ -79,6 +79,7 @@ export interface CodexAppServerOptions {
   approvalPolicy?: "never" | "on-request" | "untrusted" | undefined;
   sandboxMode?: "read-only" | "workspace-write" | undefined;
   approvalsReviewer?: "user" | undefined;
+  developerInstructions?: string | undefined;
   processCwd?: string | undefined;
   processEnv?: NodeJS.ProcessEnv | undefined;
 }
@@ -97,6 +98,17 @@ interface InFlightMcpToolCall {
   arguments: Record<string, unknown>;
 }
 
+export const FLORAL_AGENT_DEVELOPER_INSTRUCTIONS = [
+  "FLORAL capability routing policy:",
+  "- For macOS screen observation, use floral_peekaboo/image or floral_peekaboo/see. Use floral_vision only for pixel semantics or OCR.",
+  "- For any GUI action, floral_peekaboo/see is mandatory immediately before the action. Select the target only from the fresh Snapshot ID and opaque element ID returned by see. Do not infer an actionable target from visual coordinates, arrow direction, OCR, or a screenshot.",
+  "- The only currently supported GUI mutation is floral_peekaboo/click. Never use shell/command execution, direct Peekaboo CLI, osascript/AppleScript/System Events, cliclick, or similar automation as a substitute.",
+  "- If the requested UI is already in the desired state, do not mutate it and do not request approval.",
+  "- After every successful click, call floral_peekaboo/see again before evaluating state or doing another GUI action.",
+  "- If see cannot provide a fresh target or the required GUI mutation tool does not exist, state that the action is unsupported instead of falling back to shell or coordinates.",
+  "- A local filesystem path or Markdown link/image is not a delivered chat attachment. Never claim an image or file was sent unless an explicit FLORAL delivery capability reports success.",
+].join("\n");
+
 export class CodexAppServerRuntime implements AgentRuntime {
   readonly name = "codex-app-server";
   readonly #client: CodexRpcClient;
@@ -105,6 +117,7 @@ export class CodexAppServerRuntime implements AgentRuntime {
   readonly #approvalPolicy: "never" | "on-request" | "untrusted";
   readonly #sandboxMode: "read-only" | "workspace-write";
   readonly #approvalsReviewer: "user";
+  readonly #developerInstructions: string;
   readonly #loadedThreads = new Set<string>();
   readonly #activeTurns = new Map<string, string>();
   readonly #eventHandlers = new Map<string, (event: AgentEvent) => void>();
@@ -126,6 +139,8 @@ export class CodexAppServerRuntime implements AgentRuntime {
     this.#approvalPolicy = options.approvalPolicy ?? "never";
     this.#sandboxMode = options.sandboxMode ?? "read-only";
     this.#approvalsReviewer = options.approvalsReviewer ?? "user";
+    this.#developerInstructions = options.developerInstructions?.trim()
+      || FLORAL_AGENT_DEVELOPER_INSTRUCTIONS;
     this.#client.on("serverRequest", (request: CodexServerRequest) => {
       void this.#handleServerRequest(request).catch(() => {
         this.#respondSafely(request.id, undefined, {
@@ -434,7 +449,10 @@ export class CodexAppServerRuntime implements AgentRuntime {
     // ceiling is applied immediately before every turn via turn/start below.
     // This avoids app-server's thread/start project-trust/config mutation path
     // while preserving one-turn-at-a-time FLORAL authorization semantics.
-    const params: Record<string, unknown> = { cwd };
+    const params: Record<string, unknown> = {
+      cwd,
+      developerInstructions: this.#developerInstructions,
+    };
     const model = request.model ?? this.#defaultModel;
     if (model) params.model = model;
 
@@ -451,7 +469,10 @@ export class CodexAppServerRuntime implements AgentRuntime {
 
     // Resuming only restores conversation history. Current approval/sandbox
     // policy is always re-applied by the following turn/start request.
-    const response = await this.#client.request<ThreadResponse>("thread/resume", { threadId });
+    const response = await this.#client.request<ThreadResponse>("thread/resume", {
+      threadId,
+      developerInstructions: this.#developerInstructions,
+    });
     const resumedId = response.thread?.id;
     if (!resumedId) {
       throw codexProtocolError("thread/resume returned no thread id");
@@ -477,6 +498,15 @@ export class CodexAppServerRuntime implements AgentRuntime {
       request.method === "item/commandExecution/requestApproval"
       || request.method === "item/fileChange/requestApproval"
     ) {
+      if (
+        request.method === "item/commandExecution/requestApproval"
+        && isGuiAutomationShellBypass(readString(params?.command))
+      ) {
+        process.stderr.write("codex.gui_shell_bypass=declined\n");
+        this.#respondSafely(request.id, { decision: "decline" });
+        return;
+      }
+
       const itemId = readString(params?.itemId);
       const itemSummary = threadId && itemId
         ? this.#approvalItemSummaries.get(approvalItemKey(threadId, itemId))
@@ -913,6 +943,16 @@ function asPlainRecord(value: unknown): Record<string, unknown> | undefined {
 
 function readString(value: unknown): string | undefined {
   return typeof value === "string" && value.length > 0 ? value : undefined;
+}
+
+function isGuiAutomationShellBypass(command: string | undefined): boolean {
+  if (!command) return false;
+  const normalized = command.toLowerCase();
+  if (/\bosascript\b/u.test(normalized) || /\bcliclick\b/u.test(normalized)) {
+    return true;
+  }
+  return /\bpeekaboo\b[\s\S]{0,240}\b(click|type|press|scroll|hotkey|drag|paste|move|swipe)\b/u
+    .test(normalized);
 }
 
 async function withTimeout<T>(
