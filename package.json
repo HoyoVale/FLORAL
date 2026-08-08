@@ -109,7 +109,8 @@
     "vision:mcp": "tsx scripts/floral-vision-mcp.ts",
     "vision:probe": "tsx scripts/mimo-vision-probe.ts",
     "peekaboo:gateway": "tsx scripts/floral-peekaboo-mcp.ts",
-    "visual-chain:probe": "tsx scripts/visual-chain-probe.ts"
+    "visual-chain:probe": "tsx scripts/visual-chain-probe.ts",
+    "codex:native-memory:bridge-telemetry": "tsx scripts/codex-native-memory-bridge-telemetry.ts"
   },
   "dependencies": {
     "@larksuiteoapi/node-sdk": "1.36.0",

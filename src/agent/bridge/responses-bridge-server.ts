@@ -1,5 +1,9 @@
 import { timingSafeEqual } from "node:crypto";
 import {
+  buildResponsesBridgeRequestTelemetry,
+  type ResponsesBridgeTelemetryEvent,
+} from "./responses-telemetry.js";
+import {
   createServer,
   type IncomingMessage,
   type Server,
@@ -46,6 +50,9 @@ export interface ResponsesBridgeServerOptions {
     onRequest: (capture: CapturedCodexResponsesRequest) => void;
     onError?: ((error: Error) => void) | undefined;
   } | undefined;
+  telemetry?: {
+    onEvent: (event: ResponsesBridgeTelemetryEvent) => void;
+  } | undefined;
   deepSeek: {
     apiKey: string;
     baseUrl: string;
@@ -84,6 +91,7 @@ export class ResponsesBridgeServer {
   #server: Server | undefined;
   #stopping = false;
   #retryCount = 0;
+  #requestSequence = 0;
 
   constructor(options: ResponsesBridgeServerOptions) {
     assertLoopbackHost(options.host);
@@ -310,6 +318,14 @@ export class ResponsesBridgeServer {
         this.#options.deepSeek.model,
         { reasoningByCallId: this.#reasoningByCallId },
       );
+      const requestId = ++this.#requestSequence;
+      const requestStartedAt = Date.now();
+      this.#options.telemetry?.onEvent(buildResponsesBridgeRequestTelemetry({
+        requestId,
+        atMs: requestStartedAt,
+        request: responsesRequest,
+        translated,
+      }));
       this.#reportApplyPatchSurface(responsesRequest);
       const forcedToolName = this.#selectForcedTool(
         responsesRequest,
@@ -350,6 +366,14 @@ export class ResponsesBridgeServer {
         first = await iterator.next();
       } catch (error) {
         const providerError = normalizeProviderError(error);
+        this.#options.telemetry?.onEvent({
+          schemaVersion: 1,
+          event: "failure",
+          requestId,
+          at: new Date().toISOString(),
+          elapsedMs: Date.now() - requestStartedAt,
+          errorKind: providerError.kind,
+        });
         if (providerError.kind === "cancelled" || requestController.signal.aborted) return;
         writeProviderJsonError(response, providerError);
         return;
@@ -361,11 +385,25 @@ export class ResponsesBridgeServer {
       }
 
       startSseResponse(response);
+      const completedToolNames = new Set<string>();
+      let providerModel: string | undefined;
+      let finishReason: string | undefined;
+      let sawText = false;
+      let sawReasoning = false;
+      let totalTokens: number | undefined;
+      const observeChunk = (chunk: DeepSeekStreamChunk) => {
+        if (chunk.model) providerModel = chunk.model;
+        if (chunk.finishReason) finishReason = chunk.finishReason;
+        if (chunk.contentDelta) sawText = true;
+        if (chunk.reasoningDelta) sawReasoning = true;
+        if (chunk.usage?.totalTokens !== undefined) totalTokens = chunk.usage.totalTokens;
+      };
       const writer = new ResponsesSseWriter(
         response,
         this.#options.deepSeek.model,
         translated.toolMap,
         (call) => {
+          completedToolNames.add(call.name);
           if (call.reasoningContent) {
             this.#rememberReasoning(call.callId, call.reasoningContent);
           }
@@ -374,17 +412,42 @@ export class ResponsesBridgeServer {
       writer.start();
 
       try {
-        if (!first.done) writer.consume(first.value);
+        if (!first.done) {
+          observeChunk(first.value);
+          writer.consume(first.value);
+        }
         while (!first.done) {
           const next = await iterator.next();
           if (next.done) break;
+          observeChunk(next.value);
           writer.consume(next.value);
         }
         if (!requestController.signal.aborted && !response.destroyed) {
           writer.complete();
+          this.#options.telemetry?.onEvent({
+            schemaVersion: 1,
+            event: "complete",
+            requestId,
+            at: new Date().toISOString(),
+            elapsedMs: Date.now() - requestStartedAt,
+            ...(providerModel ? { providerModel } : {}),
+            ...(finishReason ? { finishReason } : {}),
+            sawText,
+            sawReasoning,
+            toolCallNames: [...completedToolNames].sort(),
+            ...(totalTokens !== undefined ? { totalTokens } : {}),
+          });
         }
       } catch (error) {
         const providerError = normalizeProviderError(error);
+        this.#options.telemetry?.onEvent({
+          schemaVersion: 1,
+          event: "failure",
+          requestId,
+          at: new Date().toISOString(),
+          elapsedMs: Date.now() - requestStartedAt,
+          errorKind: providerError.kind,
+        });
         if (
           providerError.kind !== "cancelled"
           && !requestController.signal.aborted

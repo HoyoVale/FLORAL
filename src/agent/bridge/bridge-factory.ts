@@ -3,6 +3,7 @@ import type { AppEnv } from "../../config/env.js";
 import type { CapturedCodexResponsesRequest } from "./responses-compat.js";
 import type { DeepSeekCostGuard } from "../../runtime/cost/deepseek-cost-guard.js";
 import type { ProviderActivityGate } from "../../runtime/cost/provider-activity-gate.js";
+import { renderResponsesBridgeTelemetryEvent } from "./responses-telemetry.js";
 
 export interface ResponsesBridgeOverrides {
   thinking?: "enabled" | "disabled" | undefined;
@@ -15,6 +16,7 @@ export interface ResponsesBridgeOverrides {
   onCompatibilityCaptureError?: ((error: Error) => void) | undefined;
   costGuard?: DeepSeekCostGuard | undefined;
   activityGate?: ProviderActivityGate | undefined;
+  bridgeTelemetry?: boolean | undefined;
 }
 
 export function createResponsesBridge(
@@ -38,6 +40,15 @@ export function createResponsesBridge(
     },
     ...(overrides.costGuard ? { costGuard: overrides.costGuard } : {}),
     ...(overrides.activityGate ? { activityGate: overrides.activityGate } : {}),
+    ...(overrides.bridgeTelemetry !== false
+      ? {
+          telemetry: {
+            onEvent: (event) => {
+              process.stderr.write(`${renderResponsesBridgeTelemetryEvent(event)}\n`);
+            },
+          },
+        }
+      : {}),
     ...(overrides.onCompatibilityRequest
       ? {
           compatibilityCapture: {
