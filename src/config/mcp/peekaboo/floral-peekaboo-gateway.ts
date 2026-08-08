@@ -2,8 +2,8 @@ import { homedir, tmpdir, userInfo } from "node:os";
 import { isAbsolute, join, resolve } from "node:path";
 
 export const FLORAL_PEEKABOO_GATEWAY_NAME = "floral-peekaboo";
-export const FLORAL_PEEKABOO_GATEWAY_VERSION = "0.1.0";
-export const FLORAL_PEEKABOO_GATEWAY_TOOLS = ["image", "see"] as const;
+export const FLORAL_PEEKABOO_GATEWAY_VERSION = "0.2.0";
+export const FLORAL_PEEKABOO_GATEWAY_TOOLS = ["click", "image", "see"] as const;
 export const FLORAL_PEEKABOO_MAX_DIMENSION = 1920;
 export const FLORAL_PEEKABOO_SEE_MAX_DEPTH = 12;
 export const FLORAL_PEEKABOO_SEE_MAX_ELEMENTS = 500;
@@ -11,6 +11,12 @@ export const FLORAL_PEEKABOO_SEE_MAX_CHILDREN = 100;
 
 export type FloralPeekabooTargetInput = {
   app_target?: string | undefined;
+};
+
+export type FloralPeekabooClickInput = {
+  snapshot: string;
+  on: string;
+  intent: string;
 };
 
 export function buildPeekabooChildEnvironment(): Record<string, string> {
@@ -21,7 +27,7 @@ export function buildPeekabooChildEnvironment(): Record<string, string> {
     TMPDIR: tmpdir(),
     USER: username,
     LOGNAME: username,
-    PEEKABOO_ALLOW_TOOLS: "image,see",
+    PEEKABOO_ALLOW_TOOLS: FLORAL_PEEKABOO_GATEWAY_TOOLS.join(","),
     PEEKABOO_AI_PROVIDERS: "",
     PEEKABOO_LOG_LEVEL: "warn",
   };
@@ -62,6 +68,23 @@ export function buildObservationArtifactPath(options: {
   return join(root, `floral-peekaboo-${options.kind}-${options.token}.png`);
 }
 
+export function buildPeekabooClickArguments(
+  input: FloralPeekabooClickInput,
+): Record<string, unknown> {
+  const snapshot = cleanOpaqueToken(input.snapshot, "snapshot", 256);
+  const elementId = cleanOpaqueToken(input.on, "element id", 256);
+  cleanIntent(input.intent);
+  return {
+    snapshot,
+    on: elementId,
+    foreground: false,
+    background: true,
+    double: false,
+    right: false,
+    wait_for: 5_000,
+  };
+}
+
 export function buildPeekabooImageArguments(
   outputPath: string,
   input: FloralPeekabooTargetInput,
@@ -97,7 +120,7 @@ export function assertObserveOnlyPeekabooToolSurface(names: readonly string[]): 
   const expected = [...FLORAL_PEEKABOO_GATEWAY_TOOLS].sort();
   if (JSON.stringify(actual) !== JSON.stringify(expected)) {
     throw new Error(
-      `Peekaboo observe-only tool surface drift: expected ${expected.join(",")}, received ${actual.join(",")}`,
+      `Peekaboo controlled tool surface drift: expected ${expected.join(",")}, received ${actual.join(",")}`,
     );
   }
 }
@@ -111,6 +134,22 @@ export function extractMcpTextContent(result: unknown): string {
     .map((item) => item.text as string)
     .join("\n")
     .trim() ?? "";
+}
+
+function cleanOpaqueToken(value: string, label: string, maxLength: number): string {
+  const token = value.trim();
+  if (!token || token.length > maxLength || /[\r\n\0]/u.test(token)) {
+    throw new Error(`Peekaboo ${label} is invalid`);
+  }
+  return token;
+}
+
+function cleanIntent(value: string): string {
+  const intent = value.replace(/[\u0000-\u001F\u007F]+/gu, " ").replace(/\s+/gu, " ").trim();
+  if (!intent || intent.length > 160) {
+    throw new Error("Peekaboo click intent is invalid");
+  }
+  return intent;
 }
 
 function cleanTarget(value: string | undefined): string | undefined {

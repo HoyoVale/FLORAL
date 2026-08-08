@@ -26,6 +26,27 @@ function registry(): McpRuntimeRegistry {
         },
         tools: [{ name: "searxng_web_search", enabled: true, approvalMode: "approve" }],
       },
+      {
+        id: "floral_peekaboo",
+        enabled: true,
+        integrationStatus: "active",
+        required: false,
+        startupTimeoutSec: 60,
+        toolTimeoutSec: 45,
+        defaultToolsApprovalMode: "prompt",
+        transport: {
+          type: "stdio",
+          command: "node",
+          args: ["floral-peekaboo-mcp.js"],
+          inheritParentEnvironment: false,
+          environment: [],
+        },
+        tools: [
+          { name: "click", enabled: true, approvalMode: "prompt" },
+          { name: "image", enabled: true, approvalMode: "approve" },
+          { name: "see", enabled: true, approvalMode: "approve" },
+        ],
+      },
     ],
   };
 }
@@ -109,6 +130,35 @@ describe("AuthorizationAuthority", () => {
       approvalLevel: "local-confirmation",
       reason: "policy",
     });
+  });
+
+  it("allows only the exact allowlisted Peekaboo click to cross the read-only sandbox", () => {
+    const policy = authority("read-only");
+    expect(policy.evaluate({
+      role: "owner",
+      capability: "application.control",
+      source: "mcp-tool",
+      mcpServerId: "floral_peekaboo",
+      mcpToolName: "click",
+    })).toEqual({
+      status: "approval-required",
+      approvalLevel: "chat-confirmation",
+      reason: "policy",
+    });
+
+    expect(policy.evaluate({
+      role: "owner",
+      capability: "application.control",
+      source: "floral",
+    })).toMatchObject({ status: "deny", reason: "sandbox-capability-denied" });
+
+    expect(policy.evaluate({
+      role: "owner",
+      capability: "application.control",
+      source: "mcp-tool",
+      mcpServerId: "floral_peekaboo",
+      mcpToolName: "type",
+    })).toMatchObject({ status: "deny", reason: "mcp-tool-not-allowlisted" });
   });
 
   it("fails closed when an active MCP tool has no capability mapping", () => {

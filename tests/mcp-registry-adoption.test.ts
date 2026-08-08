@@ -38,7 +38,7 @@ describe("MCP registry runtime adoption", () => {
     expect(assessMcpRegistryAdoptionReport(report, registry, codexConfig)).toBe("active");
     expect(report.activeServerIds).toEqual(["floral_peekaboo", "floral_search", "floral_vision"]);
     expect(report.toolAllowlists).toEqual({
-      floral_peekaboo: ["image", "see"],
+      floral_peekaboo: ["click", "image", "see"],
       floral_search: ["searxng_web_search"],
       floral_vision: ["vision_analyze_region", "vision_analyze_screen"],
     });

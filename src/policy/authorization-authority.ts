@@ -85,8 +85,16 @@ export class AuthorizationAuthority {
     const scopedFileChangeGrant = request.source === "codex-file-change"
       && request.capability === "files.write"
       && this.options.allowRemoteFileChangeApproval;
+    const scopedPeekabooClickGrant = request.source === "mcp-tool"
+      && request.capability === "application.control"
+      && request.mcpServerId === "floral_peekaboo"
+      && request.mcpToolName === "click";
 
-    if (!sandboxAllows(this.options.sandboxMode, request.capability) && !scopedFileChangeGrant) {
+    if (
+      !sandboxAllows(this.options.sandboxMode, request.capability)
+      && !scopedFileChangeGrant
+      && !scopedPeekabooClickGrant
+    ) {
       return {
         status: "deny",
         approvalLevel: defaultLevel,
@@ -131,6 +139,9 @@ export function capabilityForMcpTool(
   }
   if (serverId === "floral_vision") {
     return "screen.capture";
+  }
+  if (serverId === "floral_peekaboo" && toolName === "click") {
+    return "application.control";
   }
   if (serverId === "floral_peekaboo" && (toolName === "image" || toolName === "see")) {
     return "screen.capture";

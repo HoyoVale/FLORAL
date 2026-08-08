@@ -475,6 +475,27 @@ function validateCrossFieldRules(
       throw new Error("mcp.vision.enabled requires exactly the FLORAL-owned vision tool surface");
     }
   }
+  if (config.mcp.macos.enabled) {
+    const actualMacosTools = [...config.mcp.macos.enabled_tools].sort();
+    const expectedMacosTools = config.mcp.macos.profile === "control"
+      ? ["click", "image", "see"]
+      : ["image", "see"];
+    if (JSON.stringify(actualMacosTools) !== JSON.stringify(expectedMacosTools)) {
+      throw new Error(
+        `mcp.macos profile ${config.mcp.macos.profile} requires exactly ${expectedMacosTools.join(",")}`,
+      );
+    }
+    if (config.mcp.macos.tool_approval_mode !== "approve") {
+      throw new Error("mcp.macos.tool_approval_mode must keep read-only image/see on approve");
+    }
+    const expectedDefaultApproval = config.mcp.macos.profile === "control" ? "prompt" : "approve";
+    if (config.mcp.macos.default_tools_approval_mode !== expectedDefaultApproval) {
+      throw new Error(
+        `mcp.macos profile ${config.mcp.macos.profile} requires default_tools_approval_mode=${expectedDefaultApproval}`,
+      );
+    }
+  }
+
   for (const [id, tools] of [
     ["search", config.mcp.search.enabled_tools],
     ["vision", config.mcp.vision.enabled_tools],

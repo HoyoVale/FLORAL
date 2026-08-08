@@ -11,6 +11,7 @@ import {
   assertObserveOnlyPeekabooToolSurface,
   buildObservationArtifactPath,
   buildPeekabooChildEnvironment,
+  buildPeekabooClickArguments,
   buildPeekabooImageArguments,
   buildPeekabooMcpArguments,
   buildPeekabooSeeArguments,
@@ -86,7 +87,7 @@ async function connectUpstream(): Promise<UpstreamConnection> {
 }
 
 async function callPeekaboo(
-  toolName: "image" | "see",
+  toolName: "click" | "image" | "see",
   arguments_: Record<string, unknown>,
 ): Promise<string> {
   const connection = await connectUpstream();
@@ -141,6 +142,61 @@ const server = new McpServer({
   name: FLORAL_PEEKABOO_GATEWAY_NAME,
   version: FLORAL_PEEKABOO_GATEWAY_VERSION,
 });
+
+const snapshotSchema = z
+  .string()
+  .min(1)
+  .max(256)
+  .describe("Required fresh Snapshot ID returned by floral_peekaboo/see.");
+
+const elementIdSchema = z
+  .string()
+  .min(1)
+  .max(256)
+  .describe("Required opaque element ID copied exactly from the same fresh floral_peekaboo/see output.");
+
+const clickIntentSchema = z
+  .string()
+  .min(1)
+  .max(160)
+  .describe("Short model-declared purpose for this one click. It is shown in FLORAL's one-shot approval prompt.");
+
+server.tool(
+  "click",
+  "Perform exactly one approval-gated background click on an opaque element ID from a fresh floral_peekaboo/see snapshot. Coordinates, text queries, foreground activation, right/double click, and explicit PIDs are unavailable. After success the referenced snapshot is invalidated; call floral_peekaboo/see again before any further GUI action.",
+  {
+    snapshot: snapshotSchema,
+    on: elementIdSchema,
+    intent: clickIntentSchema,
+  },
+  async ({ snapshot, on, intent }) => {
+    try {
+      const upstreamText = await callPeekaboo(
+        "click",
+        buildPeekabooClickArguments({ snapshot, on, intent }),
+      );
+      return {
+        content: [{
+          type: "text",
+          text: [
+            "source=floral_peekaboo/click",
+            `declared_intent=${intent}`,
+            upstreamText ? "peekaboo_result_begin" : "",
+            upstreamText,
+            upstreamText ? "peekaboo_result_end" : "",
+            "next=The previous UI snapshot is stale. Call floral_peekaboo/see before any further GUI action.",
+          ].filter(Boolean).join("\n"),
+        }],
+      };
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      return {
+        isError: true,
+        content: [{ type: "text", text: `peekaboo_gateway_error=${message}` }],
+      };
+    }
+  },
+);
 
 server.tool(
   "image",

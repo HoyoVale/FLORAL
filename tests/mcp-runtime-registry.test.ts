@@ -42,9 +42,10 @@ describe("MCP runtime registry", () => {
       "vision_analyze_region",
       "vision_analyze_screen",
     ]);
-    expect(registry.servers[2]?.tools.map((tool) => tool.name)).toEqual([
-      "image",
-      "see",
+    expect(registry.servers[2]?.tools.map((tool) => [tool.name, tool.approvalMode])).toEqual([
+      ["click", "prompt"],
+      ["image", "approve"],
+      ["see", "approve"],
     ]);
   });
 
@@ -68,6 +69,9 @@ describe("MCP runtime registry", () => {
       `FLORAL_PEEKABOO_ALLOWED_ROOT = ${JSON.stringify(peekabooRuntime.allowedRoot)}`,
     );
     expect(codex).not.toContain('PEEKABOO_AI_PROVIDERS = ""');
+    expect(codex).toContain('enabled_tools = ["click", "image", "see"]');
+    expect(codex).toContain('default_tools_approval_mode = "prompt"');
+    expect(codex).toContain('[mcp_servers.floral_peekaboo.tools.click]');
     expect(codex).toContain('[mcp_servers.floral_peekaboo.tools.image]');
     expect(codex).toContain('[mcp_servers.floral_peekaboo.tools.see]');
 

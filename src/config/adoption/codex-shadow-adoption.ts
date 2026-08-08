@@ -70,20 +70,21 @@ const EXPECTED_UNIFIED_ONLY_ASSIGNMENTS = [
   "sandbox_mode",
 ] as const;
 
-// Phase 6A.3 keeps the public Peekaboo tool names but places the upstream
-// binary behind a FLORAL-owned observe-only gateway. The model can no longer
-// choose screenshot paths, inline/base64 output, foreground focus, annotation,
-// or upstream AI analysis. Keep the Codex projection exact except for the
-// administrator-selected Peekaboo executable string.
+// Phase 6B.1 keeps Peekaboo behind a FLORAL-owned controlled gateway.
+// Read-only image/see remain auto-approved while the only mutation tool, click,
+// is prompt-gated. The model cannot choose screenshot paths, raw coordinates,
+// foreground focus, right/double click, explicit PID, or upstream AI analysis.
+// Keep the Codex projection exact except for the administrator-selected binary.
 const peekabooRuntime = resolveFloralPeekabooRuntime();
 const PEEKABOO_OBSERVE_ONLY_UNIFIED_ASSIGNMENTS = new Map<string, string>([
   ["mcp_servers.floral_peekaboo.command", JSON.stringify(process.execPath)],
   ["mcp_servers.floral_peekaboo.args", JSON.stringify([peekabooRuntime.serverEntrypoint])],
-  ["mcp_servers.floral_peekaboo.enabled_tools", '["image", "see"]'],
+  ["mcp_servers.floral_peekaboo.enabled_tools", '["click", "image", "see"]'],
   ["mcp_servers.floral_peekaboo.required", "false"],
   ["mcp_servers.floral_peekaboo.startup_timeout_sec", "60"],
   ["mcp_servers.floral_peekaboo.tool_timeout_sec", "45"],
-  ["mcp_servers.floral_peekaboo.default_tools_approval_mode", '"approve"'],
+  ["mcp_servers.floral_peekaboo.default_tools_approval_mode", '"prompt"'],
+  ["mcp_servers.floral_peekaboo.tools.click.approval_mode", '"prompt"'],
   ["mcp_servers.floral_peekaboo.tools.image.approval_mode", '"approve"'],
   ["mcp_servers.floral_peekaboo.tools.see.approval_mode", '"approve"'],
 ]);

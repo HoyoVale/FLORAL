@@ -5,16 +5,17 @@ import {
   assertObserveOnlyPeekabooToolSurface,
   buildObservationArtifactPath,
   buildPeekabooChildEnvironment,
+  buildPeekabooClickArguments,
   buildPeekabooImageArguments,
   buildPeekabooMcpArguments,
   buildPeekabooSeeArguments,
   resolvePeekabooBridgeSocketPath,
 } from "../src/config/mcp/peekaboo/floral-peekaboo-gateway.js";
 
-describe("FLORAL Peekaboo observation gateway", () => {
-  it("keeps the upstream child environment observe-only and secret-free", () => {
+describe("FLORAL Peekaboo controlled gateway", () => {
+  it("keeps the upstream child environment exact and secret-free", () => {
     const env = buildPeekabooChildEnvironment();
-    expect(env.PEEKABOO_ALLOW_TOOLS).toBe("image,see");
+    expect(env.PEEKABOO_ALLOW_TOOLS).toBe("click,image,see");
     expect(env.PEEKABOO_AI_PROVIDERS).toBe("");
     expect(env.PEEKABOO_LOG_LEVEL).toBe("warn");
     expect(env).not.toHaveProperty("MIMO_API_KEY");
@@ -37,6 +38,42 @@ describe("FLORAL Peekaboo observation gateway", () => {
 
   it("rejects a non-absolute Bridge socket path", () => {
     expect(() => buildPeekabooMcpArguments("bridge.sock")).toThrow(/socket path is invalid/u);
+  });
+
+  it("forces click to one fresh-snapshot element and strips mutation widening", () => {
+    const args = buildPeekabooClickArguments({
+      snapshot: "1786172715081-7023",
+      on: "button_42",
+      intent: "展开 VS Code 的 src 文件夹",
+      coords: "10,10",
+      query: "Delete",
+      pid: 1,
+      foreground: true,
+      right: true,
+      double: true,
+    } as never);
+    expect(args).toEqual({
+      snapshot: "1786172715081-7023",
+      on: "button_42",
+      foreground: false,
+      background: true,
+      double: false,
+      right: false,
+      wait_for: 5_000,
+    });
+  });
+
+  it("rejects click without bounded fresh-snapshot identifiers or intent", () => {
+    expect(() => buildPeekabooClickArguments({
+      snapshot: "",
+      on: "button_42",
+      intent: "click",
+    })).toThrow(/snapshot is invalid/u);
+    expect(() => buildPeekabooClickArguments({
+      snapshot: "snapshot",
+      on: "button_42",
+      intent: "x".repeat(161),
+    })).toThrow(/intent is invalid/u);
   });
 
   it("forces image captures to a FLORAL-controlled PNG without AI or foreground focus", () => {
@@ -89,7 +126,7 @@ describe("FLORAL Peekaboo observation gateway", () => {
 
   it("fails closed on upstream tool-surface widening", () => {
     expect(() => assertObserveOnlyPeekabooToolSurface(
-      [...FLORAL_PEEKABOO_GATEWAY_TOOLS, "click"],
+      [...FLORAL_PEEKABOO_GATEWAY_TOOLS, "type"],
     )).toThrow(/tool surface drift/u);
   });
 });

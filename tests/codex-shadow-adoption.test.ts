@@ -89,6 +89,28 @@ describe("Codex unified shadow adoption", () => {
   });
 
 
+  it("rejects auto-approval widening for FLORAL Peekaboo click", async () => {
+    const resolved = await authority();
+    const unified = renderCodexConfig(
+      resolved.effective,
+      "http://127.0.0.1:9999/v1",
+    );
+    const tampered = unified.replace(
+      '[mcp_servers.floral_peekaboo.tools.click]\napproval_mode = "prompt"',
+      '[mcp_servers.floral_peekaboo.tools.click]\napproval_mode = "approve"',
+    );
+    expect(tampered).not.toBe(unified);
+    const comparison = compareCodexShadowConfigs({
+      legacyConfig: legacyConfig(),
+      unifiedConfig: tampered,
+      effectiveFingerprint: resolved.effectiveFingerprint,
+    });
+    expect(comparison.status).toBe("drift");
+    expect(comparison.unexpectedUnifiedOnlyAssignments).toContain(
+      "mcp_servers.floral_peekaboo.tools.click.approval_mode",
+    );
+  });
+
   it("keeps runtime model-catalog installation paths outside the Phase 4 semantic fingerprint", () => {
     const withoutCatalog = 'model = "deepseek-v4-flash"\n';
     const withCatalog = [

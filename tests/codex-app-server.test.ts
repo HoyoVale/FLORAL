@@ -210,6 +210,51 @@ describe("CodexAppServerRuntime", () => {
     }
   });
 
+  it("delegates a trusted MCP click approval to the FLORAL approval handler", async () => {
+    const runtime = createRuntime("mcp-approval");
+    const events: AgentEvent[] = [];
+    try {
+      await runtime.start();
+      const result = await runtime.run(
+        {
+          text: "expand src",
+          cwd: process.cwd(),
+          approvalHandler: async (request) => {
+            expect(request).toMatchObject({
+              kind: "mcp-tool",
+              capability: "application.control",
+              source: "mcp",
+              mcpServerId: "floral_peekaboo",
+              mcpToolName: "click",
+            });
+            expect(request.summary).toContain("展开 VS Code 的 src 文件夹");
+            return "approve";
+          },
+        },
+        (event) => events.push(event),
+      );
+      expect(result.finalText).toBe("mcp approval accepted safely");
+      expect(events).toContainEqual(expect.objectContaining({
+        type: "approval.requested",
+        capability: "application.control",
+        kind: "mcp-tool",
+      }));
+    } finally {
+      await runtime.stop();
+    }
+  });
+
+  it("declines an MCP click when no FLORAL approval handler is available", async () => {
+    const runtime = createRuntime("mcp-approval");
+    try {
+      await runtime.start();
+      const result = await runtime.run({ text: "expand src", cwd: process.cwd() });
+      expect(result.finalText).toBe("mcp approval declined safely");
+    } finally {
+      await runtime.stop();
+    }
+  });
+
   it("prefers the terminal final answer over an earlier commentary message", async () => {
     const runtime = createRuntime("terminal-final-after-commentary");
     try {

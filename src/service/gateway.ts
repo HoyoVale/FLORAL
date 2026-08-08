@@ -550,6 +550,7 @@ export class GatewayService {
 
     if (event.type === "tool.started" || event.type === "tool.completed") {
       if (event.type === "tool.started") active.latestToolName = event.name;
+      process.stderr.write(`agent.${event.type}=${safeLogToken(event.name)}\n`);
       void this.store.appendAudit({
         userId: resolved.userId,
         conversationId: resolved.conversationId,

@@ -249,16 +249,16 @@ tool_approval_mode = "approve"
 inherit_parent_environment = false
 
 [mcp.macos]
-# Observe-only Phase 6A surface. Control/input tools remain absent from both
-# Codex's enabled_tools projection and Peekaboo's own PEEKABOO_ALLOW_TOOLS.
+# Phase 6B.1 controlled surface: image/see stay read-only while click is a
+# one-shot approval-gated element action. Unknown future tools default to prompt.
 enabled = true
 id = "floral_peekaboo"
-profile = "observe"
+profile = "control"
 expected_version = "3.10.0"
-enabled_tools = ["image", "see"]
+enabled_tools = ["click", "image", "see"]
 required = false
 startup_timeout_sec = 60
 tool_timeout_sec = 45
-default_tools_approval_mode = "approve"
+default_tools_approval_mode = "prompt"
 tool_approval_mode = "approve"
 inherit_parent_environment = false

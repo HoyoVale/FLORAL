@@ -77,9 +77,9 @@ const artifactEgressPolicy = new ArtifactEgressPolicy({
     resolve(env.CODEX_CWD, "artifacts", "outbound"),
   ],
   allowedMcpProducers: [
-    ...authority.effective.mcp.macos.enabled_tools.map((toolName) =>
-      `${authority.effective.mcp.macos.id}/${toolName}`
-    ),
+    ...authority.effective.mcp.macos.enabled_tools
+      .filter((toolName) => toolName === "image" || toolName === "see")
+      .map((toolName) => `${authority.effective.mcp.macos.id}/${toolName}`),
     ...authority.effective.mcp.vision.enabled_tools.map((toolName) =>
       `${authority.effective.mcp.vision.id}/${toolName}`
     ),

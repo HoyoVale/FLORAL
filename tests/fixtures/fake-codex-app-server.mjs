@@ -202,6 +202,52 @@ lines.on("line", (line) => {
         return;
       }
 
+      if (scenario === "mcp-approval") {
+        waitingForApproval = true;
+        send({
+          method: "item/started",
+          params: {
+            threadId: activeThreadId,
+            turnId: activeTurnId,
+            item: {
+              id: "mcp_click_1",
+              type: "mcpToolCall",
+              server: "floral_peekaboo",
+              tool: "click",
+              status: "inProgress",
+              arguments: {
+                snapshot: "snapshot-1",
+                on: "button_42",
+                intent: "展开 VS Code 的 src 文件夹",
+              },
+            },
+          },
+        });
+        send({
+          id: "approval_1",
+          method: "mcpServer/elicitation/request",
+          params: {
+            threadId: activeThreadId,
+            turnId: activeTurnId,
+            serverName: "floral_peekaboo",
+            mode: "form",
+            _meta: {
+              codex_approval_kind: "mcp_tool_call",
+              tool_name: "click",
+              tool_title: "Click",
+              tool_params: {
+                snapshot: "snapshot-1",
+                on: "button_42",
+                intent: "展开 VS Code 的 src 文件夹",
+              },
+            },
+            message: "Allow floral_peekaboo to run tool click?",
+            requestedSchema: { type: "object", properties: {} },
+          },
+        });
+        return;
+      }
+
       if (scenario === "mcp-tool") {
         send({
           method: "item/started",
@@ -475,6 +521,30 @@ lines.on("line", (line) => {
 
   if (waitingForApproval && message.id === "approval_1" && "result" in message) {
     waitingForApproval = false;
+    if (scenario === "mcp-approval") {
+      const action = message.result?.action;
+      if (action === "decline") {
+        sendSuccess(activeThreadId, activeTurnId, "mcp approval declined safely");
+      } else if (
+        action === "accept"
+        && message.result?.content
+        && Object.keys(message.result.content).length === 0
+        && message.result?._meta === null
+      ) {
+        sendSuccess(activeThreadId, activeTurnId, "mcp approval accepted safely");
+      } else {
+        const error = { message: `unexpected MCP approval action: ${String(action)}`, codexErrorInfo: "Other" };
+        send({
+          method: "turn/completed",
+          params: {
+            threadId: activeThreadId,
+            turn: { id: activeTurnId, status: "failed", error, items: [] },
+          },
+        });
+      }
+      return;
+    }
+
     const decision = message.result?.decision;
     if (decision === "decline") {
       sendSuccess(activeThreadId, activeTurnId, "approval declined safely");

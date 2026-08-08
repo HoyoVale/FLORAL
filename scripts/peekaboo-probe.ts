@@ -35,12 +35,12 @@ const expectedTools = [...macos.enabled_tools].sort();
 if (!macos.enabled) {
   throw new Error("mcp.macos.enabled must be true before running the Phase 6A probe");
 }
-if (macos.profile !== "observe") {
-  throw new Error("Phase 6A probe requires mcp.macos.profile=observe");
+if (macos.profile !== "control") {
+  throw new Error("Phase 6B.1 probe requires mcp.macos.profile=control");
 }
-if (expectedTools.join(",") !== "image,see") {
+if (expectedTools.join(",") !== "click,image,see") {
   throw new Error(
-    `Phase 6A observe-only tool surface must be exactly image,see; received ${expectedTools.join(",")}`,
+    `Phase 6B.1 controlled tool surface must be exactly click,image,see; received ${expectedTools.join(",")}`,
   );
 }
 
@@ -85,7 +85,9 @@ try {
 
   // `see` exercises the accessibility inspection path. Never echo the JSON:
   // it may contain window titles or visible UI text.
-  const see = await run(["see", "--app", "Finder", "--json"]);
+  const see = await run([
+    "see", "--mode", "screen", "--screen-index", "0", "--json",
+  ]);
   parseJson(see.stdout, "see");
 
   console.log(`peekaboo.probe.version=${version}`);

@@ -13,6 +13,7 @@ import {
   codexProtocolError,
   codexRequestTimeout,
 } from "./codex-errors.js";
+import { capabilityForMcpTool } from "../policy/authorization-authority.js";
 import {
   CodexRpcClient,
   type CodexExitEvent,
@@ -495,7 +496,28 @@ export class CodexAppServerRuntime implements AgentRuntime {
     }
 
     if (request.method === "mcpServer/elicitation/request") {
-      this.#respondSafely(request.id, { action: "decline", content: null });
+      const approval = buildMcpToolApprovalRequest(request);
+      if (!approval) {
+        this.#respondSafely(request.id, { action: "decline", content: null, _meta: null });
+        return;
+      }
+      onEvent?.({
+        type: "approval.requested",
+        requestId: approval.requestId,
+        capability: approval.capability,
+        kind: approval.kind,
+        detail: { summary: approval.summary },
+      });
+      const handler = threadId ? this.#approvalHandlers.get(threadId) : undefined;
+      const decision = handler
+        ? await handler(approval).catch(() => "deny" as const)
+        : "deny";
+      this.#respondSafely(
+        request.id,
+        decision === "approve"
+          ? { action: "accept", content: {}, _meta: null }
+          : { action: "decline", content: null, _meta: null },
+      );
       return;
     }
 
@@ -628,6 +650,42 @@ function buildCodexApprovalRequest(
   };
 }
 
+function buildMcpToolApprovalRequest(
+  request: CodexServerRequest,
+): AgentApprovalRequest | undefined {
+  const params = asRecord(request.params);
+  if (readString(params?.mode) !== "form") return undefined;
+  const metadata = asPlainRecord(params?._meta);
+  if (readString(metadata?.codex_approval_kind) !== "mcp_tool_call") return undefined;
+
+  const serverId = readString(params?.serverName);
+  const toolName = readString(metadata?.tool_name);
+  if (serverId !== "floral_peekaboo" || toolName !== "click") return undefined;
+
+  const schema = asPlainRecord(params?.requestedSchema);
+  const properties = asPlainRecord(schema?.properties);
+  if (schema?.type !== "object" || !properties || Object.keys(properties).length !== 0) {
+    return undefined;
+  }
+
+  const capability = capabilityForMcpTool(serverId, toolName);
+  if (capability !== "application.control") return undefined;
+  const toolParams = asPlainRecord(metadata?.tool_params);
+  const intent = redactApprovalText(readString(toolParams?.intent));
+  const summary = intent
+    ? `MCP ${serverId}/${toolName} 请求执行一次操作：${intent}`
+    : `MCP ${serverId}/${toolName} 请求执行一次 ${capability} 操作。`;
+  return {
+    requestId: String(request.id),
+    kind: "mcp-tool",
+    capability,
+    summary,
+    source: "mcp",
+    mcpServerId: serverId,
+    mcpToolName: toolName,
+  };
+}
+
 function redactApprovalText(value: string | undefined): string | undefined {
   if (!value) return undefined;
   const normalized = value
@@ -746,6 +804,11 @@ function asRecord(value: unknown): Record<string, unknown> | undefined {
   return typeof value === "object" && value !== null
     ? value as Record<string, unknown>
     : undefined;
+}
+
+function asPlainRecord(value: unknown): Record<string, unknown> | undefined {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) return undefined;
+  return value as Record<string, unknown>;
 }
 
 function readString(value: unknown): string | undefined {

@@ -185,11 +185,13 @@ export function buildMcpRuntimeRegistry(config: EffectiveConfig): McpRuntimeRegi
       tools: [...config.mcp.macos.enabled_tools].sort().map((name) => ({
         name,
         enabled: true,
-        approvalMode: config.mcp.macos.tool_approval_mode,
+        approvalMode: name === "image" || name === "see"
+          ? config.mcp.macos.tool_approval_mode
+          : config.mcp.macos.default_tools_approval_mode,
       })),
       provider: {
         kind: "peekaboo",
-        gateway: "floral-owned-observe-only",
+        gateway: "floral-owned-controlled",
         profile: config.mcp.macos.profile,
         expectedVersion: config.mcp.macos.expected_version,
         aiProviders: "disabled",
