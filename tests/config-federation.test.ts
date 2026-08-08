@@ -67,6 +67,8 @@ describe("configuration federation authority", () => {
       use_memories: true,
       generate_memories: true,
       disable_on_external_context: false,
+      extract_model: "",
+      consolidation_model: "",
     });
     expect(authority.effective.qq.presentation.native_typing).toBe(false);
     expect(authority.effective.qq.presentation.visible_activity_fallback).toBe(true);
@@ -105,6 +107,8 @@ describe("configuration federation authority", () => {
     expect(output).toContain("config.codex.memories.enabled=true");
     expect(output).toContain("config.codex.memories.use=true");
     expect(output).toContain("config.codex.memories.generate=true");
+    expect(output).toContain("config.codex.memories.extract_model=<primary-model>");
+    expect(output).toContain("config.codex.memories.consolidation_model=<primary-model>");
     expect(output).toContain("config.qq.presentation.native_typing=false");
     expect(output).toContain("config.qq.presentation.visible_activity_fallback=true");
     expect(output).toContain("config.qq.presentation.visible_activity_delay_ms=6000");

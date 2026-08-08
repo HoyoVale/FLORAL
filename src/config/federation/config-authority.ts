@@ -243,6 +243,8 @@ export function renderConfigurationAuthority(
     `config.codex.memories.use=${String(authority.effective.codex.memories.use_memories)}`,
     `config.codex.memories.generate=${String(authority.effective.codex.memories.generate_memories)}`,
     `config.codex.memories.disable_on_external_context=${String(authority.effective.codex.memories.disable_on_external_context)}`,
+    `config.codex.memories.extract_model=${authority.effective.codex.memories.extract_model || "<primary-model>"}`,
+    `config.codex.memories.consolidation_model=${authority.effective.codex.memories.consolidation_model || "<primary-model>"}`,
     `config.codex.native.reasoning_effort=${authority.effective.codex.native.reasoning_effort}`,
     `config.codex.native.web_search=${authority.effective.codex.native.web_search}`,
     `config.runtime.adoption.codex=${authority.effective.runtime.adoption.codex.mode}`,

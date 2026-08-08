@@ -24,6 +24,7 @@ function generatedRuntime(): CodexNativeMemoryRuntimeStatus {
     storage: "present",
     memoryIndex: "absent",
     memorySummary: "absent",
+    memorySummarySchema: "absent",
     rawMemories: "present",
     rolloutSummaryCount: 2,
     memoryIndexBytes: 0,
@@ -98,20 +99,79 @@ describe("Codex native memory Phase 2 diagnostics", () => {
     }
   });
 
-  it("recognizes a consolidated memory_summary artifact without reading it", async () => {
+  it("requires the exact upstream consolidation artifact pair and v1 summary schema", async () => {
     const home = await mkdtemp(join(tmpdir(), "floral-native-memory-summary-"));
     try {
       const memories = join(home, "memories");
       await mkdir(memories, { recursive: true });
-      await writeFile(join(memories, "memory_summary.md"), "private summary text", "utf8");
+
+      const incomplete = await readCodexNativeMemoryPhase2Diagnostics({
+        managedHome: home,
+        runtime: generatedRuntime(),
+      });
+      expect(incomplete.artifactContract).toBe("not-yet");
+      expect(incomplete.diagnosis).not.toBe("consolidated");
+
+      const runtime: CodexNativeMemoryRuntimeStatus = {
+        ...generatedRuntime(),
+        memoryIndex: "present",
+        memorySummary: "present",
+        memorySummarySchema: "v1",
+        memoryIndexBytes: 50,
+        memorySummaryBytes: 40,
+        lifecycle: "consolidated",
+      };
+      const valid = await readCodexNativeMemoryPhase2Diagnostics({
+        managedHome: home,
+        runtime,
+      });
+      expect(valid.artifactContract).toBe("valid");
+      expect(valid.diagnosis).toBe("consolidated");
+    } finally {
+      await rm(home, { recursive: true, force: true });
+    }
+  });
+
+  it("maps Codex failed_invalid_artifacts to the bounded artifacts category", () => {
+    expect(classifyMemoryJobError("failed_invalid_artifacts")).toBe("artifacts");
+  });
+
+
+
+  it("recognizes the observed failed_invalid_artifacts Phase 2 outcome", async () => {
+    const home = await mkdtemp(join(tmpdir(), "floral-native-memory-invalid-artifacts-"));
+    try {
+      const memories = join(home, "memories");
+      await mkdir(memories, { recursive: true });
+      await writeFile(join(memories, "raw_memories.md"), "private raw memory", "utf8");
+
+      const db = new Database(join(home, "memories_1.sqlite"));
+      db.exec(`
+        CREATE TABLE jobs (
+          kind TEXT NOT NULL,
+          job_key TEXT NOT NULL,
+          status TEXT NOT NULL,
+          retry_remaining INTEGER,
+          last_error TEXT
+        );
+        INSERT INTO jobs(kind, job_key, status, retry_remaining, last_error)
+          VALUES ('memory_consolidate_global', 'global', 'error', 2, 'failed_invalid_artifacts');
+      `);
+      db.close();
+
       const result = await readCodexNativeMemoryPhase2Diagnostics({
         managedHome: home,
         runtime: generatedRuntime(),
       });
-      expect(result.memorySummary).toBe("present");
-      expect(result.diagnosis).toBe("consolidated");
-      expect(renderCodexNativeMemoryPhase2DiagnosticLines(result).join("\n"))
-        .not.toContain("private summary text");
+      expect(result).toMatchObject({
+        phase2Status: "error",
+        phase2ErrorClass: "artifacts",
+        artifactContract: "invalid",
+        memoryIndex: "absent",
+        memorySummary: "absent",
+        memorySummarySchema: "absent",
+        diagnosis: "blocked:artifacts",
+      });
     } finally {
       await rm(home, { recursive: true, force: true });
     }

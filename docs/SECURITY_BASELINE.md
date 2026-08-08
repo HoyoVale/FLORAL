@@ -152,3 +152,18 @@ Before display, FLORAL normalizes control characters, truncates output, and reda
 credentials, API-key/token-like assignments, OpenAI-style secret tokens, URLs, user-home and
 volume roots, email addresses, and long quoted payloads. The raw error is never sent through
 Feishu and is represented separately by a short SHA-256 fingerprint for correlation.
+
+
+## Phase 7.4E custom-provider memory worker boundary
+
+FLORAL does not allow Codex internal memory workers to silently select a provider-default
+OpenAI model identifier while requests are actually served by the `floral-deepseek`
+custom provider. The generated unified Codex config pins `extract_model` and
+`consolidation_model` to the effective FLORAL primary model unless an explicit
+FLORAL-owned override is configured.
+
+This does not widen the worker sandbox, approvals, MCP surface, filesystem authority, or
+network authority. The upstream Phase-2 worker remains responsible for writing its own
+memory artifacts. FLORAL validates only bounded structural evidence: `MEMORY.md` must be
+a file and `memory_summary.md` must expose the `v1` schema marker. Memory bodies remain
+Codex-owned data and are not surfaced through remote diagnostics.

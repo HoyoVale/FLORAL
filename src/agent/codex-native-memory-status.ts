@@ -1,4 +1,4 @@
-import { access, lstat, readdir } from "node:fs/promises";
+import { access, lstat, open, readdir } from "node:fs/promises";
 import { constants } from "node:fs";
 import { homedir } from "node:os";
 import { delimiter, isAbsolute, join, resolve } from "node:path";
@@ -30,6 +30,7 @@ export interface CodexNativeMemoryRuntimeStatus {
   storage: "present" | "absent";
   memoryIndex: "present" | "absent";
   memorySummary?: "present" | "absent";
+  memorySummarySchema?: "v1" | "invalid" | "unreadable" | "absent";
   rawMemories: "present" | "absent";
   rolloutSummaryCount: number;
   memoryIndexBytes: number;
@@ -62,12 +63,13 @@ export async function readCodexNativeMemoryRuntimeStatus(input: {
   const cutover = await readCodexCutoverReport(repositoryRoot).catch(() => undefined);
   const activeConfig = cutover?.activeConfig ?? "unknown";
 
-  const [runtimeConfigMetadata, storageMetadata, memoryIndexMetadata, memorySummaryMetadata, rawMemoriesMetadata, rolloutSummaryCount] =
+  const [runtimeConfigMetadata, storageMetadata, memoryIndexMetadata, memorySummaryMetadata, memorySummarySchema, rawMemoriesMetadata, rolloutSummaryCount] =
     await Promise.all([
       readRegularFileMetadata(runtimeConfigPath),
       readPathMetadata(memoriesDir),
       readRegularFileMetadata(memoryIndexPath),
       readRegularFileMetadata(memorySummaryPath),
+      readMemorySummarySchema(memorySummaryPath),
       readRegularFileMetadata(rawMemoriesPath),
       countRegularFilesBounded(rolloutSummariesPath, 512),
     ]);
@@ -102,6 +104,7 @@ export async function readCodexNativeMemoryRuntimeStatus(input: {
     storage: storageMetadata ? "present" : "absent",
     memoryIndex,
     memorySummary,
+    memorySummarySchema,
     rawMemories,
     rolloutSummaryCount,
     memoryIndexBytes: memoryIndexMetadata?.size ?? 0,
@@ -112,6 +115,7 @@ export async function readCodexNativeMemoryRuntimeStatus(input: {
       effective,
       memoryIndex,
       memorySummary,
+      memorySummarySchema,
       rawMemories,
       rolloutSummaryCount,
     }),
@@ -122,12 +126,22 @@ export function classifyCodexNativeMemoryLifecycle(input: {
   effective: boolean;
   memoryIndex: "present" | "absent";
   memorySummary?: "present" | "absent";
+  memorySummarySchema?: "v1" | "invalid" | "unreadable" | "absent";
   rawMemories: "present" | "absent";
   rolloutSummaryCount: number;
 }): CodexNativeMemoryLifecycle {
   if (!input.effective) return "inactive";
-  if (input.memoryIndex === "present" || input.memorySummary === "present") return "consolidated";
-  if (input.rawMemories === "present" || input.rolloutSummaryCount > 0) return "generated";
+  if (
+    input.memoryIndex === "present"
+    && input.memorySummary === "present"
+    && input.memorySummarySchema === "v1"
+  ) return "consolidated";
+  if (
+    input.memoryIndex === "present"
+    || input.memorySummary === "present"
+    || input.rawMemories === "present"
+    || input.rolloutSummaryCount > 0
+  ) return "generated";
   return "armed";
 }
 
@@ -147,6 +161,7 @@ export function renderCodexNativeMemoryRuntimeLines(
     `codex_memory_storage=${status.storage}`,
     `codex_memory_index=${status.memoryIndex}`,
     `codex_memory_summary=${status.memorySummary ?? "absent"}`,
+    `codex_memory_summary_schema=${status.memorySummarySchema ?? "absent"}`,
     `codex_memory_raw=${status.rawMemories}`,
     `codex_memory_rollout_summaries=${String(status.rolloutSummaryCount)}`,
     `codex_memory_index_bytes=${String(status.memoryIndexBytes)}`,
@@ -154,6 +169,29 @@ export function renderCodexNativeMemoryRuntimeLines(
     `codex_memory_raw_bytes=${String(status.rawMemoriesBytes)}`,
     `codex_memory_last_artifact_at=${status.lastArtifactAt ?? "none"}`,
   ];
+}
+
+
+async function readMemorySummarySchema(
+  path: string,
+): Promise<"v1" | "invalid" | "unreadable" | "absent"> {
+  let handle;
+  try {
+    handle = await open(path, "r");
+    const buffer = Buffer.alloc(4);
+    const { bytesRead } = await handle.read(buffer, 0, buffer.length, 0);
+    if (bytesRead === 0) return "invalid";
+    const prefix = buffer.subarray(0, bytesRead).toString("utf8");
+    if (prefix === "v1" || prefix.startsWith("v1\\n") || prefix.startsWith("v1\\r\\n")) {
+      return "v1";
+    }
+    return "invalid";
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return "absent";
+    return "unreadable";
+  } finally {
+    await handle?.close().catch(() => undefined);
+  }
 }
 
 export function parseCodexMemoriesFeatureList(

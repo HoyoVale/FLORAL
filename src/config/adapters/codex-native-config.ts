@@ -72,6 +72,8 @@ export function renderCodexConfig(
     `use_memories = ${String(config.codex.memories.use_memories)}`,
     `generate_memories = ${String(config.codex.memories.generate_memories)}`,
     `disable_on_external_context = ${String(config.codex.memories.disable_on_external_context)}`,
+    `extract_model = ${tomlString(resolveCodexMemoryModel(config.codex.memories.extract_model, model))}`,
+    `consolidation_model = ${tomlString(resolveCodexMemoryModel(config.codex.memories.consolidation_model, model))}`,
     ``,
     `[model_providers.${tomlKey(native.provider_id)}]`,
     `name = "FLORAL DeepSeek Bridge"`,
@@ -87,6 +89,14 @@ export function renderCodexConfig(
   lines.push(...renderCodexMcpLines(mcpRegistry));
 
   return `${lines.join("\n")}\n`;
+}
+
+export function resolveCodexMemoryModel(configured: string, primaryModel: string): string {
+  const override = configured.trim();
+  if (override) return override;
+  const primary = primaryModel.trim();
+  if (!primary) throw new Error("Codex memory model requires a non-empty primary model");
+  return primary;
 }
 
 export function renderCodexRequirements(config: EffectiveConfig): string {

@@ -83,6 +83,8 @@ describe("native configuration adapters", () => {
     expect(output).toContain("[memories]");
     expect(output).toContain("use_memories = true");
     expect(output).toContain("generate_memories = true");
+    expect(output).toContain('extract_model = "deepseek-v4-flash"');
+    expect(output).toContain('consolidation_model = "deepseek-v4-flash"');
     expect(output).toContain("disable_on_external_context = false");
     expect(output).toContain("[mcp_servers.floral_search]");
     expect(output).toContain('default_tools_approval_mode = "approve"');

@@ -46,16 +46,35 @@ describe("Codex native memory status", () => {
     expect(classifyCodexNativeMemoryLifecycle({
       effective: true,
       memoryIndex: "present",
+      memorySummary: "present",
+      memorySummarySchema: "v1",
       rawMemories: "present",
       rolloutSummaryCount: 3,
     })).toBe("consolidated");
     expect(classifyCodexNativeMemoryLifecycle({
       effective: true,
-      memoryIndex: "absent",
-      memorySummary: "present",
+      memoryIndex: "present",
+      memorySummary: "absent",
+      memorySummarySchema: "absent",
       rawMemories: "present",
       rolloutSummaryCount: 3,
-    })).toBe("consolidated");
+    })).toBe("generated");
+    expect(classifyCodexNativeMemoryLifecycle({
+      effective: true,
+      memoryIndex: "absent",
+      memorySummary: "present",
+      memorySummarySchema: "v1",
+      rawMemories: "present",
+      rolloutSummaryCount: 3,
+    })).toBe("generated");
+    expect(classifyCodexNativeMemoryLifecycle({
+      effective: true,
+      memoryIndex: "present",
+      memorySummary: "present",
+      memorySummarySchema: "invalid",
+      rawMemories: "present",
+      rolloutSummaryCount: 3,
+    })).toBe("generated");
   });
 
   it("renders configured-vs-effective and lifecycle state explicitly", () => {

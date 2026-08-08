@@ -20,6 +20,7 @@ type ErrorClass =
   | "provider"
   | "filesystem-permission"
   | "process"
+  | "artifacts"
   | "unknown";
 
 export type CodexNativeMemoryPhase2Status =
@@ -45,7 +46,10 @@ export interface CodexNativeMemoryPhase2Diagnostics {
   phase2ErrorClass: ErrorClass;
   phase2WorkspaceDiff: "present" | "absent";
   memoryGitBaseline: "present" | "absent";
+  memoryIndex: "present" | "absent";
   memorySummary: "present" | "absent";
+  memorySummarySchema: "v1" | "invalid" | "unreadable" | "absent";
+  artifactContract: "valid" | "invalid" | "not-yet";
   diagnosis: string;
 }
 
@@ -74,11 +78,18 @@ export async function readCodexNativeMemoryPhase2Diagnostics(input: {
 }): Promise<CodexNativeMemoryPhase2Diagnostics> {
   const codexHome = resolve(input.managedHome);
   const memoriesRoot = join(codexHome, "memories");
-  const [phase2WorkspaceDiff, memoryGitBaseline, memorySummary] = await Promise.all([
+  const [phase2WorkspaceDiff, memoryGitBaseline] = await Promise.all([
     regularFileExists(join(memoriesRoot, "phase2_workspace_diff.md")),
     directoryExists(join(memoriesRoot, ".git")),
-    regularFileExists(join(memoriesRoot, "memory_summary.md")),
   ]);
+  const memoryIndex = input.runtime.memoryIndex;
+  const memorySummary = input.runtime.memorySummary ?? "absent";
+  const memorySummarySchema = input.runtime.memorySummarySchema ?? "absent";
+  const artifactContract = classifyArtifactContract({
+    memoryIndex,
+    memorySummary,
+    memorySummarySchema,
+  });
 
   const candidates = await discoverDatabaseCandidates(codexHome);
   if (candidates.length === 0) {
@@ -89,7 +100,10 @@ export async function readCodexNativeMemoryPhase2Diagnostics(input: {
       phase2ErrorClass: "none",
       phase2WorkspaceDiff,
       memoryGitBaseline,
+      memoryIndex,
       memorySummary,
+      memorySummarySchema,
+      artifactContract,
     }, input.runtime);
   }
 
@@ -114,7 +128,10 @@ export async function readCodexNativeMemoryPhase2Diagnostics(input: {
       phase2ErrorClass: "none",
       phase2WorkspaceDiff,
       memoryGitBaseline,
+      memoryIndex,
       memorySummary,
+      memorySummarySchema,
+      artifactContract,
     }, input.runtime);
   }
 
@@ -142,7 +159,10 @@ export async function readCodexNativeMemoryPhase2Diagnostics(input: {
     phase2ErrorClass,
     phase2WorkspaceDiff,
     memoryGitBaseline,
+    memoryIndex,
     memorySummary,
+    memorySummarySchema,
+    artifactContract: phase2ErrorClass === "artifacts" ? "invalid" : artifactContract,
   }, input.runtime);
 }
 
@@ -164,7 +184,10 @@ export function renderCodexNativeMemoryPhase2DiagnosticLines(
     `codex_memory_phase2_error_class=${diagnostic.phase2ErrorClass}`,
     `codex_memory_phase2_workspace_diff=${diagnostic.phase2WorkspaceDiff}`,
     `codex_memory_phase2_git_baseline=${diagnostic.memoryGitBaseline}`,
+    `codex_memory_index=${diagnostic.memoryIndex}`,
     `codex_memory_summary=${diagnostic.memorySummary}`,
+    `codex_memory_summary_schema=${diagnostic.memorySummarySchema}`,
+    `codex_memory_artifact_contract=${diagnostic.artifactContract}`,
     `codex_memory_phase2_diagnosis=${diagnostic.diagnosis}`,
   ];
 }
@@ -183,8 +206,26 @@ export function classifyMemoryJobError(value: unknown): ErrorClass {
     return "filesystem-permission";
   }
   if (/provider|responses|http|connection|network|api|model/.test(text)) return "provider";
+  if (/failed_invalid_artifacts|invalid[_ -]?artifacts|consolidation artifacts are invalid/.test(text)) {
+    return "artifacts";
+  }
   if (/spawn|child process|process exited|exit code|signal/.test(text)) return "process";
   return "unknown";
+}
+
+
+export function classifyArtifactContract(input: {
+  memoryIndex: "present" | "absent";
+  memorySummary: "present" | "absent";
+  memorySummarySchema: "v1" | "invalid" | "unreadable" | "absent";
+}): "valid" | "invalid" | "not-yet" {
+  if (
+    input.memoryIndex === "present"
+    && input.memorySummary === "present"
+    && input.memorySummarySchema === "v1"
+  ) return "valid";
+  if (input.memoryIndex === "present" || input.memorySummary === "present") return "invalid";
+  return "not-yet";
 }
 
 function finalize(
@@ -202,7 +243,7 @@ function diagnosePhase2(
   runtime: CodexNativeMemoryRuntimeStatus,
 ): string {
   if (!runtime.effective) return "inactive";
-  if (runtime.lifecycle === "consolidated" || diagnostic.memorySummary === "present") {
+  if (runtime.lifecycle === "consolidated" && diagnostic.artifactContract === "valid") {
     return "consolidated";
   }
   if (runtime.lifecycle === "armed") return "waiting:phase1";

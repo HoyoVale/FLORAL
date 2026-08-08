@@ -78,7 +78,7 @@ Codex native memories are cross-thread recall state, while project `AGENTS.md` a
 
 Phase 7.4B keeps Codex as the only automatic-memory engine and adds an observation-only acceptance layer around its generated state. FLORAL classifies bounded filesystem metadata under the managed `CODEX_HOME/memories` directory as `armed`, `generated`, or `consolidated`; it does not parse memory contents or mutate Codex memory files.
 
-`/memory` exposes the same lifecycle state remotely without starting a model turn. `codex:native-memory:lifecycle` provides the terminal equivalent, while `codex:native-memory:lifecycle:check` requires a consolidated `MEMORY.md` or `memory_summary.md` artifact and is intentionally stricter than configuration activation. Consolidated artifacts are evidence that the generation pipeline ran, not proof that a new thread actually received or used a memory; cross-thread recall remains a separate behavioral acceptance test.
+`/memory` exposes the same lifecycle state remotely without starting a model turn. `codex:native-memory:lifecycle` provides the terminal equivalent. Phase 7.4E aligns `codex:native-memory:lifecycle:check` with the upstream validator: consolidation is valid only when `MEMORY.md` exists and `memory_summary.md` exists with exact first-line schema marker `v1`. Consolidated artifacts are evidence that the generation pipeline ran, not proof that a new thread actually received or used a memory; cross-thread recall remains a separate behavioral acceptance test.
 
 The CLI feature probe now resolves the configured Codex executable through PATH first and then the official standalone locations under the user home directory. An unavailable auxiliary feature probe is diagnostic-only; an explicitly disabled `memories` feature or a non-unified active config remains a failure.
 
@@ -110,3 +110,28 @@ selects allow-listed job metadata plus `last_error`, and immediately converts th
 The excerpt is never exposed through Feishu `/memory diagnose`. It exists only so the Mac
 operator can identify an upstream Codex failure class when the bounded remote classifier
 returns `unknown`.
+
+
+## Phase 7.4E — Custom-provider memory model binding and artifact contract
+
+Phase 7.4D forensics reduced the global job error to the upstream sentinel
+`failed_invalid_artifacts`. In Codex this sentinel is recorded only after the internal
+consolidation agent reaches `Completed` and the upstream artifact validator rejects its
+filesystem output. The validator requires both `MEMORY.md` and `memory_summary.md`, and
+the first line of `memory_summary.md` must be exactly `v1`.
+
+FLORAL uses a configured custom Codex provider (`floral-deepseek`). Codex's provider
+abstraction has OpenAI-hosted preferred model identifiers for internal memory workers
+unless the provider implementation overrides them. A configured provider cannot
+override that Rust trait from TOML. FLORAL therefore renders explicit
+`memories.extract_model` and `memories.consolidation_model` values. Empty FLORAL
+overrides bind each stage to the effective FLORAL primary model, so background memory
+workers use the same model-catalog identity and DeepSeek-specific tool instructions as
+ordinary FLORAL turns.
+
+This is provider adaptation, not a replacement memory engine. Codex still owns
+extraction, consolidation, retries, SQLite state, filesystem artifacts, and recall.
+FLORAL only makes the custom-provider model identity explicit and observes the exact
+upstream artifact contract. The structural diagnostic reads at most the summary schema
+prefix needed to distinguish `v1` from an invalid/missing summary; it never returns
+memory content.

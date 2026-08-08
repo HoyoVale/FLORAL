@@ -80,6 +80,7 @@ export function formatNativeMemoryStatus(runtimeLines: string[]): string {
   const storage = values.get("codex_memory_storage") ?? "unknown";
   const index = values.get("codex_memory_index") ?? "unknown";
   const summary = values.get("codex_memory_summary") ?? "unknown";
+  const summarySchema = values.get("codex_memory_summary_schema") ?? "unknown";
   const raw = values.get("codex_memory_raw") ?? "unknown";
   const summaries = values.get("codex_memory_rollout_summaries") ?? "unknown";
   const lastArtifactAt = values.get("codex_memory_last_artifact_at") ?? "none";
@@ -96,10 +97,11 @@ export function formatNativeMemoryStatus(runtimeLines: string[]): string {
     `storage=${storage}`,
     `memory_index=${index}`,
     `memory_summary=${summary}`,
+    `memory_summary_schema=${summarySchema}`,
     `raw_memories=${raw}`,
     `rollout_summaries=${summaries}`,
     `last_artifact_at=${lastArtifactAt}`,
-    "说明：armed=已启用但尚无生成产物；generated=已有提取产物；consolidated=已有 MEMORY.md 或 memory_summary.md。",
+    "说明：armed=已启用但尚无生成产物；generated=已有提取/未通过校验的产物；consolidated=MEMORY.md 与 v1 memory_summary.md 均通过 Codex 原生结构校验。",
     "该状态只观察 Codex 生成元数据，不读取或修改记忆正文。",
   ].join("\n");
 }
@@ -121,7 +123,10 @@ export function formatNativeMemoryDiagnostics(runtimeLines: string[]): string {
     `phase2_error_class=${values.get("codex_memory_phase2_error_class") ?? "unknown"}`,
     `phase2_workspace_diff=${values.get("codex_memory_phase2_workspace_diff") ?? "unknown"}`,
     `memory_git_baseline=${values.get("codex_memory_phase2_git_baseline") ?? "unknown"}`,
+    `memory_index=${values.get("codex_memory_index") ?? "unknown"}`,
     `memory_summary=${values.get("codex_memory_summary") ?? "unknown"}`,
+    `memory_summary_schema=${values.get("codex_memory_summary_schema") ?? "unknown"}`,
+    `artifact_contract=${values.get("codex_memory_artifact_contract") ?? "unknown"}`,
     `diagnosis=${values.get("codex_memory_phase2_diagnosis") ?? "unknown"}`,
     "说明：只读检查 Codex-owned SQLite job 元数据与 memory workspace 元数据；不读取记忆正文，不修改数据库。",
   ].join("\n");

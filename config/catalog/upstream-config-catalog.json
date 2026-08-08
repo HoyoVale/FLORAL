@@ -212,21 +212,24 @@
         {
           "id": "native-memory",
           "classification": "upstream-managed",
-          "coverage": "Phase-7.4C-managed-config-with-read-only-phase2-diagnostics",
+          "coverage": "Phase-7.4E-custom-provider-memory-model-binding-and-artifact-contract",
           "knownKeys": [
             "features.memories",
             "memories.use_memories",
             "memories.generate_memories",
             "memories.disable_on_external_context",
+            "memories.extract_model",
+            "memories.consolidation_model",
             "CODEX_HOME/memories (diagnostic-only generated state)",
             "thread/memoryMode/set (experimental app-server; unavailable on current production probe)",
             "memory/reset (experimental app-server; unavailable on current production probe)",
             "CODEX_HOME/state_<n>.sqlite jobs/stage1_outputs metadata (read-only diagnostics)",
             "CODEX_HOME/memories_<n>.sqlite jobs/stage1_outputs metadata (read-only diagnostics)",
             "CODEX_HOME/memories/phase2_workspace_diff.md presence (diagnostic-only)",
-            "CODEX_HOME/memories/memory_summary.md presence (diagnostic-only)"
+            "CODEX_HOME/memories/MEMORY.md presence (diagnostic-only)",
+            "CODEX_HOME/memories/memory_summary.md presence + structural v1 header (diagnostic-only)"
           ],
-          "notes": "Phase 7.4A enables Codex-native memories in the unified generated config. Phase 7.4B adds observation-only lifecycle acceptance and remote /memory status. Phase 7.4C adds owner-only/read-only Phase-2 diagnostics over bounded Codex-owned SQLite job metadata and memory-workspace metadata; it never reads memory text, mutates upstream databases, resets jobs, or advances watermarks. Raw job errors are reduced to non-secret categories. Project AGENTS/repo docs remain the deterministic source of truth if recalled memory conflicts."
+          "notes": "Phase 7.4A enables Codex-native memories in the unified generated config. Phase 7.4B adds observation-only lifecycle acceptance and remote /memory status. Phase 7.4C/7.4D add read-only Phase-2 diagnostics and local-only redacted error forensics. Phase 7.4E binds both Codex memory stages to the FLORAL primary model by default because FLORAL uses a configured custom provider, and mirrors the upstream consolidation validator: MEMORY.md must exist and memory_summary.md must start with v1. FLORAL never mutates Codex memory databases or synthesizes upstream memory artifacts. Project AGENTS/repo docs remain the deterministic source of truth if recalled memory conflicts."
         },
         {
           "id": "native-advanced",

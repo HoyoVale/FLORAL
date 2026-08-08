@@ -93,6 +93,11 @@ enabled = true
 use_memories = true
 generate_memories = true
 disable_on_external_context = false
+# FLORAL is a configured custom Codex provider. Empty values deliberately bind
+# both native memory stages to the FLORAL primary model instead of allowing
+# Codex to choose an OpenAI-hosted preferred model id for an internal worker.
+extract_model = ""
+consolidation_model = ""
 
 [codex.native]
 # Native Codex config.toml fields. "inherit" maps DeepSeek high/max to

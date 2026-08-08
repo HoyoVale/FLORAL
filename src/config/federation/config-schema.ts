@@ -84,6 +84,8 @@ export const requestedConfigSchema = z.object({
       use_memories: z.boolean(),
       generate_memories: z.boolean(),
       disable_on_external_context: z.boolean(),
+      extract_model: z.string(),
+      consolidation_model: z.string(),
     }).strict(),
     native: z.object({
       provider_id: z.string().trim().min(1),
@@ -318,6 +320,8 @@ export interface RequestedConfig {
       use_memories: boolean;
       generate_memories: boolean;
       disable_on_external_context: boolean;
+      extract_model: string;
+      consolidation_model: string;
     };
     native: {
       provider_id: string;
@@ -549,6 +553,8 @@ export const DEFAULT_REQUESTED_CONFIG: RequestedConfig = {
       use_memories: true,
       generate_memories: true,
       disable_on_external_context: false,
+      extract_model: "",
+      consolidation_model: "",
     },
     native: {
       provider_id: "floral-deepseek",

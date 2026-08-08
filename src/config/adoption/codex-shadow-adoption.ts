@@ -68,6 +68,8 @@ const EXPECTED_UNIFIED_ONLY_ASSIGNMENTS = [
   "approval_policy",
   "features.memories",
   "memories.disable_on_external_context",
+  "memories.extract_model",
+  "memories.consolidation_model",
   "memories.generate_memories",
   "memories.use_memories",
   "model_reasoning_summary",
