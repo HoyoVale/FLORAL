@@ -5,6 +5,7 @@ import { resolveConfigurationAuthority } from "../src/config/federation/config-a
 import {
   buildMcpRuntimeRegistry,
   renderCodexMcpLines,
+  resolveFloralPeekabooRuntime,
   validateMcpRuntimeRegistry,
 } from "../src/config/mcp/mcp-runtime-registry.js";
 
@@ -60,10 +61,13 @@ describe("MCP runtime registry", () => {
     expect(codex).toContain('env = { SEARXNG_URL = "http://127.0.0.1:8888", NO_PROXY = "127.0.0.1,localhost,::1" }');
     expect(codex).toContain('[mcp_servers.floral_search.tools.searxng_web_search]');
     expect(codex).toContain('[mcp_servers.floral_peekaboo]');
-    expect(codex).toContain('command = "peekaboo"');
-    expect(codex).toContain('args = ["mcp"]');
-    expect(codex).toContain('PEEKABOO_ALLOW_TOOLS = "image,see"');
-    expect(codex).toContain('PEEKABOO_AI_PROVIDERS = ""');
+    const peekabooRuntime = resolveFloralPeekabooRuntime();
+    expect(codex).toContain(`args = ${JSON.stringify([peekabooRuntime.serverEntrypoint])}`);
+    expect(codex).toContain('FLORAL_PEEKABOO_COMMAND = "peekaboo"');
+    expect(codex).toContain(
+      `FLORAL_PEEKABOO_ALLOWED_ROOT = ${JSON.stringify(peekabooRuntime.allowedRoot)}`,
+    );
+    expect(codex).not.toContain('PEEKABOO_AI_PROVIDERS = ""');
     expect(codex).toContain('[mcp_servers.floral_peekaboo.tools.image]');
     expect(codex).toContain('[mcp_servers.floral_peekaboo.tools.see]');
 

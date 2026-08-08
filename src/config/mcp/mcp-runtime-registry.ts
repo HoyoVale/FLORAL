@@ -66,9 +66,25 @@ export function resolveFloralVisionRuntime(): FloralVisionRuntimePaths {
   };
 }
 
+export interface FloralPeekabooRuntimePaths {
+  repositoryRoot: string;
+  serverEntrypoint: string;
+  allowedRoot: string;
+}
+
+export function resolveFloralPeekabooRuntime(): FloralPeekabooRuntimePaths {
+  const vision = resolveFloralVisionRuntime();
+  return {
+    repositoryRoot: vision.repositoryRoot,
+    serverEntrypoint: join(vision.repositoryRoot, "dist", "scripts", "floral-peekaboo-mcp.js"),
+    allowedRoot: vision.allowedRoot,
+  };
+}
+
 export function buildMcpRuntimeRegistry(config: EffectiveConfig): McpRuntimeRegistry {
   const search = config.mcp.search;
   const visionRuntime = resolveFloralVisionRuntime();
+  const peekabooRuntime = resolveFloralPeekabooRuntime();
   const visionTools = [...config.mcp.vision.enabled_tools].sort();
   const expectedVisionTools = [...FLORAL_VISION_TOOLS].sort();
   if (
@@ -146,23 +162,20 @@ export function buildMcpRuntimeRegistry(config: EffectiveConfig): McpRuntimeRegi
       integrationStatus: "active",
       transport: {
         type: "stdio",
-        command: config.macos.peekaboo_command,
-        args: ["mcp"],
+        command: process.execPath,
+        args: [peekabooRuntime.serverEntrypoint],
         inheritParentEnvironment: config.mcp.macos.inherit_parent_environment,
         environment: [
           {
-            name: "PEEKABOO_ALLOW_TOOLS",
+            name: "FLORAL_PEEKABOO_COMMAND",
             kind: "literal",
-            value: [...config.mcp.macos.enabled_tools].sort().join(","),
+            value: config.macos.peekaboo_command,
           },
           {
-            // FLORAL/DeepSeek remains the model authority. Peekaboo observation
-            // tools must not independently upload captures to an AI provider.
-            name: "PEEKABOO_AI_PROVIDERS",
+            name: "FLORAL_PEEKABOO_ALLOWED_ROOT",
             kind: "literal",
-            value: "",
+            value: peekabooRuntime.allowedRoot,
           },
-          { name: "PEEKABOO_LOG_LEVEL", kind: "literal", value: "warn" },
         ],
       },
       required: config.mcp.macos.required,
@@ -176,6 +189,7 @@ export function buildMcpRuntimeRegistry(config: EffectiveConfig): McpRuntimeRegi
       })),
       provider: {
         kind: "peekaboo",
+        gateway: "floral-owned-observe-only",
         profile: config.mcp.macos.profile,
         expectedVersion: config.mcp.macos.expected_version,
         aiProviders: "disabled",

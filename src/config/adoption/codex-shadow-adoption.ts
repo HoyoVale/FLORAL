@@ -1,4 +1,5 @@
 import {
+  resolveFloralPeekabooRuntime,
   resolveFloralVisionRuntime,
 } from "../mcp/mcp-runtime-registry.js";
 import {
@@ -69,18 +70,15 @@ const EXPECTED_UNIFIED_ONLY_ASSIGNMENTS = [
   "sandbox_mode",
 ] as const;
 
-// Phase 6A.1 intentionally adds one observe-only MCP server to the unified
-// renderer while the legacy generator still knows only about the search MCP.
-// Keep this allowance exact and value-scoped: broad mcp_servers.* acceptance
-// would let an accidentally widened GUI-control surface bypass the shadow gate.
-// The command itself may be an absolute signed/Homebrew path on the target Mac.
-const PEEKABOO_OBSERVE_ONLY_UNIFIED_ASSIGNMENTS = new Map<string, string | undefined>([
-  ["mcp_servers.floral_peekaboo.command", undefined],
-  ["mcp_servers.floral_peekaboo.args", '["mcp"]'],
-  [
-    "mcp_servers.floral_peekaboo.env",
-    '{ PEEKABOO_ALLOW_TOOLS = "image,see", PEEKABOO_AI_PROVIDERS = "", PEEKABOO_LOG_LEVEL = "warn" }',
-  ],
+// Phase 6A.3 keeps the public Peekaboo tool names but places the upstream
+// binary behind a FLORAL-owned observe-only gateway. The model can no longer
+// choose screenshot paths, inline/base64 output, foreground focus, annotation,
+// or upstream AI analysis. Keep the Codex projection exact except for the
+// administrator-selected Peekaboo executable string.
+const peekabooRuntime = resolveFloralPeekabooRuntime();
+const PEEKABOO_OBSERVE_ONLY_UNIFIED_ASSIGNMENTS = new Map<string, string>([
+  ["mcp_servers.floral_peekaboo.command", JSON.stringify(process.execPath)],
+  ["mcp_servers.floral_peekaboo.args", JSON.stringify([peekabooRuntime.serverEntrypoint])],
   ["mcp_servers.floral_peekaboo.enabled_tools", '["image", "see"]'],
   ["mcp_servers.floral_peekaboo.required", "false"],
   ["mcp_servers.floral_peekaboo.startup_timeout_sec", "60"],
@@ -94,9 +92,26 @@ function isAllowedPeekabooObserveOnlyUnifiedAssignment(
   path: string,
   assignment: string,
 ): boolean {
-  if (!PEEKABOO_OBSERVE_ONLY_UNIFIED_ASSIGNMENTS.has(path)) return false;
-  const expected = PEEKABOO_OBSERVE_ONLY_UNIFIED_ASSIGNMENTS.get(path);
-  return expected === undefined || expected === assignment;
+  if (path === "mcp_servers.floral_peekaboo.env") {
+    return isAllowedFloralPeekabooEnvironment(assignment);
+  }
+  return PEEKABOO_OBSERVE_ONLY_UNIFIED_ASSIGNMENTS.get(path) === assignment;
+}
+
+function isAllowedFloralPeekabooEnvironment(assignment: string): boolean {
+  const prefix = "{ FLORAL_PEEKABOO_COMMAND = ";
+  const suffix =
+    `, FLORAL_PEEKABOO_ALLOWED_ROOT = ${JSON.stringify(peekabooRuntime.allowedRoot)} }`;
+  if (!assignment.startsWith(prefix) || !assignment.endsWith(suffix)) return false;
+  const encodedCommand = assignment.slice(prefix.length, assignment.length - suffix.length);
+  try {
+    const command = JSON.parse(encodedCommand) as unknown;
+    return typeof command === "string"
+      && command.trim().length > 0
+      && !/[\r\n\0]/u.test(command);
+  } catch {
+    return false;
+  }
 }
 
 const visionRuntime = resolveFloralVisionRuntime();

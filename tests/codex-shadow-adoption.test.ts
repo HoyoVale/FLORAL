@@ -66,6 +66,29 @@ describe("Codex unified shadow adoption", () => {
   });
 
 
+  it("rejects a widened FLORAL Peekaboo artifact root", async () => {
+    const resolved = await authority();
+    const unified = renderCodexConfig(
+      resolved.effective,
+      "http://127.0.0.1:9999/v1",
+    );
+    const tampered = unified.replace(
+      /FLORAL_PEEKABOO_ALLOWED_ROOT = "[^"]+"/u,
+      'FLORAL_PEEKABOO_ALLOWED_ROOT = "/tmp"',
+    );
+    expect(tampered).not.toBe(unified);
+    const comparison = compareCodexShadowConfigs({
+      legacyConfig: legacyConfig(),
+      unifiedConfig: tampered,
+      effectiveFingerprint: resolved.effectiveFingerprint,
+    });
+    expect(comparison.status).toBe("drift");
+    expect(comparison.unexpectedUnifiedOnlyAssignments).toContain(
+      "mcp_servers.floral_peekaboo.env",
+    );
+  });
+
+
   it("keeps runtime model-catalog installation paths outside the Phase 4 semantic fingerprint", () => {
     const withoutCatalog = 'model = "deepseek-v4-flash"\n';
     const withCatalog = [

@@ -98,7 +98,9 @@
     "approval:local:approve": "tsx scripts/local-approval.ts approve",
     "approval:local:deny": "tsx scripts/local-approval.ts deny",
     "vision:mcp": "tsx scripts/floral-vision-mcp.ts",
-    "vision:probe": "tsx scripts/mimo-vision-probe.ts"
+    "vision:probe": "tsx scripts/mimo-vision-probe.ts",
+    "peekaboo:gateway": "tsx scripts/floral-peekaboo-mcp.ts",
+    "visual-chain:probe": "tsx scripts/visual-chain-probe.ts"
   },
   "dependencies": {
     "@larksuiteoapi/node-sdk": "1.36.0",
