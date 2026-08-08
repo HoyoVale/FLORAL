@@ -197,4 +197,13 @@ describe("DeepSeek cost guard", () => {
     expect(gate.snapshot()).toEqual({ activeRuns: 0, providerAllowed: false });
   });
 
+  it("allows only the explicitly trusted Codex memory-consolidation background activity", () => {
+    const gate = new ProviderActivityGate();
+    expect(() => gate.assertProviderRequestAllowed()).toThrow(/no agent run is active/u);
+    expect(() => gate.assertProviderRequestAllowed({
+      trustedNativeMemoryConsolidation: true,
+    })).not.toThrow();
+    expect(gate.snapshot()).toEqual({ activeRuns: 0, providerAllowed: false });
+  });
+
 });

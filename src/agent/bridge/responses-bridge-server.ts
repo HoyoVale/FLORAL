@@ -320,11 +320,13 @@ export class ResponsesBridgeServer {
       );
       const requestId = ++this.#requestSequence;
       const requestStartedAt = Date.now();
+      const subagentClass = classifyCodexSubagentHeader(request.headers["x-openai-subagent"]);
       this.#options.telemetry?.onEvent(buildResponsesBridgeRequestTelemetry({
         requestId,
         atMs: requestStartedAt,
         request: responsesRequest,
         translated,
+        subagentClass,
       }));
       this.#reportApplyPatchSurface(responsesRequest);
       const forcedToolName = this.#selectForcedTool(
@@ -348,6 +350,7 @@ export class ResponsesBridgeServer {
           streamOptions,
           this.#options.costGuard,
           this.#options.activityGate,
+          subagentClass === "memory_consolidation",
           requestController.signal,
         ),
         {
@@ -366,6 +369,7 @@ export class ResponsesBridgeServer {
         first = await iterator.next();
       } catch (error) {
         const providerError = normalizeProviderError(error);
+        const errorCode = providerErrorCode(providerError);
         this.#options.telemetry?.onEvent({
           schemaVersion: 1,
           event: "failure",
@@ -373,6 +377,7 @@ export class ResponsesBridgeServer {
           at: new Date().toISOString(),
           elapsedMs: Date.now() - requestStartedAt,
           errorKind: providerError.kind,
+          ...(errorCode ? { errorCode } : {}),
         });
         if (providerError.kind === "cancelled" || requestController.signal.aborted) return;
         writeProviderJsonError(response, providerError);
@@ -440,6 +445,7 @@ export class ResponsesBridgeServer {
         }
       } catch (error) {
         const providerError = normalizeProviderError(error);
+        const errorCode = providerErrorCode(providerError);
         this.#options.telemetry?.onEvent({
           schemaVersion: 1,
           event: "failure",
@@ -447,6 +453,7 @@ export class ResponsesBridgeServer {
           at: new Date().toISOString(),
           elapsedMs: Date.now() - requestStartedAt,
           errorKind: providerError.kind,
+          ...(errorCode ? { errorCode } : {}),
         });
         if (
           providerError.kind !== "cancelled"
@@ -510,9 +517,10 @@ async function* guardedDeepSeekStream(
   options: Parameters<typeof streamDeepSeekChat>[1],
   costGuard: DeepSeekCostGuard | undefined,
   activityGate: ProviderActivityGate | undefined,
+  trustedNativeMemoryConsolidation: boolean,
   signal?: AbortSignal,
 ): AsyncGenerator<DeepSeekStreamChunk> {
-  activityGate?.assertProviderRequestAllowed();
+  activityGate?.assertProviderRequestAllowed({ trustedNativeMemoryConsolidation });
   if (!costGuard) {
     yield* streamDeepSeekChat(request, options, signal);
     return;
@@ -539,6 +547,24 @@ async function* guardedDeepSeekStream(
       );
     });
   }
+}
+
+type CodexSubagentClass = "memory_consolidation" | "other" | "none";
+
+function classifyCodexSubagentHeader(value: string | string[] | undefined): CodexSubagentClass {
+  if (value === undefined) return "none";
+  if (Array.isArray(value)) {
+    if (value.length !== 1) return "other";
+    value = value[0];
+  }
+  return value?.trim() === "memory_consolidation" ? "memory_consolidation" : "other";
+}
+
+function providerErrorCode(error: ModelProviderError): string | undefined {
+  if (typeof error.data !== "object" || error.data === null || Array.isArray(error.data)) return undefined;
+  const code = (error.data as Record<string, unknown>).code;
+  if (typeof code !== "string" || !/^[a-z0-9][a-z0-9-]{0,63}$/u.test(code)) return undefined;
+  return code;
 }
 
 function normalizeProviderError(error: unknown): ModelProviderError {

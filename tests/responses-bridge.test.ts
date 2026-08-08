@@ -2,6 +2,7 @@ import { createServer, type IncomingMessage, type ServerResponse } from "node:ht
 import type { AddressInfo } from "node:net";
 import { afterEach, describe, expect, it } from "vitest";
 import { ResponsesBridgeServer } from "../src/agent/bridge/responses-bridge-server.js";
+import { ProviderActivityGate } from "../src/runtime/cost/provider-activity-gate.js";
 
 const servers: Array<{ close(): Promise<void> }> = [];
 
@@ -124,6 +125,60 @@ describe("ResponsesBridgeServer", () => {
     });
 
     expect(response.status).toBe(401);
+  });
+
+  it("allows an authenticated Codex memory-consolidation subagent through the idle activity gate", async () => {
+    let upstreamCalls = 0;
+    const fake = await startFakeDeepSeek((_request, response) => {
+      upstreamCalls += 1;
+      sendSse(response, [{
+        id: "chat_memory",
+        model: "deepseek-v4-flash",
+        choices: [{ delta: { content: "ok" }, finish_reason: "stop" }],
+      }]);
+    });
+    const activityGate = new ProviderActivityGate();
+    const bridgeServer = new ResponsesBridgeServer({
+      host: "127.0.0.1",
+      port: 0,
+      token: "bridge-test-token",
+      maxBodyBytes: 1024 * 1024,
+      activityGate,
+      deepSeek: {
+        apiKey: "deepseek-test-key",
+        baseUrl: fake.baseUrl,
+        model: "deepseek-v4-flash",
+        requestTimeoutMs: 2_000,
+        thinking: "disabled",
+        reasoningEffort: "high",
+      },
+    });
+    const bridge = await bridgeServer.start();
+    servers.push({ close: () => bridgeServer.stop() });
+
+    const blocked = await fetch(`${bridge.baseUrl}/responses`, {
+      method: "POST",
+      headers: {
+        authorization: "Bearer bridge-test-token",
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({ model: "deepseek-v4-flash", input: "ordinary idle request", stream: true }),
+    });
+    expect(blocked.status).toBe(429);
+    expect(upstreamCalls).toBe(0);
+
+    const allowed = await fetch(`${bridge.baseUrl}/responses`, {
+      method: "POST",
+      headers: {
+        authorization: "Bearer bridge-test-token",
+        "content-type": "application/json",
+        "x-openai-subagent": "memory_consolidation",
+      },
+      body: JSON.stringify({ model: "deepseek-v4-flash", input: "memory worker", stream: true }),
+    });
+    expect(allowed.status).toBe(200);
+    await allowed.text();
+    expect(upstreamCalls).toBe(1);
   });
 
   it("forces the named probe tool only after its marker and restores thinking context", async () => {

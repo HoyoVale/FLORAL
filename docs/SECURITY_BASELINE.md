@@ -123,6 +123,7 @@ This section supersedes the conflicting Phase 5.2/5.3 bullets above for Codex-na
 - Native memory currently has `CODEX_HOME` scope, not FLORAL Project scope. Therefore project `AGENTS.md`, repository documentation, and other project-local sources of truth take precedence over recalled memory when they disagree.
 - The existing controlled-cutover fallback is retained. If the installed Codex cannot parse or activate the native memory configuration, FLORAL rolls back to legacy config rather than preventing service startup; diagnostics must surface that memory is not active.
 - Memory-generation provider traffic still traverses the FLORAL model bridge and cost guard; enabling memories does not bypass provider accounting or request limits.
+- Codex Phase-2 native memory consolidation is the sole approved idle-provider exception: only an authenticated loopback bridge request whose `x-openai-subagent` value is exactly `memory_consolidation` may bypass the foreground activity gate; it still traverses the DeepSeek cost guard and all provider accounting.
 
 
 ## Phase 7.4B native memory diagnostics

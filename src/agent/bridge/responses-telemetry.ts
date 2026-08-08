@@ -13,6 +13,7 @@ export interface ResponsesBridgeRequestTelemetry {
   at: string;
   requestedModel: string;
   translatedModel: string;
+  subagentClass: "memory_consolidation" | "other" | "none";
   instructionsPresent: boolean;
   instructionsBytes: number;
   instructionsFingerprint?: string;
@@ -49,6 +50,7 @@ export interface ResponsesBridgeFailureTelemetry {
   at: string;
   elapsedMs: number;
   errorKind: string;
+  errorCode?: string;
 }
 
 export type ResponsesBridgeTelemetryEvent =
@@ -61,6 +63,7 @@ export function buildResponsesBridgeRequestTelemetry(input: {
   atMs: number;
   request: ResponsesBridgeRequest;
   translated: TranslatedDeepSeekRequest;
+  subagentClass?: ResponsesBridgeRequestTelemetry["subagentClass"];
 }): ResponsesBridgeRequestTelemetry {
   const instructions = input.request.instructions;
   const tools = summarizeTools(input.request.tools);
@@ -71,6 +74,7 @@ export function buildResponsesBridgeRequestTelemetry(input: {
     at: new Date(input.atMs).toISOString(),
     requestedModel: input.request.model,
     translatedModel: input.translated.model,
+    subagentClass: input.subagentClass ?? "none",
     instructionsPresent: typeof instructions === "string" && instructions.length > 0,
     instructionsBytes: typeof instructions === "string"
       ? Buffer.byteLength(instructions, "utf8")

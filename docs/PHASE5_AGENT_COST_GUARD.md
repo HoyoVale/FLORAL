@@ -4,7 +4,7 @@ Phase 5.1 adds a fail-closed provider boundary after a confirmed self-call storm
 
 ## Enforcement boundary
 
-Production also enforces an idle invariant: if no `AgentRuntime.run()` is active, the bridge rejects a DeepSeek request locally. A background Codex/app-server loop therefore cannot spend tokens while QQ is idle.
+Production also enforces an idle invariant: if no `AgentRuntime.run()` is active, the bridge rejects a DeepSeek request locally. The narrow exception is Codex Native Memory Phase-2 consolidation: after bridge-token authentication, a request whose `x-openai-subagent` header is exactly `memory_consolidation` may pass the activity gate because Codex intentionally runs that worker asynchronously after the visible run. This exception does **not** bypass the DeepSeek cost guard, request/token/cost budgets, bridge capacity, or provider authentication. Arbitrary idle app-server traffic remains denied.
 
 Every guarded DeepSeek streaming attempt is recorded **before** the HTTP request is allowed to start. The durable state stores only timestamps, model name, SHA-256 request fingerprints, usage counters, and estimated cost. Prompt text, tool output, credentials, and API keys are never stored.
 

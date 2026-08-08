@@ -39,6 +39,7 @@ describe("Responses bridge structural telemetry", () => {
       requestId: 7,
       requestedModel: "deepseek-v4-flash",
       translatedModel: "deepseek-v4-flash",
+      subagentClass: "none",
       instructionsPresent: true,
       inputKind: "array",
       inputItemCount: 1,
@@ -87,4 +88,21 @@ describe("Responses bridge structural telemetry", () => {
     expect(rendered).not.toContain("do not log this body");
     expect(rendered).not.toContain("SECRET SCHEMA");
   });
+  it("classifies the native memory consolidation subagent without retaining header contents", () => {
+    const request: ResponsesBridgeRequest = {
+      model: "deepseek-v4-flash",
+      input: "private",
+    };
+    const translated = translateResponsesRequest(request, "deepseek-v4-flash");
+    const event = buildResponsesBridgeRequestTelemetry({
+      requestId: 9,
+      atMs: 0,
+      request,
+      translated,
+      subagentClass: "memory_consolidation",
+    });
+    expect(event.subagentClass).toBe("memory_consolidation");
+    expect(JSON.stringify(event)).not.toContain("x-openai-subagent");
+  });
+
 });

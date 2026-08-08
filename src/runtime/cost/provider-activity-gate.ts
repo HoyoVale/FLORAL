@@ -13,8 +13,10 @@ export class ProviderActivityGate {
     };
   }
 
-  assertProviderRequestAllowed(): void {
-    if (this.#activeRuns > 0) return;
+  assertProviderRequestAllowed(input: {
+    trustedNativeMemoryConsolidation: boolean;
+  } = { trustedNativeMemoryConsolidation: false }): void {
+    if (this.#activeRuns > 0 || input.trustedNativeMemoryConsolidation) return;
     throw new ModelProviderError({
       kind: "cost_limit",
       message: "FLORAL blocked an idle DeepSeek request because no agent run is active",
