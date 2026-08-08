@@ -258,9 +258,12 @@ export function renderConfigurationAuthority(
     `config.feishu.sdk.expected_version=${authority.effective.feishu.sdk.expected_version}`,
     `config.feishu.presentation.visible_activity_fallback=${String(authority.effective.feishu.presentation.visible_activity_fallback)}`,
     `config.feishu.presentation.visible_activity_delay_ms=${String(authority.effective.feishu.presentation.visible_activity_delay_ms)}`,
+    `config.macos.mode=${authority.effective.macos.mode}`,
     `config.mcp.search.enabled=${String(authority.effective.mcp.search.enabled)}`,
     `config.mcp.vision.enabled=${String(authority.effective.mcp.vision.enabled)}`,
     `config.mcp.macos.enabled=${String(authority.effective.mcp.macos.enabled)}`,
+    `config.mcp.macos.profile=${authority.effective.mcp.macos.profile}`,
+    `config.mcp.macos.expected_version=${authority.effective.mcp.macos.expected_version}`,
   ];
 
   for (const id of Object.keys(authority.effective.secrets).sort() as SecretId[]) {

@@ -215,7 +215,9 @@ input_cache_miss_cny_per_million = 1
 output_cny_per_million = 2
 
 [macos]
-mode = "mock"
+# Phase 6A production activation. On the target Mac, prefer overriding
+# PEEKABOO_COMMAND with the absolute signed/Homebrew CLI path in local .env.
+mode = "real"
 peekaboo_command = "peekaboo"
 
 [mcp.search]
@@ -240,8 +242,16 @@ enabled_tools = ["vision_analyze_screen", "vision_analyze_region"]
 inherit_parent_environment = false
 
 [mcp.macos]
-enabled = false
+# Observe-only Phase 6A surface. Control/input tools remain absent from both
+# Codex's enabled_tools projection and Peekaboo's own PEEKABOO_ALLOW_TOOLS.
+enabled = true
 id = "floral_peekaboo"
 profile = "observe"
+expected_version = "3.9.8"
 enabled_tools = ["image", "see"]
+required = false
+startup_timeout_sec = 60
+tool_timeout_sec = 45
+default_tools_approval_mode = "approve"
+tool_approval_mode = "approve"
 inherit_parent_environment = false

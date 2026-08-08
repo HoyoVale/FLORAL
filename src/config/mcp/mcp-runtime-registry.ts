@@ -94,15 +94,42 @@ export function buildMcpRuntimeRegistry(config: EffectiveConfig): McpRuntimeRegi
     {
       id: config.mcp.macos.id,
       enabled: config.mcp.macos.enabled,
-      integrationStatus: "planned",
+      integrationStatus: "active",
+      transport: {
+        type: "stdio",
+        command: config.macos.peekaboo_command,
+        args: ["mcp"],
+        inheritParentEnvironment: config.mcp.macos.inherit_parent_environment,
+        environment: [
+          {
+            name: "PEEKABOO_ALLOW_TOOLS",
+            kind: "literal",
+            value: [...config.mcp.macos.enabled_tools].sort().join(","),
+          },
+          {
+            // FLORAL/DeepSeek remains the model authority. Peekaboo observation
+            // tools must not independently upload captures to an AI provider.
+            name: "PEEKABOO_AI_PROVIDERS",
+            kind: "literal",
+            value: "",
+          },
+          { name: "PEEKABOO_LOG_LEVEL", kind: "literal", value: "warn" },
+        ],
+      },
+      required: config.mcp.macos.required,
+      startupTimeoutSec: config.mcp.macos.startup_timeout_sec,
+      toolTimeoutSec: config.mcp.macos.tool_timeout_sec,
+      defaultToolsApprovalMode: config.mcp.macos.default_tools_approval_mode,
       tools: [...config.mcp.macos.enabled_tools].sort().map((name) => ({
         name,
         enabled: true,
-        approvalMode: "prompt",
+        approvalMode: config.mcp.macos.tool_approval_mode,
       })),
       provider: {
         kind: "peekaboo",
         profile: config.mcp.macos.profile,
+        expectedVersion: config.mcp.macos.expected_version,
+        aiProviders: "disabled",
         inheritParentEnvironment: config.mcp.macos.inherit_parent_environment,
       },
     },

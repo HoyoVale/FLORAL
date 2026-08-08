@@ -62,6 +62,36 @@ const EXPECTED_UNIFIED_ONLY_ASSIGNMENTS = [
   "sandbox_mode",
 ] as const;
 
+// Phase 6A.1 intentionally adds one observe-only MCP server to the unified
+// renderer while the legacy generator still knows only about the search MCP.
+// Keep this allowance exact and value-scoped: broad mcp_servers.* acceptance
+// would let an accidentally widened GUI-control surface bypass the shadow gate.
+// The command itself may be an absolute signed/Homebrew path on the target Mac.
+const PEEKABOO_OBSERVE_ONLY_UNIFIED_ASSIGNMENTS = new Map<string, string | undefined>([
+  ["mcp_servers.floral_peekaboo.command", undefined],
+  ["mcp_servers.floral_peekaboo.args", '["mcp"]'],
+  [
+    "mcp_servers.floral_peekaboo.env",
+    '{ PEEKABOO_ALLOW_TOOLS = "image,see", PEEKABOO_AI_PROVIDERS = "", PEEKABOO_LOG_LEVEL = "warn" }',
+  ],
+  ["mcp_servers.floral_peekaboo.enabled_tools", '["image", "see"]'],
+  ["mcp_servers.floral_peekaboo.required", "false"],
+  ["mcp_servers.floral_peekaboo.startup_timeout_sec", "60"],
+  ["mcp_servers.floral_peekaboo.tool_timeout_sec", "45"],
+  ["mcp_servers.floral_peekaboo.default_tools_approval_mode", '"approve"'],
+  ["mcp_servers.floral_peekaboo.tools.image.approval_mode", '"approve"'],
+  ["mcp_servers.floral_peekaboo.tools.see.approval_mode", '"approve"'],
+]);
+
+function isAllowedPeekabooObserveOnlyUnifiedAssignment(
+  path: string,
+  assignment: string,
+): boolean {
+  if (!PEEKABOO_OBSERVE_ONLY_UNIFIED_ASSIGNMENTS.has(path)) return false;
+  const expected = PEEKABOO_OBSERVE_ONLY_UNIFIED_ASSIGNMENTS.get(path);
+  return expected === undefined || expected === assignment;
+}
+
 export async function prepareCodexConfigAdoption(
   options: PrepareCodexConfigAdoptionOptions,
 ): Promise<CodexConfigAdoptionResult> {
@@ -149,7 +179,12 @@ export function compareCodexShadowConfigs(input: {
     .filter((path) => expectedUnifiedOnly.has(path))
     .sort();
   const unexpectedUnifiedOnlyAssignments = unifiedOnly
-    .filter((path) => !expectedUnifiedOnly.has(path))
+    .filter((path) => {
+      if (expectedUnifiedOnly.has(path)) return false;
+      const assignment = unified.get(path);
+      return assignment === undefined
+        || !isAllowedPeekabooObserveOnlyUnifiedAssignment(path, assignment);
+    })
     .sort();
   const missingExpectedUnifiedOnlyAssignments = [...expectedUnifiedOnly]
     .filter((path) => !unified.has(path))

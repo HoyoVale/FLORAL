@@ -36,8 +36,11 @@ describe("MCP registry runtime adoption", () => {
       now: new Date("2026-08-07T03:00:00.000Z"),
     });
     expect(assessMcpRegistryAdoptionReport(report, registry, codexConfig)).toBe("active");
-    expect(report.activeServerIds).toEqual(["floral_search"]);
-    expect(report.toolAllowlists).toEqual({ floral_search: ["searxng_web_search"] });
+    expect(report.activeServerIds).toEqual(["floral_peekaboo", "floral_search"]);
+    expect(report.toolAllowlists).toEqual({
+      floral_peekaboo: ["image", "see"],
+      floral_search: ["searxng_web_search"],
+    });
     const serialized = JSON.stringify(report);
     expect(serialized).not.toContain("http://127.0.0.1:8888");
     expect(serialized).not.toContain("mcp-searxng");

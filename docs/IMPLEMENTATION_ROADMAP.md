@@ -268,11 +268,11 @@
 
 ## Phase 6 — macOS GUI and visual MCP
 
-- MiMo-backed read-only visual analysis;
-- Peekaboo MCP health and required-tool checks;
-- screenshot and application-control smoke tests;
-- per-tool authorization proxy or Codex approval mapping;
-- evidence artifacts for each GUI E2E run.
+- 6A.1: activate signed local Peekaboo as an observe-only stdio MCP server with exactly `image` + `see`, no independent AI providers, an exact-version/permission/tool/capture probe, and `required=false` first-rollout isolation.
+- 6A.2: adapt validated completed Peekaboo MCP results into provenance-bound `AgentArtifact` events, then route screenshots through the existing 5F.4C egress policy and Feishu native image transport.
+- 6B: add granular GUI control tools only after per-tool capability mapping and approval policy exist; do not expose a generic control/admin surface.
+- MiMo-backed visual interpretation remains a later optional layer; Peekaboo observation must work without it.
+- Preserve evidence artifacts and fail-closed tool/provenance checks for every GUI E2E run.
 
 ## Phase 7 — Better Auth and web administration
 

@@ -644,18 +644,19 @@
     {
       "id": "peekaboo",
       "displayName": "Peekaboo macOS automation MCP",
-      "integrationStatus": "planned",
+      "integrationStatus": "active",
       "versionSource": "PEEKABOO_COMMAND --version",
       "officialSources": [
-        "https://github.com/steipete/Peekaboo",
-        "https://github.com/steipete/Peekaboo/blob/main/docs/permissions.md",
-        "https://github.com/steipete/Peekaboo/blob/main/docs/cli-command-reference.md"
+        "https://github.com/openclaw/Peekaboo",
+        "https://github.com/openclaw/Peekaboo/blob/main/docs/MCP.md",
+        "https://github.com/openclaw/Peekaboo/blob/main/docs/permissions.md",
+        "https://github.com/openclaw/Peekaboo/blob/main/docs/security.md"
       ],
       "groups": [
         {
           "id": "observation",
           "classification": "upstream-managed",
-          "coverage": "not-integrated",
+          "coverage": "active-observe-only",
           "knownKeys": [
             "image",
             "see",
@@ -696,7 +697,7 @@
         {
           "id": "native-config",
           "classification": "upstream-passthrough",
-          "coverage": "not-integrated",
+          "coverage": "active-filtered",
           "knownKeys": [
             "provider catalog",
             "configuration file",

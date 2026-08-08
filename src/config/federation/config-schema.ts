@@ -222,7 +222,13 @@ export const requestedConfigSchema = z.object({
       enabled: z.boolean(),
       id: z.string().trim().min(1),
       profile: z.enum(["observe", "control"]),
+      expected_version: z.string().regex(/^\d+\.\d+\.\d+$/u),
       enabled_tools: strictStringArray,
+      required: z.boolean(),
+      startup_timeout_sec: positiveInteger,
+      tool_timeout_sec: positiveInteger,
+      default_tools_approval_mode: z.enum(["auto", "prompt", "writes", "approve"]),
+      tool_approval_mode: z.enum(["auto", "prompt", "writes", "approve"]),
       inherit_parent_environment: z.boolean(),
     }).strict(),
   }).strict(),
@@ -436,7 +442,13 @@ export interface RequestedConfig {
       enabled: boolean;
       id: string;
       profile: "observe" | "control";
+      expected_version: string;
       enabled_tools: string[];
+      required: boolean;
+      startup_timeout_sec: number;
+      tool_timeout_sec: number;
+      default_tools_approval_mode: "auto" | "prompt" | "writes" | "approve";
+      tool_approval_mode: "auto" | "prompt" | "writes" | "approve";
       inherit_parent_environment: boolean;
     };
   };
@@ -650,10 +662,16 @@ export const DEFAULT_REQUESTED_CONFIG: RequestedConfig = {
       inherit_parent_environment: false,
     },
     macos: {
-      enabled: false,
+      enabled: true,
       id: "floral_peekaboo",
       profile: "observe",
+      expected_version: "3.9.8",
       enabled_tools: ["image", "see"],
+      required: false,
+      startup_timeout_sec: 60,
+      tool_timeout_sec: 45,
+      default_tools_approval_mode: "approve",
+      tool_approval_mode: "approve",
       inherit_parent_environment: false,
     },
   },
@@ -684,5 +702,9 @@ export const LOCKED_CONFIG_VALUES = {
   "mcp.search.tool_approval_mode": "approve",
   "mcp.search.inherit_parent_environment": false,
   "mcp.vision.inherit_parent_environment": false,
+  "mcp.macos.profile": "observe",
+  "mcp.macos.expected_version": "3.9.8",
+  "mcp.macos.default_tools_approval_mode": "approve",
+  "mcp.macos.tool_approval_mode": "approve",
   "mcp.macos.inherit_parent_environment": false,
 } as const;
