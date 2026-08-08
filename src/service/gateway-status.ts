@@ -68,6 +68,40 @@ export function formatGatewayStatus(
   return lines.join("\n");
 }
 
+export function formatNativeMemoryStatus(runtimeLines: string[]): string {
+  const values = parseRuntimeStatusLines(runtimeLines);
+  const state = values.get("codex_memory") ?? "unknown";
+  const lifecycle = values.get("codex_memory_lifecycle") ?? "unknown";
+  const scope = values.get("codex_memory_scope") ?? "unknown";
+  const activeConfig = values.get("codex_memory_active_config") ?? "unknown";
+  const runtimeConfig = values.get("codex_memory_runtime_config") ?? "unknown";
+  const use = values.get("codex_memory_use") ?? "unknown";
+  const generate = values.get("codex_memory_generate") ?? "unknown";
+  const storage = values.get("codex_memory_storage") ?? "unknown";
+  const index = values.get("codex_memory_index") ?? "unknown";
+  const raw = values.get("codex_memory_raw") ?? "unknown";
+  const summaries = values.get("codex_memory_rollout_summaries") ?? "unknown";
+  const lastArtifactAt = values.get("codex_memory_last_artifact_at") ?? "none";
+
+  return [
+    "Codex Native Memory",
+    `state=${state}`,
+    `lifecycle=${lifecycle}`,
+    `scope=${scope}`,
+    `active_config=${activeConfig}`,
+    `runtime_config=${runtimeConfig}`,
+    `use=${use}`,
+    `generate=${generate}`,
+    `storage=${storage}`,
+    `memory_index=${index}`,
+    `raw_memories=${raw}`,
+    `rollout_summaries=${summaries}`,
+    `last_artifact_at=${lastArtifactAt}`,
+    "说明：armed=已启用但尚无生成产物；generated=已有提取产物；consolidated=已有 MEMORY.md。",
+    "该状态只观察 Codex 生成元数据，不读取或修改记忆正文。",
+  ].join("\n");
+}
+
 export function gatewayHelpText(): string {
   return [
     "FLORAL",
@@ -76,6 +110,7 @@ export function gatewayHelpText(): string {
     "",
     "/new      开始新会话",
     "/status   查看运行状态",
+    "/memory   查看 Codex Native Memory 生命周期",
     "/projects 列出 Workspace Root 下的项目",
     "/project  查看当前项目",
     "/project <name> 切换项目",

@@ -34,7 +34,11 @@ import type {
   ArtifactEgressPolicy,
   ArtifactEgressRunBudget,
 } from "../policy/artifact-egress-policy.js";
-import { formatGatewayStatus, gatewayHelpText } from "./gateway-status.js";
+import {
+  formatGatewayStatus,
+  formatNativeMemoryStatus,
+  gatewayHelpText,
+} from "./gateway-status.js";
 import type { ProjectWorkspaceRoot, WorkspaceProject } from "../workspace/project-workspace.js";
 import {
   bootstrapProjectContext,
@@ -386,6 +390,23 @@ export class GatewayService {
         });
         await this.#send(message.identity.conversationId, gatewayHelpText());
         return;
+
+      case "native-memory-status": {
+        await this.store.appendAudit({
+          userId: resolved.userId,
+          conversationId: resolved.conversationId,
+          eventType: "command.native_memory_status",
+          payload: {},
+        });
+        const runtimeLines = this.options.runtimeStatusLines
+          ? await this.options.runtimeStatusLines().catch(() => ["codex_memory=unknown"])
+          : ["codex_memory=unknown"];
+        await this.#send(
+          message.identity.conversationId,
+          formatNativeMemoryStatus(runtimeLines),
+        );
+        return;
+      }
 
       case "new": {
         await this.#startNewChat(

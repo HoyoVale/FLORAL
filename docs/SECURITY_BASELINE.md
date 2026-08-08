@@ -123,3 +123,12 @@ This section supersedes the conflicting Phase 5.2/5.3 bullets above for Codex-na
 - Native memory currently has `CODEX_HOME` scope, not FLORAL Project scope. Therefore project `AGENTS.md`, repository documentation, and other project-local sources of truth take precedence over recalled memory when they disagree.
 - The existing controlled-cutover fallback is retained. If the installed Codex cannot parse or activate the native memory configuration, FLORAL rolls back to legacy config rather than preventing service startup; diagnostics must surface that memory is not active.
 - Memory-generation provider traffic still traverses the FLORAL model bridge and cost guard; enabling memories does not bypass provider accounting or request limits.
+
+
+## Phase 7.4B native memory diagnostics
+
+- `/memory` and `codex:native-memory:lifecycle` are observation-only surfaces. They expose lifecycle state, file presence, bounded file counts, byte sizes, and latest artifact time; they never return memory text.
+- FLORAL does not inspect or mutate Codex memory SQLite state. Generated memory artifacts remain upstream-owned implementation state.
+- Lifecycle labels are intentionally conservative: `armed` means the feature is active with no observed artifacts; `generated` means raw/rollout evidence exists; `consolidated` means a Codex-generated `MEMORY.md` exists. None of these labels alone proves cross-thread recall.
+- The feature probe may fall back to the official standalone Codex binary under `$HOME/.local/bin` when an interactive shell PATH is incomplete. This does not modify shell profiles or the service PATH.
+- `feature_probe=unavailable` is a diagnostic warning rather than an authorization/configuration failure. `feature_probe=disabled` still fails when native memories are configured on.

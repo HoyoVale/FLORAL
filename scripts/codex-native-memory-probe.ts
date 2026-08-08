@@ -5,6 +5,8 @@ import {
   parseCodexMemoriesFeatureList,
   readCodexNativeMemoryRuntimeStatus,
   renderCodexNativeMemoryRuntimeLines,
+  resolveCodexExecutableForProbe,
+  type CodexMemoriesFeatureProbeResult,
 } from "../src/agent/codex-native-memory-status.js";
 import { resolveConfigurationAuthority } from "../src/config/federation/config-authority.js";
 import { loadProjectEnv } from "../src/config/load-project-env.js";
@@ -29,21 +31,30 @@ for (const line of renderCodexNativeMemoryRuntimeLines(status)) {
 const codexHome = isAbsolute(codex.managed_home)
   ? resolve(codex.managed_home)
   : resolve(repositoryRoot, codex.managed_home);
-const feature = await probeMemoriesFeature(codex.command, codexHome);
+const resolvedCommand = await resolveCodexExecutableForProbe({
+  command: codex.command,
+  pathValue: process.env.PATH,
+});
+const feature: CodexMemoriesFeatureProbeResult & { error?: string | undefined } = resolvedCommand
+  ? await probeMemoriesFeature(resolvedCommand, codexHome)
+  : { status: "unavailable", error: "command-not-found" };
 console.log(`codex_memory_feature_probe=${feature.status}`);
 if (feature.stage) console.log(`codex_memory_feature_stage=${feature.stage}`);
+if (feature.status === "unavailable") {
+  console.log(`codex_memory_feature_error=${feature.error ?? "unknown"}`);
+}
 
-if (codex.memories.enabled && feature.status !== "enabled") {
+if (codex.memories.enabled && feature.status === "disabled") {
   process.exitCode = 2;
 }
-if (codex.memories.enabled && status.activeConfig !== "unified") {
+if (codex.memories.enabled && !status.effective) {
   process.exitCode = 2;
 }
 
 async function probeMemoriesFeature(
   command: string,
   codexHome: string,
-): Promise<{ status: "enabled" | "disabled" | "unavailable"; stage?: string }> {
+): Promise<CodexMemoriesFeatureProbeResult & { error?: string | undefined }> {
   const environment = buildProbeEnvironment(process.env, codexHome);
   return await new Promise((resolveResult) => {
     const child = spawn(command, ["features", "list"], {
@@ -53,22 +64,29 @@ async function probeMemoriesFeature(
     });
     let stdout = "";
     let stderr = "";
+    let settled = false;
     child.stdout.setEncoding("utf8");
     child.stderr.setEncoding("utf8");
     child.stdout.on("data", (chunk: string) => { stdout += chunk; });
     child.stderr.on("data", (chunk: string) => { stderr += chunk; });
-    const timer = setTimeout(() => child.kill("SIGKILL"), 15_000);
-    child.once("error", () => {
+    const finish = (value: CodexMemoriesFeatureProbeResult & { error?: string | undefined }) => {
+      if (settled) return;
+      settled = true;
       clearTimeout(timer);
-      resolveResult({ status: "unavailable" });
-    });
+      resolveResult(value);
+    };
+    const timer = setTimeout(() => {
+      child.kill("SIGKILL");
+      finish({ status: "unavailable", error: "timeout" });
+    }, 15_000);
+    child.once("error", () => finish({ status: "unavailable", error: "spawn-failed" }));
     child.once("close", (code) => {
-      clearTimeout(timer);
+      if (settled) return;
       if (code !== 0) {
-        resolveResult({ status: "unavailable" });
+        finish({ status: "unavailable", error: `exit-${String(code ?? "signal")}` });
         return;
       }
-      resolveResult(parseCodexMemoriesFeatureList(`${stdout}\n${stderr}`));
+      finish(parseCodexMemoriesFeatureList(`${stdout}\n${stderr}`));
     });
   });
 }

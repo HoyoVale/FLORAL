@@ -72,3 +72,12 @@ FLORAL now enables the Codex native memories subsystem through the same generate
 The native memory store belongs to Codex under the managed `CODEX_HOME`; FLORAL does not parse or mutate Codex memory artifacts as an application database. `CODEX_HOME/memories` is inspected only for diagnostics. The controlled unified-config cutover remains the compatibility gate: if the installed Codex rejects the memory config, startup falls back to the established legacy config and status/probe output reports native memory as configured but not active.
 
 Codex native memories are cross-thread recall state, while project `AGENTS.md` and repository/project documents remain deterministic project guidance. If recalled memory conflicts with the checked-in project source of truth, the project source wins. Phase 7.3 explicit `.floral` project notes remain temporarily available as a compatibility layer but are not extended into an automatic FLORAL memory engine.
+
+
+## Phase 7.4B native memory lifecycle acceptance
+
+Phase 7.4B keeps Codex as the only automatic-memory engine and adds an observation-only acceptance layer around its generated state. FLORAL classifies bounded filesystem metadata under the managed `CODEX_HOME/memories` directory as `armed`, `generated`, or `consolidated`; it does not parse memory contents, mutate Codex memory files, or query Codex internal SQLite tables.
+
+`/memory` exposes the same lifecycle state remotely without starting a model turn. `codex:native-memory:lifecycle` provides the terminal equivalent, while `codex:native-memory:lifecycle:check` requires a consolidated `MEMORY.md` artifact and is intentionally stricter than configuration activation. Consolidated artifacts are evidence that the generation pipeline ran, not proof that a new thread actually received or used a memory; cross-thread recall remains a separate behavioral acceptance test.
+
+The CLI feature probe now resolves the configured Codex executable through PATH first and then the official standalone locations under the user home directory. An unavailable auxiliary feature probe is diagnostic-only; an explicitly disabled `memories` feature or a non-unified active config remains a failure.

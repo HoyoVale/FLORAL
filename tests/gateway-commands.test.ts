@@ -403,6 +403,18 @@ describe("GatewayService identity and commands", () => {
       cwd: ".",
       trustMockOwner: true,
       runtimeStatusLines: async () => [
+        "codex_memory=enabled",
+        "codex_memory_use=true",
+        "codex_memory_generate=true",
+        "codex_memory_scope=codex-home",
+        "codex_memory_active_config=unified",
+        "codex_memory_runtime_config=present",
+        "codex_memory_lifecycle=armed",
+        "codex_memory_storage=absent",
+        "codex_memory_index=absent",
+        "codex_memory_raw=absent",
+        "codex_memory_rollout_summaries=0",
+        "codex_memory_last_artifact_at=none",
         "cost_guard=ready",
         "cost_24h=¥0.100/10.00",
       ],
@@ -432,6 +444,16 @@ describe("GatewayService identity and commands", () => {
     expect(debugStatus).toContain("run=idle");
     expect(debugStatus).toContain("cost_guard=ready");
     expect(debugStatus).toContain("cost_24h=¥0.100/10.00");
+
+    await transport.receive(incoming({ id: "c-memory", text: "/memory", ...base }));
+    const memoryStatus = transport.sent.at(-1)?.text ?? "";
+    expect(memoryStatus).toContain("Codex Native Memory");
+    expect(memoryStatus).toContain("state=enabled");
+    expect(memoryStatus).toContain("lifecycle=armed");
+    expect(memoryStatus).toContain("scope=codex-home");
+    expect(memoryStatus).toContain("runtime_config=present");
+    expect(memoryStatus).toContain("rollout_summaries=0");
+    expect(agent.requests).toHaveLength(1);
 
     await transport.receive(incoming({ id: "c-4", text: "/new", ...base }));
     expect(transport.sent.at(-1)?.text).toContain("新会话已建立");

@@ -212,7 +212,7 @@
         {
           "id": "native-memory",
           "classification": "upstream-managed",
-          "coverage": "Phase-7.4A-managed-config-with-runtime-probe",
+          "coverage": "Phase-7.4B-managed-config-with-lifecycle-acceptance",
           "knownKeys": [
             "features.memories",
             "memories.use_memories",
@@ -222,7 +222,7 @@
             "thread/memoryMode/set (experimental app-server; unavailable on current production probe)",
             "memory/reset (experimental app-server; unavailable on current production probe)"
           ],
-          "notes": "Phase 7.4A enables Codex-native memories in the unified generated config. The memory store is Codex-owned CODEX_HOME state, not a FLORAL database. FLORAL inspects generated artifacts only for diagnostics and does not edit them. Project AGENTS/repo docs remain the deterministic source of truth if recalled memory conflicts."
+          "notes": "Phase 7.4A enables Codex-native memories in the unified generated config. Phase 7.4B adds observation-only lifecycle acceptance (armed/generated/consolidated), remote /memory status, and robust CLI feature probing. The memory store is Codex-owned CODEX_HOME state, not a FLORAL database; FLORAL never edits memory artifacts or internal SQLite memory state. Project AGENTS/repo docs remain the deterministic source of truth if recalled memory conflicts."
         },
         {
           "id": "native-advanced",

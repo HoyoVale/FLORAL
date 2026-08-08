@@ -49,6 +49,8 @@
     "codex:capabilities:write": "tsx scripts/codex-capability-baseline.ts write",
     "codex:capabilities:check": "tsx scripts/codex-capability-baseline.ts check",
     "codex:native-memory:probe": "tsx scripts/codex-native-memory-probe.ts",
+    "codex:native-memory:lifecycle": "tsx scripts/codex-native-memory-lifecycle.ts show",
+    "codex:native-memory:lifecycle:check": "tsx scripts/codex-native-memory-lifecycle.ts check",
     "deepseek:probe": "tsx scripts/deepseek-probe.ts",
     "bridge:start": "tsx scripts/responses-bridge.ts",
     "bridge:probe": "tsx scripts/responses-bridge-probe.ts",
