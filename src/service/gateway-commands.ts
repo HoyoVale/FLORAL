@@ -15,6 +15,7 @@ export type GatewayCommand =
   | { type: "project-memory-status" }
   | { type: "project-memory-record"; kind: "context" | "decision" | "issue"; text: string | undefined }
   | { type: "native-memory-status" }
+  | { type: "native-memory-diagnose" }
   | { type: "chats" }
   | { type: "chat"; value: string | undefined }
   | { type: "chat-archive"; value: string | undefined }
@@ -36,6 +37,7 @@ export function parseGatewayCommand(text: string): GatewayCommand | undefined {
   if (status) return { type: "status", debug: Boolean(status[1]) };
   if (/^\/help$/i.test(trimmed)) return { type: "help" };
   if (/^\/memory(?:\s+status)?$/i.test(trimmed)) return { type: "native-memory-status" };
+  if (/^\/memory\s+diagnose$/i.test(trimmed)) return { type: "native-memory-diagnose" };
   if (/^\/stop$/i.test(trimmed)) return { type: "stop" };
   if (/^\/projects$/i.test(trimmed)) return { type: "projects" };
   const projectNew = /^\/project\s+new(?:\s+(.+))?$/i.exec(trimmed);

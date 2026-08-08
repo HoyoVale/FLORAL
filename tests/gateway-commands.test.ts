@@ -412,11 +412,29 @@ describe("GatewayService identity and commands", () => {
         "codex_memory_lifecycle=armed",
         "codex_memory_storage=absent",
         "codex_memory_index=absent",
+        "codex_memory_summary=absent",
         "codex_memory_raw=absent",
         "codex_memory_rollout_summaries=0",
         "codex_memory_last_artifact_at=none",
         "cost_guard=ready",
         "cost_24h=¥0.100/10.00",
+      ],
+      nativeMemoryDiagnosticLines: async () => [
+        "codex_memory_lifecycle=generated",
+        "codex_memory_phase2_database=read-only",
+        "codex_memory_phase2_database_file=state_5.sqlite",
+        "codex_memory_stage1_outputs=2",
+        "codex_memory_stage1_selected_for_phase2=0",
+        "codex_memory_stage1_jobs_done=2",
+        "codex_memory_stage1_jobs_error=0",
+        "codex_memory_phase2_job=present",
+        "codex_memory_phase2_status=error",
+        "codex_memory_phase2_retry_remaining=2",
+        "codex_memory_phase2_error_class=sandbox",
+        "codex_memory_phase2_workspace_diff=present",
+        "codex_memory_phase2_git_baseline=present",
+        "codex_memory_summary=absent",
+        "codex_memory_phase2_diagnosis=blocked:sandbox",
       ],
     });
     await gateway.start();
@@ -453,6 +471,15 @@ describe("GatewayService identity and commands", () => {
     expect(memoryStatus).toContain("scope=codex-home");
     expect(memoryStatus).toContain("runtime_config=present");
     expect(memoryStatus).toContain("rollout_summaries=0");
+    expect(agent.requests).toHaveLength(1);
+
+    await transport.receive(incoming({ id: "c-diagnose", text: "/memory diagnose", ...base }));
+    const memoryDiagnostics = transport.sent.at(-1)?.text ?? "";
+    expect(memoryDiagnostics).toContain("Codex Native Memory Phase 2 Diagnostics");
+    expect(memoryDiagnostics).toContain("phase2_status=error");
+    expect(memoryDiagnostics).toContain("phase2_error_class=sandbox");
+    expect(memoryDiagnostics).toContain("diagnosis=blocked:sandbox");
+    expect(memoryDiagnostics).not.toContain("last_error");
     expect(agent.requests).toHaveLength(1);
 
     await transport.receive(incoming({ id: "c-4", text: "/new", ...base }));

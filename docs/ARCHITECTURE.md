@@ -76,8 +76,17 @@ Codex native memories are cross-thread recall state, while project `AGENTS.md` a
 
 ## Phase 7.4B native memory lifecycle acceptance
 
-Phase 7.4B keeps Codex as the only automatic-memory engine and adds an observation-only acceptance layer around its generated state. FLORAL classifies bounded filesystem metadata under the managed `CODEX_HOME/memories` directory as `armed`, `generated`, or `consolidated`; it does not parse memory contents, mutate Codex memory files, or query Codex internal SQLite tables.
+Phase 7.4B keeps Codex as the only automatic-memory engine and adds an observation-only acceptance layer around its generated state. FLORAL classifies bounded filesystem metadata under the managed `CODEX_HOME/memories` directory as `armed`, `generated`, or `consolidated`; it does not parse memory contents or mutate Codex memory files.
 
-`/memory` exposes the same lifecycle state remotely without starting a model turn. `codex:native-memory:lifecycle` provides the terminal equivalent, while `codex:native-memory:lifecycle:check` requires a consolidated `MEMORY.md` artifact and is intentionally stricter than configuration activation. Consolidated artifacts are evidence that the generation pipeline ran, not proof that a new thread actually received or used a memory; cross-thread recall remains a separate behavioral acceptance test.
+`/memory` exposes the same lifecycle state remotely without starting a model turn. `codex:native-memory:lifecycle` provides the terminal equivalent, while `codex:native-memory:lifecycle:check` requires a consolidated `MEMORY.md` or `memory_summary.md` artifact and is intentionally stricter than configuration activation. Consolidated artifacts are evidence that the generation pipeline ran, not proof that a new thread actually received or used a memory; cross-thread recall remains a separate behavioral acceptance test.
 
 The CLI feature probe now resolves the configured Codex executable through PATH first and then the official standalone locations under the user home directory. An unavailable auxiliary feature probe is diagnostic-only; an explicitly disabled `memories` feature or a non-unified active config remains a failure.
+
+
+## Phase 7.4C native memory Phase-2 read-only diagnostics
+
+Phase 7.4C adds a bounded forensic surface for the observed `generated -> consolidated` stall without taking ownership of Codex memory execution. `codex:native-memory:diagnose` and owner-only `/memory diagnose` inspect only schema/job metadata from Codex-owned `state_*.sqlite` / `memories_*.sqlite` files opened read-only, plus memory-workspace file metadata. FLORAL never writes these databases, resets jobs, advances watermarks, reads `raw_memory`/`rollout_summary` text, or synthesizes `MEMORY.md`.
+
+The diagnostic discovers the active upstream schema dynamically. When the expected `jobs` / `stage1_outputs` tables are present it reports bounded counts, the global `memory_consolidate_global` job state, retry budget, selected-for-phase2 count, workspace-diff/git-baseline presence, and a sanitized error category such as `sandbox`, `timeout`, `context-window`, or `provider`. Raw `last_error` text is never surfaced because it may contain private paths or provider details. Unknown/new Codex schemas fail soft as `schema-unsupported` rather than becoming a runtime dependency.
+
+This layer exists only to decide whether the blocker is upstream scheduling, sandbox/process launch, provider/model execution, or artifact production. Any repair remains upstream-first: FLORAL does not patch Codex job rows or replace the consolidation worker. The independently observed Feishu inbound image/file gap is tracked for the next transport phase and is deliberately not mixed into memory diagnostics.

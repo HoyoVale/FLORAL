@@ -128,7 +128,17 @@ This section supersedes the conflicting Phase 5.2/5.3 bullets above for Codex-na
 ## Phase 7.4B native memory diagnostics
 
 - `/memory` and `codex:native-memory:lifecycle` are observation-only surfaces. They expose lifecycle state, file presence, bounded file counts, byte sizes, and latest artifact time; they never return memory text.
-- FLORAL does not inspect or mutate Codex memory SQLite state. Generated memory artifacts remain upstream-owned implementation state.
-- Lifecycle labels are intentionally conservative: `armed` means the feature is active with no observed artifacts; `generated` means raw/rollout evidence exists; `consolidated` means a Codex-generated `MEMORY.md` exists. None of these labels alone proves cross-thread recall.
+- Generated memory artifacts remain upstream-owned implementation state.
+- Lifecycle labels are intentionally conservative: `armed` means the feature is active with no observed artifacts; `generated` means raw/rollout evidence exists; `consolidated` means a Codex-generated `MEMORY.md` or `memory_summary.md` exists. None of these labels alone proves cross-thread recall.
 - The feature probe may fall back to the official standalone Codex binary under `$HOME/.local/bin` when an interactive shell PATH is incomplete. This does not modify shell profiles or the service PATH.
 - `feature_probe=unavailable` is a diagnostic warning rather than an authorization/configuration failure. `feature_probe=disabled` still fails when native memories are configured on.
+
+
+## Phase 7.4C read-only upstream state inspection
+
+- Deep diagnosis is owner-only over chat (`/memory diagnose`); the local CLI equivalent is `codex:native-memory:diagnose`.
+- Candidate Codex runtime databases are limited to regular files named `state_<n>.sqlite` or `memories_<n>.sqlite` directly under the managed `CODEX_HOME`. No arbitrary database path is accepted from chat input.
+- Databases are opened with `better-sqlite3` in `readonly + fileMustExist` mode. Only `sqlite_master`, `PRAGMA table_info`, bounded aggregate/count queries, and the `memory_consolidate_global` job metadata are queried. No SQL write, migration, transaction, job reset, retry edit, watermark edit, or VACUUM is performed.
+- Raw memory columns are never selected. Raw `jobs.last_error` may be inspected in-process only to classify the failure into a bounded non-secret category; the original error text is never returned to chat/CLI diagnostics.
+- Schema drift is fail-soft. Missing or changed upstream tables return `schema-unsupported` rather than causing FLORAL startup failure.
+- The diagnostic must never be used as a supported Codex repair API. Upstream-owned state remains upstream-owned.

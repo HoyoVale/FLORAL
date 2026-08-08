@@ -79,6 +79,7 @@ export function formatNativeMemoryStatus(runtimeLines: string[]): string {
   const generate = values.get("codex_memory_generate") ?? "unknown";
   const storage = values.get("codex_memory_storage") ?? "unknown";
   const index = values.get("codex_memory_index") ?? "unknown";
+  const summary = values.get("codex_memory_summary") ?? "unknown";
   const raw = values.get("codex_memory_raw") ?? "unknown";
   const summaries = values.get("codex_memory_rollout_summaries") ?? "unknown";
   const lastArtifactAt = values.get("codex_memory_last_artifact_at") ?? "none";
@@ -94,11 +95,35 @@ export function formatNativeMemoryStatus(runtimeLines: string[]): string {
     `generate=${generate}`,
     `storage=${storage}`,
     `memory_index=${index}`,
+    `memory_summary=${summary}`,
     `raw_memories=${raw}`,
     `rollout_summaries=${summaries}`,
     `last_artifact_at=${lastArtifactAt}`,
-    "说明：armed=已启用但尚无生成产物；generated=已有提取产物；consolidated=已有 MEMORY.md。",
+    "说明：armed=已启用但尚无生成产物；generated=已有提取产物；consolidated=已有 MEMORY.md 或 memory_summary.md。",
     "该状态只观察 Codex 生成元数据，不读取或修改记忆正文。",
+  ].join("\n");
+}
+
+export function formatNativeMemoryDiagnostics(runtimeLines: string[]): string {
+  const values = parseRuntimeStatusLines(runtimeLines);
+  return [
+    "Codex Native Memory Phase 2 Diagnostics",
+    `lifecycle=${values.get("codex_memory_lifecycle") ?? "unknown"}`,
+    `database=${values.get("codex_memory_phase2_database") ?? "unknown"}`,
+    `database_file=${values.get("codex_memory_phase2_database_file") ?? "none"}`,
+    `stage1_outputs=${values.get("codex_memory_stage1_outputs") ?? "unknown"}`,
+    `stage1_selected_for_phase2=${values.get("codex_memory_stage1_selected_for_phase2") ?? "unknown"}`,
+    `stage1_jobs_done=${values.get("codex_memory_stage1_jobs_done") ?? "unknown"}`,
+    `stage1_jobs_error=${values.get("codex_memory_stage1_jobs_error") ?? "unknown"}`,
+    `phase2_job=${values.get("codex_memory_phase2_job") ?? "unknown"}`,
+    `phase2_status=${values.get("codex_memory_phase2_status") ?? "unknown"}`,
+    `phase2_retry_remaining=${values.get("codex_memory_phase2_retry_remaining") ?? "unknown"}`,
+    `phase2_error_class=${values.get("codex_memory_phase2_error_class") ?? "unknown"}`,
+    `phase2_workspace_diff=${values.get("codex_memory_phase2_workspace_diff") ?? "unknown"}`,
+    `memory_git_baseline=${values.get("codex_memory_phase2_git_baseline") ?? "unknown"}`,
+    `memory_summary=${values.get("codex_memory_summary") ?? "unknown"}`,
+    `diagnosis=${values.get("codex_memory_phase2_diagnosis") ?? "unknown"}`,
+    "说明：只读检查 Codex-owned SQLite job 元数据与 memory workspace 元数据；不读取记忆正文，不修改数据库。",
   ].join("\n");
 }
 
@@ -111,6 +136,7 @@ export function gatewayHelpText(): string {
     "/new      开始新会话",
     "/status   查看运行状态",
     "/memory   查看 Codex Native Memory 生命周期",
+    "/memory diagnose 只读诊断 Native Memory Phase 2（owner）",
     "/projects 列出 Workspace Root 下的项目",
     "/project  查看当前项目",
     "/project <name> 切换项目",

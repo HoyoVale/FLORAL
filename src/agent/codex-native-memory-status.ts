@@ -29,9 +29,11 @@ export interface CodexNativeMemoryRuntimeStatus {
   effective: boolean;
   storage: "present" | "absent";
   memoryIndex: "present" | "absent";
+  memorySummary?: "present" | "absent";
   rawMemories: "present" | "absent";
   rolloutSummaryCount: number;
   memoryIndexBytes: number;
+  memorySummaryBytes?: number;
   rawMemoriesBytes: number;
   lastArtifactAt?: string;
   lifecycle: CodexNativeMemoryLifecycle;
@@ -54,16 +56,18 @@ export async function readCodexNativeMemoryRuntimeStatus(input: {
   const runtimeConfigPath = join(codexHome, "config.toml");
   const memoriesDir = join(codexHome, "memories");
   const memoryIndexPath = join(memoriesDir, "MEMORY.md");
+  const memorySummaryPath = join(memoriesDir, "memory_summary.md");
   const rawMemoriesPath = join(memoriesDir, "raw_memories.md");
   const rolloutSummariesPath = join(memoriesDir, "rollout_summaries");
   const cutover = await readCodexCutoverReport(repositoryRoot).catch(() => undefined);
   const activeConfig = cutover?.activeConfig ?? "unknown";
 
-  const [runtimeConfigMetadata, storageMetadata, memoryIndexMetadata, rawMemoriesMetadata, rolloutSummaryCount] =
+  const [runtimeConfigMetadata, storageMetadata, memoryIndexMetadata, memorySummaryMetadata, rawMemoriesMetadata, rolloutSummaryCount] =
     await Promise.all([
       readRegularFileMetadata(runtimeConfigPath),
       readPathMetadata(memoriesDir),
       readRegularFileMetadata(memoryIndexPath),
+      readRegularFileMetadata(memorySummaryPath),
       readRegularFileMetadata(rawMemoriesPath),
       countRegularFilesBounded(rolloutSummariesPath, 512),
     ]);
@@ -78,9 +82,11 @@ export async function readCodexNativeMemoryRuntimeStatus(input: {
 
   const lastArtifactMs = Math.max(
     memoryIndexMetadata?.mtimeMs ?? 0,
+    memorySummaryMetadata?.mtimeMs ?? 0,
     rawMemoriesMetadata?.mtimeMs ?? 0,
   );
   const memoryIndex = memoryIndexMetadata ? "present" : "absent";
+  const memorySummary = memorySummaryMetadata ? "present" : "absent";
   const rawMemories = rawMemoriesMetadata ? "present" : "absent";
 
   return {
@@ -95,14 +101,17 @@ export async function readCodexNativeMemoryRuntimeStatus(input: {
     effective,
     storage: storageMetadata ? "present" : "absent",
     memoryIndex,
+    memorySummary,
     rawMemories,
     rolloutSummaryCount,
     memoryIndexBytes: memoryIndexMetadata?.size ?? 0,
+    memorySummaryBytes: memorySummaryMetadata?.size ?? 0,
     rawMemoriesBytes: rawMemoriesMetadata?.size ?? 0,
     ...(lastArtifactMs > 0 ? { lastArtifactAt: new Date(lastArtifactMs).toISOString() } : {}),
     lifecycle: classifyCodexNativeMemoryLifecycle({
       effective,
       memoryIndex,
+      memorySummary,
       rawMemories,
       rolloutSummaryCount,
     }),
@@ -112,11 +121,12 @@ export async function readCodexNativeMemoryRuntimeStatus(input: {
 export function classifyCodexNativeMemoryLifecycle(input: {
   effective: boolean;
   memoryIndex: "present" | "absent";
+  memorySummary?: "present" | "absent";
   rawMemories: "present" | "absent";
   rolloutSummaryCount: number;
 }): CodexNativeMemoryLifecycle {
   if (!input.effective) return "inactive";
-  if (input.memoryIndex === "present") return "consolidated";
+  if (input.memoryIndex === "present" || input.memorySummary === "present") return "consolidated";
   if (input.rawMemories === "present" || input.rolloutSummaryCount > 0) return "generated";
   return "armed";
 }
@@ -136,9 +146,11 @@ export function renderCodexNativeMemoryRuntimeLines(
     `codex_memory_lifecycle=${status.lifecycle}`,
     `codex_memory_storage=${status.storage}`,
     `codex_memory_index=${status.memoryIndex}`,
+    `codex_memory_summary=${status.memorySummary ?? "absent"}`,
     `codex_memory_raw=${status.rawMemories}`,
     `codex_memory_rollout_summaries=${String(status.rolloutSummaryCount)}`,
     `codex_memory_index_bytes=${String(status.memoryIndexBytes)}`,
+    `codex_memory_summary_bytes=${String(status.memorySummaryBytes ?? 0)}`,
     `codex_memory_raw_bytes=${String(status.rawMemoriesBytes)}`,
     `codex_memory_last_artifact_at=${status.lastArtifactAt ?? "none"}`,
   ];

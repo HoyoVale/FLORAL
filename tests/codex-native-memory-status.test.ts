@@ -49,6 +49,13 @@ describe("Codex native memory status", () => {
       rawMemories: "present",
       rolloutSummaryCount: 3,
     })).toBe("consolidated");
+    expect(classifyCodexNativeMemoryLifecycle({
+      effective: true,
+      memoryIndex: "absent",
+      memorySummary: "present",
+      rawMemories: "present",
+      rolloutSummaryCount: 3,
+    })).toBe("consolidated");
   });
 
   it("renders configured-vs-effective and lifecycle state explicitly", () => {

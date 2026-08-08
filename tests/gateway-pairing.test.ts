@@ -22,6 +22,7 @@ describe("gateway command parsing and pairing security", () => {
     expect(parseGatewayCommand("/help")).toEqual({ type: "help" });
     expect(parseGatewayCommand("/memory")).toEqual({ type: "native-memory-status" });
     expect(parseGatewayCommand("/memory status")).toEqual({ type: "native-memory-status" });
+    expect(parseGatewayCommand("/memory diagnose")).toEqual({ type: "native-memory-diagnose" });
     expect(parseGatewayCommand("/stop")).toEqual({ type: "stop" });
     expect(parseGatewayCommand("/status now")).toBeUndefined();
     expect(parseGatewayCommand("hello")).toBeUndefined();

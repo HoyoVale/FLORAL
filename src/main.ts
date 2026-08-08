@@ -2,6 +2,10 @@ import { homedir } from "node:os";
 import { resolve } from "node:path";
 import { ManagedCodexDeepSeekRuntime } from "./agent/managed-codex-deepseek-runtime.js";
 import {
+  readCodexNativeMemoryPhase2Diagnostics,
+  renderCodexNativeMemoryPhase2DiagnosticLines,
+} from "./agent/codex-native-memory-diagnostics.js";
+import {
   readCodexNativeMemoryRuntimeStatus,
   renderCodexNativeMemoryRuntimeLines,
 } from "./agent/codex-native-memory-status.js";
@@ -160,6 +164,22 @@ const gateway = new GatewayService(
         `cost_24h=¥${snapshot.estimatedCostCny.day.toFixed(3)}/${authority.effective.runtime.cost_guard.max_cost_cny_per_day.toFixed(2)}`,
         `tokens_24h=${String(snapshot.tokens.day)}/${String(authority.effective.runtime.cost_guard.max_tokens_per_day)}`,
         `requests_hour=${String(snapshot.requests.hour)}/${String(authority.effective.runtime.cost_guard.max_requests_per_hour)}`,
+      ];
+    },
+    nativeMemoryDiagnosticLines: async () => {
+      const nativeMemory = await readCodexNativeMemoryRuntimeStatus({
+        repositoryRoot,
+        managedHome: authority.effective.codex.managed_home,
+        config: authority.effective.codex.memories,
+      });
+      const managedHome = resolve(repositoryRoot, authority.effective.codex.managed_home);
+      const diagnostics = await readCodexNativeMemoryPhase2Diagnostics({
+        managedHome,
+        runtime: nativeMemory,
+      });
+      return [
+        ...renderCodexNativeMemoryRuntimeLines(nativeMemory),
+        ...renderCodexNativeMemoryPhase2DiagnosticLines(diagnostics),
       ];
     },
   },

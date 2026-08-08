@@ -212,7 +212,7 @@
         {
           "id": "native-memory",
           "classification": "upstream-managed",
-          "coverage": "Phase-7.4B-managed-config-with-lifecycle-acceptance",
+          "coverage": "Phase-7.4C-managed-config-with-read-only-phase2-diagnostics",
           "knownKeys": [
             "features.memories",
             "memories.use_memories",
@@ -220,9 +220,13 @@
             "memories.disable_on_external_context",
             "CODEX_HOME/memories (diagnostic-only generated state)",
             "thread/memoryMode/set (experimental app-server; unavailable on current production probe)",
-            "memory/reset (experimental app-server; unavailable on current production probe)"
+            "memory/reset (experimental app-server; unavailable on current production probe)",
+            "CODEX_HOME/state_<n>.sqlite jobs/stage1_outputs metadata (read-only diagnostics)",
+            "CODEX_HOME/memories_<n>.sqlite jobs/stage1_outputs metadata (read-only diagnostics)",
+            "CODEX_HOME/memories/phase2_workspace_diff.md presence (diagnostic-only)",
+            "CODEX_HOME/memories/memory_summary.md presence (diagnostic-only)"
           ],
-          "notes": "Phase 7.4A enables Codex-native memories in the unified generated config. Phase 7.4B adds observation-only lifecycle acceptance (armed/generated/consolidated), remote /memory status, and robust CLI feature probing. The memory store is Codex-owned CODEX_HOME state, not a FLORAL database; FLORAL never edits memory artifacts or internal SQLite memory state. Project AGENTS/repo docs remain the deterministic source of truth if recalled memory conflicts."
+          "notes": "Phase 7.4A enables Codex-native memories in the unified generated config. Phase 7.4B adds observation-only lifecycle acceptance and remote /memory status. Phase 7.4C adds owner-only/read-only Phase-2 diagnostics over bounded Codex-owned SQLite job metadata and memory-workspace metadata; it never reads memory text, mutates upstream databases, resets jobs, or advances watermarks. Raw job errors are reduced to non-secret categories. Project AGENTS/repo docs remain the deterministic source of truth if recalled memory conflicts."
         },
         {
           "id": "native-advanced",

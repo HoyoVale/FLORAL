@@ -36,6 +36,7 @@ import type {
 } from "../policy/artifact-egress-policy.js";
 import {
   formatGatewayStatus,
+  formatNativeMemoryDiagnostics,
   formatNativeMemoryStatus,
   gatewayHelpText,
 } from "./gateway-status.js";
@@ -56,6 +57,7 @@ export interface GatewayOptions {
   ownerPairingCode?: string;
   trustMockOwner?: boolean;
   runtimeStatusLines?: (() => Promise<string[]>) | undefined;
+  nativeMemoryDiagnosticLines?: (() => Promise<string[]>) | undefined;
   conversationUx?: {
     visibleActivityFallback: boolean;
     visibleActivityDelayMs: number;
@@ -404,6 +406,42 @@ export class GatewayService {
         await this.#send(
           message.identity.conversationId,
           formatNativeMemoryStatus(runtimeLines),
+        );
+        return;
+      }
+
+      case "native-memory-diagnose": {
+        if (resolved.role !== "owner") {
+          await this.store.appendAudit({
+            userId: resolved.userId,
+            conversationId: resolved.conversationId,
+            eventType: "command.native_memory_diagnose_denied",
+            payload: { reason: "owner-required" },
+          });
+          await this.#send(
+            message.identity.conversationId,
+            "只有 owner 可以查看 Codex Native Memory Phase 2 深度诊断。",
+          );
+          return;
+        }
+        await this.store.appendAudit({
+          userId: resolved.userId,
+          conversationId: resolved.conversationId,
+          eventType: "command.native_memory_diagnose",
+          payload: {},
+        });
+        const diagnosticLines = this.options.nativeMemoryDiagnosticLines
+          ? await this.options.nativeMemoryDiagnosticLines().catch(() => [
+              "codex_memory_lifecycle=unknown",
+              "codex_memory_phase2_diagnosis=unavailable",
+            ])
+          : [
+              "codex_memory_lifecycle=unknown",
+              "codex_memory_phase2_diagnosis=unavailable",
+            ];
+        await this.#send(
+          message.identity.conversationId,
+          formatNativeMemoryDiagnostics(diagnosticLines),
         );
         return;
       }
