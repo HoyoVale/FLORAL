@@ -232,7 +232,7 @@ export const FLORAL_AGENT_DEVELOPER_INSTRUCTIONS = [
   "- For terminal-produced files, first create or copy the final attachment into <cwd>/artifacts/outbound, then call floral_delivery/register_outbound_file, then floral_delivery/send_artifact. Do not register or send arbitrary paths outside that staging root.",
   "- Manage Skills through floral_skills and Codex-native Skill discovery. Project Skills may be created under <cwd>/.agents/skills. Never edit data/external-skills/registry.json directly or use shell/git to bypass External Skill approval.",
   "- Discover and manage supported extensions through floral_extensions. Prefer Codex App metadata when available; if app/installed is unsupported, FLORAL may fall back to app/list and must report callable state as unknown. Use mcp_status before claiming GitHub or Browser MCP is ready. Shared external MCP changes must use manage_mcp and user approval; never edit Codex config or run codex mcp/plugin installation commands through shell as a bypass.",
-  "- Extension control-plane routing overrides terminal-first application routing. After manage_mcp changes shared MCP state, the current turn's extension snapshot predates that mutation and cannot verify the reload. Do not inspect ~/.codex, process tables, package storage, or run codex mcp/plugin commands to verify it. End the current turn with verification pending; on the next turn use floral_extensions/mcp_status or the /mcp command.",
+  "- Extension control-plane routing overrides terminal-first application routing. After manage_mcp changes shared MCP state, the current turn's extension snapshot predates that mutation and cannot verify the reload. Do not inspect ~/.codex, process tables, package storage, or run codex mcp/plugin commands to verify it. End the current turn with verification pending; on the next turn use floral_extensions/mcp_status or the /mcp command. If FLORAL blocks a forbidden same-turn shell verification attempt, treat that block as a non-fatal control-plane redirect rather than evidence that the MCP installation failed.",
   "- FLORAL does not call plugin/list, plugin/read, plugin/install, plugin/uninstall, or marketplace mutation from production Agent flows because upstream still marks those Plugin RPCs under development. Plugin installation remains a supported-surface handoff until upstream promotes a production management API.",
 ].join("\n");
 
@@ -527,6 +527,7 @@ export class CodexAppServerRuntime implements AgentRuntime {
   readonly #threadCwds = new Map<string, string>();
   readonly #extensionSnapshots = new Map<string, ExtensionDiscoverySnapshot>();
   readonly #extensionMutationPendingVerification = new Set<string>();
+  readonly #extensionVerificationShellSoftBlocked = new Set<string>();
   readonly #approvalItemSummaries = new Map<string, string>();
   readonly #inFlightMcpToolCalls = new Map<string, InFlightMcpToolCall>();
   #skillsDirty = false;
@@ -907,6 +908,7 @@ export class CodexAppServerRuntime implements AgentRuntime {
     this.#threadCwds.delete(normalized);
     this.#extensionSnapshots.delete(normalized);
     this.#extensionMutationPendingVerification.delete(normalized);
+    this.#extensionVerificationShellSoftBlocked.delete(normalized);
     this.#deleteApprovalItemSummaries(normalized);
     this.#deleteInFlightMcpToolCalls(normalized);
   }
@@ -1165,6 +1167,22 @@ export class CodexAppServerRuntime implements AgentRuntime {
         });
       }
       if (status === "failed") {
+        if (
+          this.#extensionMutationPendingVerification.has(threadId)
+          && this.#extensionVerificationShellSoftBlocked.has(threadId)
+        ) {
+          const result = {
+            threadId,
+            finalText: [
+              "扩展变更已写入 FLORAL 受控配置，并已安排 Codex MCP 热重载。",
+              "当前回合尝试通过 shell、进程表或 ~/.codex 进行非权威验收，已被 FLORAL 安全阻止；这不代表安装失败。",
+              "请在下一回合使用 floral_extensions/mcp_status，或直接使用 /mcp，依据 fresh runtime 状态与工具发现结果完成验收。",
+            ].join("\n"),
+          };
+          process.stderr.write("codex.extension_shell_verification=soft-recovered\n");
+          onEvent?.({ type: "run.completed", ...result });
+          return result;
+        }
         throw classifyCodexFailure(
           terminal.params.turn.error ?? terminal.errorNotification ?? terminal.params,
           { method: "turn/start", fallbackMessage: `Codex turn failed: ${activeTurnId}` },
@@ -1218,6 +1236,7 @@ export class CodexAppServerRuntime implements AgentRuntime {
       this.#threadCwds.delete(threadId);
       this.#extensionSnapshots.delete(threadId);
       this.#extensionMutationPendingVerification.delete(threadId);
+      this.#extensionVerificationShellSoftBlocked.delete(threadId);
       this.#deleteApprovalItemSummaries(threadId);
       this.#deleteInFlightMcpToolCalls(threadId);
     }
@@ -1250,6 +1269,7 @@ export class CodexAppServerRuntime implements AgentRuntime {
     this.#threadCwds.clear();
     this.#extensionSnapshots.clear();
     this.#extensionMutationPendingVerification.clear();
+    this.#extensionVerificationShellSoftBlocked.clear();
     this.#approvalItemSummaries.clear();
     this.#inFlightMcpToolCalls.clear();
     await this.#client.stop();
@@ -1364,7 +1384,8 @@ export class CodexAppServerRuntime implements AgentRuntime {
         && this.#extensionMutationPendingVerification.has(threadId)
         && isExtensionVerificationShellBypass(readString(params?.command))
       ) {
-        process.stderr.write("codex.extension_shell_verification=declined\n");
+        this.#extensionVerificationShellSoftBlocked.add(threadId);
+        process.stderr.write("codex.extension_shell_verification=soft-blocked\n");
         this.#respondSafely(request.id, { decision: "decline" });
         return;
       }

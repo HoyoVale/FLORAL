@@ -1496,11 +1496,21 @@ lines.on("line", (line) => {
     const decision = message.result?.decision;
     if (scenario === "extension-mcp-install-shell-verification") {
       if (decision === "decline") {
-        sendSuccess(
-          activeThreadId,
-          activeTurnId,
-          "extension verification shell bypass declined safely",
-        );
+        send({
+          method: "turn/completed",
+          params: {
+            threadId: activeThreadId,
+            turn: {
+              id: activeTurnId,
+              status: "failed",
+              error: {
+                message: "command verification declined",
+                codexErrorInfo: "Other",
+              },
+              items: [],
+            },
+          },
+        });
       } else {
         const error = {
           message: `unexpected extension verification shell decision: ${String(decision)}`,

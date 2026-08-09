@@ -754,6 +754,7 @@ describe("ManagedCodexDeepSeekRuntime", () => {
         };
       },
       createRuntime: () => runtime,
+      readExternalMcpRegistry: async () => ({ version: 1, packages: [] }),
       recordCodexCutover: async (report) => {
         reportStatus = report.status;
         return "/tmp/codex-cutover.json";
@@ -813,6 +814,7 @@ describe("ManagedCodexDeepSeekRuntime", () => {
         };
       },
       createRuntime: () => runtimes[runtimeIndex++]!,
+      readExternalMcpRegistry: async () => ({ version: 1, packages: [] }),
       recordMcpRegistryAdoption: async () => {
         throw new Error("report write failed");
       },
@@ -876,6 +878,7 @@ describe("ManagedCodexDeepSeekRuntime", () => {
         };
       },
       createRuntime: () => runtimes[runtimeIndex++]!,
+      readExternalMcpRegistry: async () => ({ version: 1, packages: [] }),
       recordCodexCutover: async (report) => {
         reportStatus = report.status;
         return "/tmp/codex-cutover.json";

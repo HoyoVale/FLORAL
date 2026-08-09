@@ -49,7 +49,8 @@ For install/enable/disable/remove:
 3. Wait for FLORAL's one-shot user approval. Never retry through shell or direct config edits after denial.
 4. The mutation may report `hot_reload=scheduled`; do not claim readiness yet.
 5. The current turn's `mcp_status` snapshot was captured before the mutation. Treat it as stale. Do not inspect `~/.codex`, process tables, package storage, the External MCP registry, or invoke `codex mcp` / `codex plugin` through shell to compensate. Do not request a second shell approval for verification.
-6. End the current turn with `verification pending`. On the next turn, call `mcp_status` (or use the host `/mcp` command outside an Agent turn) to obtain a fresh runtime snapshot.
+6. If FLORAL blocks a forbidden shell verification attempt, treat the block as a non-fatal redirect to the authoritative extension control plane. Do not reinterpret that blocked verification step as an installation failure.
+7. End the current turn with `verification pending`. On the next turn, call `mcp_status` (or use the host `/mcp` command outside an Agent turn) to obtain a fresh runtime snapshot.
 7. Treat the capability as ready only when FLORAL reports `status=ready` and exposes tools. On Codex builds where `mcpServerStatus/list` omits startup status, FLORAL may infer `ready` from a non-empty discovered tool set; explicit starting/failed/cancelled states still take precedence.
 
 ## GitHub authentication

@@ -544,8 +544,9 @@ describe("CodexAppServerRuntime", () => {
           return "approve";
         },
       });
-      expect(result.finalText).toBe(
-        "extension verification shell bypass declined safely",
+      expect(result.finalText).toContain("这不代表安装失败");
+      expect(result.finalText).toContain(
+        "下一回合使用 floral_extensions/mcp_status",
       );
       expect(shellApprovals).toBe(0);
     } finally {
