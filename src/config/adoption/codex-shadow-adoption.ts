@@ -8,7 +8,7 @@ import {
 } from "../mcp/vision/floral-vision-contract.js";
 import { createHash } from "node:crypto";
 import { chmod, mkdir, readFile, rename, rm, writeFile } from "node:fs/promises";
-import { dirname, join, resolve } from "node:path";
+import { basename, dirname, isAbsolute, join, resolve } from "node:path";
 import {
   CODEX_BRIDGE_BASE_URL_PLACEHOLDER,
   renderCodexConfig,
@@ -125,22 +125,44 @@ const visionRuntime = resolveFloralVisionRuntime();
 const VISION_READ_ONLY_UNIFIED_ASSIGNMENTS = new Map<string, string>([
   ["mcp_servers.floral_vision.command", JSON.stringify(process.execPath)],
   ["mcp_servers.floral_vision.args", JSON.stringify([visionRuntime.serverEntrypoint])],
-  [
-    "mcp_servers.floral_vision.env",
-    `{ FLORAL_VISION_ALLOWED_ROOT = ${JSON.stringify(visionRuntime.allowedRoot)}, MIMO_BASE_URL = ${JSON.stringify(DEFAULT_MIMO_VISION_BASE_URL)}, MIMO_VISION_MODEL = ${JSON.stringify(DEFAULT_MIMO_VISION_MODEL)} }`,
-  ],
   ["mcp_servers.floral_vision.env_vars", '["MIMO_API_KEY"]'],
-  ["mcp_servers.floral_vision.enabled_tools", '["vision_analyze_region", "vision_analyze_screen"]'],
+  [
+    "mcp_servers.floral_vision.enabled_tools",
+    '["vision_analyze_attachment", "vision_analyze_region", "vision_analyze_screen"]',
+  ],
   ["mcp_servers.floral_vision.required", "false"],
   ["mcp_servers.floral_vision.startup_timeout_sec", "60"],
   ["mcp_servers.floral_vision.tool_timeout_sec", "120"],
   ["mcp_servers.floral_vision.default_tools_approval_mode", '"approve"'],
+  ["mcp_servers.floral_vision.tools.vision_analyze_attachment.approval_mode", '"approve"'],
   ["mcp_servers.floral_vision.tools.vision_analyze_region.approval_mode", '"approve"'],
   ["mcp_servers.floral_vision.tools.vision_analyze_screen.approval_mode", '"approve"'],
 ]);
 
 function isAllowedVisionReadOnlyUnifiedAssignment(path: string, assignment: string): boolean {
+  if (path === "mcp_servers.floral_vision.env") {
+    return isAllowedFloralVisionEnvironment(assignment);
+  }
   return VISION_READ_ONLY_UNIFIED_ASSIGNMENTS.get(path) === assignment;
+}
+
+function isAllowedFloralVisionEnvironment(assignment: string): boolean {
+  const prefix =
+    `{ FLORAL_VISION_ALLOWED_ROOT = ${JSON.stringify(visionRuntime.allowedRoot)}, FLORAL_VISION_INBOUND_ROOT = `;
+  const suffix =
+    `, MIMO_BASE_URL = ${JSON.stringify(DEFAULT_MIMO_VISION_BASE_URL)}, MIMO_VISION_MODEL = ${JSON.stringify(DEFAULT_MIMO_VISION_MODEL)} }`;
+  if (!assignment.startsWith(prefix) || !assignment.endsWith(suffix)) return false;
+  const encodedInboundRoot = assignment.slice(prefix.length, assignment.length - suffix.length);
+  try {
+    const inboundRoot = JSON.parse(encodedInboundRoot) as unknown;
+    return typeof inboundRoot === "string"
+      && isAbsolute(inboundRoot)
+      && basename(inboundRoot) === "feishu"
+      && basename(dirname(inboundRoot)) === "inbound"
+      && !/[\r\n\0]/u.test(inboundRoot);
+  } catch {
+    return false;
+  }
 }
 
 export async function prepareCodexConfigAdoption(

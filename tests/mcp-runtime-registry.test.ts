@@ -6,6 +6,7 @@ import {
   buildMcpRuntimeRegistry,
   renderCodexMcpLines,
   resolveFloralPeekabooRuntime,
+  resolveFloralVisionRuntime,
   validateMcpRuntimeRegistry,
 } from "../src/config/mcp/mcp-runtime-registry.js";
 
@@ -39,6 +40,7 @@ describe("MCP runtime registry", () => {
       "searxng_web_search",
     ]);
     expect(registry.servers[1]?.tools.map((tool) => tool.name)).toEqual([
+      "vision_analyze_attachment",
       "vision_analyze_region",
       "vision_analyze_screen",
     ]);
@@ -61,6 +63,14 @@ describe("MCP runtime registry", () => {
     expect(codex).toContain('[mcp_servers.floral_search]');
     expect(codex).toContain('env = { SEARXNG_URL = "http://127.0.0.1:8888", NO_PROXY = "127.0.0.1,localhost,::1" }');
     expect(codex).toContain('[mcp_servers.floral_search.tools.searxng_web_search]');
+    expect(codex).toContain('[mcp_servers.floral_vision]');
+    const visionRuntime = resolveFloralVisionRuntime(authority.effective.floral.data_dir);
+    expect(codex).toContain(
+      `FLORAL_VISION_INBOUND_ROOT = ${JSON.stringify(visionRuntime.inboundRoot)}`,
+    );
+    expect(codex).toContain(
+      'enabled_tools = ["vision_analyze_attachment", "vision_analyze_region", "vision_analyze_screen"]',
+    );
     expect(codex).toContain('[mcp_servers.floral_peekaboo]');
     const peekabooRuntime = resolveFloralPeekabooRuntime();
     expect(codex).toContain(`args = ${JSON.stringify([peekabooRuntime.serverEntrypoint])}`);

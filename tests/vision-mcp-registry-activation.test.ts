@@ -29,6 +29,7 @@ describe("Phase 6A.2B vision MCP registry activation", () => {
       defaultToolsApprovalMode: "approve",
     });
     expect(vision?.tools.map((tool) => [tool.name, tool.approvalMode])).toEqual([
+      ["vision_analyze_attachment", "approve"],
       ["vision_analyze_region", "approve"],
       ["vision_analyze_screen", "approve"],
     ]);
@@ -38,7 +39,10 @@ describe("Phase 6A.2B vision MCP registry activation", () => {
     expect(rendered).toContain('env_vars = ["MIMO_API_KEY"]');
     expect(rendered).toContain('MIMO_BASE_URL = "https://api.xiaomimimo.com/v1"');
     expect(rendered).toContain('MIMO_VISION_MODEL = "mimo-v2.5"');
-    expect(rendered).toContain('enabled_tools = ["vision_analyze_region", "vision_analyze_screen"]');
+    expect(rendered).toContain("FLORAL_VISION_INBOUND_ROOT");
+    expect(rendered).toContain(
+      'enabled_tools = ["vision_analyze_attachment", "vision_analyze_region", "vision_analyze_screen"]',
+    );
     expect(rendered).not.toContain("mimo-super-sensitive-test-value");
     expect(JSON.stringify(registry)).not.toContain("mimo-super-sensitive-test-value");
   });

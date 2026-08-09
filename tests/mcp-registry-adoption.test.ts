@@ -40,7 +40,11 @@ describe("MCP registry runtime adoption", () => {
     expect(report.toolAllowlists).toEqual({
       floral_peekaboo: ["click", "image", "see"],
       floral_search: ["searxng_web_search"],
-      floral_vision: ["vision_analyze_region", "vision_analyze_screen"],
+      floral_vision: [
+        "vision_analyze_attachment",
+        "vision_analyze_region",
+        "vision_analyze_screen",
+      ],
     });
     const serialized = JSON.stringify(report);
     expect(serialized).not.toContain("http://127.0.0.1:8888");

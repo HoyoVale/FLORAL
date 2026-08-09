@@ -28,9 +28,9 @@ function isInside(root: string, candidate: string): boolean {
 function rejectNonFileInputs(input: string): void {
   const normalized = input.trim().toLowerCase();
   if (
-    normalized.startsWith("http://") ||
-    normalized.startsWith("https://") ||
-    normalized.startsWith("data:")
+    normalized.startsWith("http://")
+    || normalized.startsWith("https://")
+    || normalized.startsWith("data:")
   ) {
     throw new Error("Vision input must be a FLORAL artifact path; URL/data inputs are forbidden");
   }
@@ -39,9 +39,10 @@ function rejectNonFileInputs(input: string): void {
   }
 }
 
-export function resolveTrustedVisionArtifact(options: {
+function resolveTrustedVisionFile(options: {
   artifactPath: string;
   allowedRoot: string;
+  rootLabel: "screenshot" | "inbound attachment";
   maxBytes?: number;
 }): TrustedVisionArtifact {
   const artifactPath = options.artifactPath.trim();
@@ -49,7 +50,7 @@ export function resolveTrustedVisionArtifact(options: {
   const maxBytes = options.maxBytes ?? DEFAULT_VISION_MAX_BYTES;
 
   if (!artifactPath) throw new Error("Vision artifact path is required");
-  if (!allowedRoot) throw new Error("FLORAL vision allowed root is required");
+  if (!allowedRoot) throw new Error(`FLORAL vision ${options.rootLabel} root is required`);
   rejectNonFileInputs(artifactPath);
 
   const realRoot = realpathSync(resolve(allowedRoot));
@@ -64,7 +65,7 @@ export function resolveTrustedVisionArtifact(options: {
 
   const realArtifact = realpathSync(requestedPath);
   if (!isInside(realRoot, realArtifact)) {
-    throw new Error("Vision artifact is outside the FLORAL screenshot root");
+    throw new Error(`Vision artifact is outside the FLORAL ${options.rootLabel} root`);
   }
 
   const stat = statSync(realArtifact);
@@ -85,4 +86,26 @@ export function resolveTrustedVisionArtifact(options: {
     bytes: stat.size,
     extension,
   };
+}
+
+export function resolveTrustedVisionArtifact(options: {
+  artifactPath: string;
+  allowedRoot: string;
+  maxBytes?: number;
+}): TrustedVisionArtifact {
+  return resolveTrustedVisionFile({
+    ...options,
+    rootLabel: "screenshot",
+  });
+}
+
+export function resolveTrustedInboundVisionAttachment(options: {
+  artifactPath: string;
+  allowedRoot: string;
+  maxBytes?: number;
+}): TrustedVisionArtifact {
+  return resolveTrustedVisionFile({
+    ...options,
+    rootLabel: "inbound attachment",
+  });
 }

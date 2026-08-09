@@ -39,7 +39,7 @@ const apiKey = process.env.MIMO_API_KEY?.trim() ?? "";
 if (!apiKey) throw new Error("MIMO_API_KEY is required for visual-chain:probe");
 
 const peekabooRuntime = resolveFloralPeekabooRuntime();
-const visionRuntime = resolveFloralVisionRuntime();
+const visionRuntime = resolveFloralVisionRuntime(authority.effective.floral.data_dir);
 let artifactPath: string | undefined;
 
 const peekabooClient = new Client({
@@ -64,6 +64,7 @@ const visionTransport = new StdioClientTransport({
   args: [visionRuntime.serverEntrypoint],
   env: {
     FLORAL_VISION_ALLOWED_ROOT: visionRuntime.allowedRoot,
+    FLORAL_VISION_INBOUND_ROOT: visionRuntime.inboundRoot,
     MIMO_BASE_URL: DEFAULT_MIMO_VISION_BASE_URL,
     MIMO_VISION_MODEL: DEFAULT_MIMO_VISION_MODEL,
     MIMO_API_KEY: apiKey,

@@ -692,7 +692,7 @@ export const DEFAULT_REQUESTED_CONFIG: RequestedConfig = {
     vision: {
       enabled: false,
       id: "floral_vision",
-      enabled_tools: ["vision_analyze_screen", "vision_analyze_region"],
+      enabled_tools: ["vision_analyze_screen", "vision_analyze_region", "vision_analyze_attachment"],
       required: false,
       startup_timeout_sec: 60,
       tool_timeout_sec: 120,

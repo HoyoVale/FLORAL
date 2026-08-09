@@ -54,15 +54,17 @@ export interface FloralVisionRuntimePaths {
   repositoryRoot: string;
   serverEntrypoint: string;
   allowedRoot: string;
+  inboundRoot: string;
 }
 
-export function resolveFloralVisionRuntime(): FloralVisionRuntimePaths {
+export function resolveFloralVisionRuntime(dataDir = "./data"): FloralVisionRuntimePaths {
   const moduleRoot = resolve(dirname(fileURLToPath(import.meta.url)), "../../..");
   const repositoryRoot = basename(moduleRoot) === "dist" ? dirname(moduleRoot) : moduleRoot;
   return {
     repositoryRoot,
     serverEntrypoint: join(repositoryRoot, "dist", "scripts", "floral-vision-mcp.js"),
     allowedRoot: join(repositoryRoot, "artifacts", "outbound", "floral_peekaboo"),
+    inboundRoot: join(resolve(repositoryRoot, dataDir), "inbound", "feishu"),
   };
 }
 
@@ -83,7 +85,7 @@ export function resolveFloralPeekabooRuntime(): FloralPeekabooRuntimePaths {
 
 export function buildMcpRuntimeRegistry(config: EffectiveConfig): McpRuntimeRegistry {
   const search = config.mcp.search;
-  const visionRuntime = resolveFloralVisionRuntime();
+  const visionRuntime = resolveFloralVisionRuntime(config.floral.data_dir);
   const peekabooRuntime = resolveFloralPeekabooRuntime();
   const visionTools = [...config.mcp.vision.enabled_tools].sort();
   const expectedVisionTools = [...FLORAL_VISION_TOOLS].sort();
@@ -134,6 +136,7 @@ export function buildMcpRuntimeRegistry(config: EffectiveConfig): McpRuntimeRegi
         inheritParentEnvironment: config.mcp.vision.inherit_parent_environment,
         environment: [
           { name: "FLORAL_VISION_ALLOWED_ROOT", kind: "literal", value: visionRuntime.allowedRoot },
+          { name: "FLORAL_VISION_INBOUND_ROOT", kind: "literal", value: visionRuntime.inboundRoot },
           { name: "MIMO_BASE_URL", kind: "literal", value: DEFAULT_MIMO_VISION_BASE_URL },
           { name: "MIMO_VISION_MODEL", kind: "literal", value: DEFAULT_MIMO_VISION_MODEL },
           { name: "MIMO_API_KEY", kind: "passthrough" },
@@ -152,7 +155,7 @@ export function buildMcpRuntimeRegistry(config: EffectiveConfig): McpRuntimeRegi
         kind: "mimo-vision",
         model: DEFAULT_MIMO_VISION_MODEL,
         endpoint: DEFAULT_MIMO_VISION_BASE_URL,
-        inputRoot: "floral-peekaboo-artifacts-only",
+        inputRoot: "floral-controlled-screenshot-and-feishu-inbound-roots",
         inheritParentEnvironment: config.mcp.vision.inherit_parent_environment,
       },
     },

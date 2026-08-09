@@ -486,7 +486,11 @@ function validateCrossFieldRules(
   }
   if (config.mcp.vision.enabled) {
     const actualVisionTools = [...config.mcp.vision.enabled_tools].sort();
-    const expectedVisionTools = ["vision_analyze_region", "vision_analyze_screen"];
+    const expectedVisionTools = [
+      "vision_analyze_attachment",
+      "vision_analyze_region",
+      "vision_analyze_screen",
+    ];
     if (JSON.stringify(actualVisionTools) !== JSON.stringify(expectedVisionTools)) {
       throw new Error("mcp.vision.enabled requires exactly the FLORAL-owned vision tool surface");
     }

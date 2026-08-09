@@ -19,7 +19,7 @@ import { resolveTrustedVisionArtifact } from "../src/config/mcp/vision/vision-in
 const repositoryRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 loadProjectEnv(join(repositoryRoot, ".env"));
 
-const runtime = resolveFloralVisionRuntime();
+const runtime = resolveFloralVisionRuntime(process.env.DATA_DIR?.trim() || "./data");
 const apiKey = process.env.MIMO_API_KEY?.trim() ?? "";
 const baseUrl = DEFAULT_MIMO_VISION_BASE_URL;
 const model = DEFAULT_MIMO_VISION_MODEL;
@@ -59,6 +59,7 @@ const transport = new StdioClientTransport({
   args: [runtime.serverEntrypoint],
   env: {
     FLORAL_VISION_ALLOWED_ROOT: runtime.allowedRoot,
+    FLORAL_VISION_INBOUND_ROOT: runtime.inboundRoot,
     MIMO_BASE_URL: baseUrl,
     MIMO_VISION_MODEL: model,
     MIMO_API_KEY: apiKey,
