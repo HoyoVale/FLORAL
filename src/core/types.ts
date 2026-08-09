@@ -50,10 +50,26 @@ export interface ExternalIdentity {
   displayName?: string;
 }
 
+export type IncomingAttachmentKind = "image" | "file";
+
+export interface IncomingAttachment {
+  id: string;
+  kind: IncomingAttachmentKind;
+  fileName?: string | undefined;
+  localPath?: string | undefined;
+  byteLength?: number | undefined;
+  source: {
+    transport: "feishu";
+    messageId: string;
+    resourceKey: string;
+  };
+}
+
 export interface IncomingMessage {
   id: string;
   identity: ExternalIdentity;
   text: string;
+  attachments?: IncomingAttachment[] | undefined;
   receivedAt: Date;
 }
 

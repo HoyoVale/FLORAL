@@ -3,12 +3,20 @@ export interface FeishuWorkerConfig {
   appSecret: string;
 }
 
+export interface SerializedFeishuIncomingAttachment {
+  id: string;
+  kind: "image" | "file";
+  resourceKey: string;
+  fileName?: string | undefined;
+}
+
 export interface SerializedFeishuIncomingMessage {
   id: string;
   botId: string;
   externalUserId: string;
   conversationId: string;
   text: string;
+  attachments?: SerializedFeishuIncomingAttachment[] | undefined;
   receivedAtMs: number;
 }
 

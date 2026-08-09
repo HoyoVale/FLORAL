@@ -1,12 +1,17 @@
+import { createHash } from "node:crypto";
+import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { extname, join, resolve } from "node:path";
 import { Worker } from "node:worker_threads";
 import * as Lark from "@larksuiteoapi/node-sdk";
 import type {
   ChatTransport,
+  InboundAttachmentMaterializer,
   InteractiveApprovalPrompt,
   InteractiveApprovalTransport,
   MediaTransport,
 } from "../../core/contracts.js";
 import type {
+  IncomingAttachment,
   IncomingMessage,
   OutgoingMediaMessage,
   OutgoingMessage,
@@ -33,14 +38,30 @@ export interface FeishuTransportOptions {
   outboundTimeoutMs: number;
   textChunkBytes: number;
   maxReplyChunks: number;
+  inboundRoot: string;
+  inboundMaxFileBytes: number;
+  inboundMaxAttachments: number;
+  inboundTimeoutMs: number;
   createClient?: (() => FeishuOutboundClient) | undefined;
   createWorker?: ((config: FeishuWorkerConfig) => FeishuWorkerLike) | undefined;
   resolveInstalledSdkVersion?: ((expectedVersion: string) => Promise<string>) | undefined;
   onFatal?: ((error: Error) => void) | undefined;
 }
 
+interface FeishuBinaryDownload {
+  getReadableStream(): AsyncIterable<unknown> & {
+    destroy?: ((error?: Error) => void) | undefined;
+  };
+}
+
 interface FeishuOutboundClient {
   im: {
+    messageResource: {
+      get(input: {
+        params: { type: "image" | "file" };
+        path: { message_id: string; file_key: string };
+      }): Promise<FeishuBinaryDownload>;
+    };
     v1: {
       message: {
         create(input: {
@@ -89,7 +110,7 @@ interface FeishuApprovalInteractionRoute {
 const MAX_FEISHU_CONVERSATION_USERS = 512;
 
 export class FeishuTransport
-  implements ChatTransport, InteractiveApprovalTransport, MediaTransport
+  implements ChatTransport, InboundAttachmentMaterializer, InteractiveApprovalTransport, MediaTransport
 {
   readonly name = "feishu";
   readonly #client: FeishuOutboundClient;
@@ -182,6 +203,34 @@ export class FeishuTransport
       this.#worker = undefined;
       this.#onMessage = undefined;
       await worker.terminate().catch(() => undefined);
+      throw error;
+    }
+  }
+
+  async materializeInboundAttachments(message: IncomingMessage): Promise<IncomingMessage> {
+    const attachments = message.attachments ?? [];
+    if (attachments.length === 0) return message;
+    if (attachments.length > this.options.inboundMaxAttachments) {
+      throw new Error(`Feishu inbound attachment count exceeds ${String(this.options.inboundMaxAttachments)}`);
+    }
+    if (attachments.some((item) => item.source.transport !== "feishu" || item.source.messageId !== message.id)) {
+      throw new Error("Feishu inbound attachment source does not match the message");
+    }
+
+    const root = resolve(this.options.inboundRoot);
+    await mkdir(root, { recursive: true, mode: 0o700 });
+    const fingerprint = createHash("sha256").update(message.id).digest("hex").slice(0, 20);
+    const directory = await mkdtemp(join(root, `${fingerprint}-`));
+    try {
+      const materialized: IncomingAttachment[] = [];
+      for (let index = 0; index < attachments.length; index += 1) {
+        materialized.push(await this.#downloadInboundAttachment(directory, attachments[index]!, index));
+      }
+      const totalBytes = materialized.reduce((sum, item) => sum + (item.byteLength ?? 0), 0);
+      process.stderr.write(`feishu.transport.inbound_media=materialized count=${String(materialized.length)} bytes=${String(totalBytes)}\n`);
+      return { ...message, attachments: materialized };
+    } catch (error) {
+      await rm(directory, { recursive: true, force: true }).catch(() => undefined);
       throw error;
     }
   }
@@ -419,12 +468,79 @@ export class FeishuTransport
         conversationId: value.conversationId,
       },
       text: value.text,
+      ...(value.attachments?.length ? {
+        attachments: value.attachments.map((attachment) => ({
+          id: attachment.id,
+          kind: attachment.kind,
+          ...(attachment.fileName ? { fileName: attachment.fileName } : {}),
+          source: {
+            transport: "feishu" as const,
+            messageId: value.id,
+            resourceKey: attachment.resourceKey,
+          },
+        })),
+      } : {}),
       receivedAt,
     }).catch((error) => {
       process.stderr.write(
         `feishu.transport.inbound_handler_error=${errorName(error)}\n`,
       );
     });
+  }
+
+  async #downloadInboundAttachment(
+    directory: string,
+    attachment: IncomingAttachment,
+    index: number,
+  ): Promise<IncomingAttachment> {
+    const response = await withTimeout(
+      this.#client.im.messageResource.get({
+        params: { type: attachment.kind },
+        path: {
+          message_id: attachment.source.messageId,
+          file_key: attachment.source.resourceKey,
+        },
+      }),
+      this.options.inboundTimeoutMs,
+      "Feishu inbound resource response",
+    );
+    const stream = response.getReadableStream();
+    const chunks: Buffer[] = [];
+    let byteLength = 0;
+    let timedOut = false;
+    const timer = setTimeout(() => {
+      timedOut = true;
+      stream.destroy?.(new Error("Feishu inbound resource stream timeout"));
+    }, this.options.inboundTimeoutMs);
+    timer.unref?.();
+    try {
+      for await (const chunk of stream) {
+        const bytes = normalizeStreamChunk(chunk);
+        byteLength += bytes.length;
+        if (byteLength > this.options.inboundMaxFileBytes) {
+          stream.destroy?.(new Error("Feishu inbound resource exceeds local size limit"));
+          throw new Error(`Feishu inbound resource exceeds ${String(this.options.inboundMaxFileBytes)} bytes`);
+        }
+        chunks.push(bytes);
+      }
+    } catch (error) {
+      if (timedOut) {
+        throw new Error(`Feishu inbound resource stream timed out after ${String(this.options.inboundTimeoutMs)}ms`);
+      }
+      throw error;
+    } finally {
+      clearTimeout(timer);
+    }
+    if (byteLength === 0) throw new Error("Feishu inbound resource was empty");
+
+    const bytes = Buffer.concat(chunks, byteLength);
+    const ordinal = String(index + 1).padStart(2, "0");
+    const suffix = attachment.kind === "image"
+      ? sniffImageExtension(bytes)
+      : safeFileExtension(attachment.fileName);
+    const localPath = join(directory, `${attachment.kind}-${ordinal}${suffix}`);
+    await writeFile(localPath, bytes, { mode: 0o600 });
+    return { ...attachment, localPath, byteLength };
   }
 
   #dispatchApprovalAction(
@@ -613,6 +729,9 @@ function validateOptions(options: FeishuTransportOptions): void {
     ["outboundTimeoutMs", options.outboundTimeoutMs],
     ["textChunkBytes", options.textChunkBytes],
     ["maxReplyChunks", options.maxReplyChunks],
+    ["inboundMaxFileBytes", options.inboundMaxFileBytes],
+    ["inboundMaxAttachments", options.inboundMaxAttachments],
+    ["inboundTimeoutMs", options.inboundTimeoutMs],
   ] as const) {
     if (!Number.isInteger(value) || value <= 0) {
       throw new Error(`Feishu transport ${label} must be a positive integer`);
@@ -627,6 +746,37 @@ function validateOptions(options: FeishuTransportOptions): void {
   if (options.maxReplyChunks > 5) {
     throw new Error("Feishu maximum reply chunks exceeds 5");
   }
+  if (!options.inboundRoot.trim()) throw new Error("Feishu inbound root must not be empty");
+  if (options.inboundMaxFileBytes > 100 * 1024 * 1024) {
+    throw new Error("Feishu inbound file limit exceeds the platform 100 MiB ceiling");
+  }
+  if (options.inboundMaxAttachments > 16) throw new Error("Feishu inbound attachment count exceeds 16");
+  if (options.inboundTimeoutMs > 10 * 60_000) throw new Error("Feishu inbound timeout exceeds 10 minutes");
+}
+
+function normalizeStreamChunk(value: unknown): Buffer {
+  if (Buffer.isBuffer(value)) return value;
+  if (value instanceof Uint8Array) return Buffer.from(value.buffer, value.byteOffset, value.byteLength);
+  if (typeof value === "string") return Buffer.from(value, "utf8");
+  throw new Error("Feishu inbound resource emitted an unsupported stream chunk");
+}
+
+function safeFileExtension(fileName: string | undefined): string {
+  if (!fileName) return ".bin";
+  const suffix = extname(fileName).toLowerCase();
+  return /^\.[a-z0-9]{1,10}$/u.test(suffix) ? suffix : ".bin";
+}
+
+function sniffImageExtension(bytes: Buffer): string {
+  if (bytes.length >= 8 && bytes.subarray(0, 8).equals(Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]))) return ".png";
+  if (bytes.length >= 3 && bytes[0] === 0xff && bytes[1] === 0xd8 && bytes[2] === 0xff) return ".jpg";
+  if (bytes.length >= 6) {
+    const header = bytes.subarray(0, 6).toString("ascii");
+    if (header === "GIF87a" || header === "GIF89a") return ".gif";
+  }
+  if (bytes.length >= 12 && bytes.subarray(0, 4).toString("ascii") === "RIFF" && bytes.subarray(8, 12).toString("ascii") === "WEBP") return ".webp";
+  if (bytes.length >= 2 && bytes.subarray(0, 2).toString("ascii") === "BM") return ".bmp";
+  return ".bin";
 }
 
 function assertFeishuApiSuccess(value: unknown): void {

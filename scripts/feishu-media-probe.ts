@@ -51,6 +51,10 @@ const transport = new FeishuTransport({
   outboundTimeoutMs: contract.delivery.outboundTimeoutMs,
   textChunkBytes: contract.delivery.textChunkBytes,
   maxReplyChunks: contract.delivery.maxReplyChunks,
+  inboundRoot: resolve(repositoryRoot, authority.effective.floral.data_dir, "inbound", "feishu"),
+  inboundMaxFileBytes: 30 * 1024 * 1024,
+  inboundMaxAttachments: 8,
+  inboundTimeoutMs: 120_000,
   onFatal: finish,
 });
 

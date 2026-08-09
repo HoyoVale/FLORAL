@@ -1,5 +1,6 @@
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
+import { Readable } from "node:stream";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { FeishuTransport, splitFeishuText } from "../src/transport/feishu/feishu-transport.js";
@@ -63,6 +64,7 @@ function options(input: {
   create?: (request: unknown) => Promise<unknown>;
   imageCreate?: (request: unknown) => Promise<unknown>;
   fileCreate?: (request: unknown) => Promise<unknown>;
+  resourceGet?: (request: unknown) => Promise<{ getReadableStream(): AsyncIterable<unknown> & { destroy?: ((error?: Error) => void) | undefined } }>;
   onFatal?: (error: Error) => void;
 }) {
   return {
@@ -73,10 +75,19 @@ function options(input: {
     outboundTimeoutMs: 1_000,
     textChunkBytes: 32,
     maxReplyChunks: 4,
+    inboundRoot: join(tmpdir(), "floral-feishu-inbound-test"),
+    inboundMaxFileBytes: 30 * 1024 * 1024,
+    inboundMaxAttachments: 8,
+    inboundTimeoutMs: 1_000,
     resolveInstalledSdkVersion: async () => "1.36.0",
     createWorker: (_config: FeishuWorkerConfig) => input.worker,
     createClient: () => ({
       im: {
+        messageResource: {
+          get: input.resourceGet ?? (async () => ({
+            getReadableStream: () => Readable.from([Buffer.from("resource")]) as AsyncIterable<unknown> & { destroy?: ((error?: Error) => void) | undefined },
+          })),
+        },
         v1: {
           message: {
             create: input.create ?? (async () => ({ code: 0 })),
@@ -153,6 +164,97 @@ describe("FeishuTransport", () => {
       receivedAt: new Date(1_786_123_456_789),
     }]);
     await transport.stop();
+  });
+
+  it("dispatches Feishu worker attachment refs into the inbound contract", async () => {
+    const worker = new FakeWorker();
+    const received: unknown[] = [];
+    const transport = new FeishuTransport(options({ worker }));
+    await startTransport(transport, worker, async (message) => {
+      received.push(message);
+    });
+
+    worker.message({
+      type: "message",
+      message: {
+        id: "om_image",
+        botId: "cli_floral",
+        externalUserId: "ou_owner",
+        conversationId: "oc_chat",
+        text: "",
+        attachments: [{
+          id: "image:img_owner",
+          kind: "image",
+          resourceKey: "img_owner",
+        }],
+        receivedAtMs: 1_786_123_456_789,
+      },
+    });
+    await Promise.resolve();
+
+    expect(received).toEqual([{
+      id: "om_image",
+      identity: {
+        transport: "feishu",
+        botId: "cli_floral",
+        externalUserId: "ou_owner",
+        conversationId: "oc_chat",
+      },
+      text: "",
+      attachments: [{
+        id: "image:img_owner",
+        kind: "image",
+        source: {
+          transport: "feishu",
+          messageId: "om_image",
+          resourceKey: "img_owner",
+        },
+      }],
+      receivedAt: new Date(1_786_123_456_789),
+    }]);
+    await transport.stop();
+  });
+
+  it("materializes authenticated Feishu resource references", async () => {
+    const worker = new FakeWorker();
+    const root = await mkdtemp(join(tmpdir(), "floral-feishu-inbound-"));
+    const requests: unknown[] = [];
+    const transport = new FeishuTransport({
+      ...options({
+        worker,
+        resourceGet: async (request) => {
+          requests.push(request);
+          const type = (request as { params?: { type?: unknown } }).params?.type;
+          const bytes = type === "image"
+            ? Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 1])
+            : Buffer.from("hello file");
+          return { getReadableStream: () => Readable.from([bytes]) as AsyncIterable<unknown> & { destroy?: ((error?: Error) => void) | undefined } };
+        },
+      }),
+      inboundRoot: root,
+    });
+    try {
+      await startTransport(transport, worker);
+      const result = await transport.materializeInboundAttachments({
+        id: "om_media",
+        identity: { transport: "feishu", botId: "cli_floral", externalUserId: "ou_owner", conversationId: "oc_chat" },
+        text: "inspect",
+        attachments: [
+          { id: "image:img_1", kind: "image", source: { transport: "feishu", messageId: "om_media", resourceKey: "img_1" } },
+          { id: "file:file_1", kind: "file", fileName: "../../report.pdf", source: { transport: "feishu", messageId: "om_media", resourceKey: "file_1" } },
+        ],
+        receivedAt: new Date(),
+      });
+      expect(requests).toEqual([
+        { params: { type: "image" }, path: { message_id: "om_media", file_key: "img_1" } },
+        { params: { type: "file" }, path: { message_id: "om_media", file_key: "file_1" } },
+      ]);
+      expect(result.attachments?.[0]?.localPath).toMatch(/image-01\.png$/u);
+      expect(result.attachments?.[1]?.localPath).toMatch(/file-02\.pdf$/u);
+    } finally {
+      await transport.stop();
+      await rm(root, { recursive: true, force: true });
+    }
   });
 
   it("sends text by chat_id and serializes concurrent sends in one conversation", async () => {

@@ -38,6 +38,14 @@ const eventDispatcher = new Lark.EventDispatcher({}).register({
         externalUserId: normalized.identity.externalUserId,
         conversationId: normalized.identity.conversationId,
         text: normalized.text,
+        ...(normalized.attachments?.length ? {
+          attachments: normalized.attachments.map((attachment) => ({
+            id: attachment.id,
+            kind: attachment.kind,
+            resourceKey: attachment.source.resourceKey,
+            ...(attachment.fileName ? { fileName: attachment.fileName } : {}),
+          })),
+        } : {}),
         receivedAtMs: normalized.receivedAt.getTime(),
       },
     });

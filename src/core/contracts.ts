@@ -54,6 +54,17 @@ export function supportsInteractiveApproval(
     .sendInteractiveApprovalPrompt === "function";
 }
 
+export interface InboundAttachmentMaterializer {
+  materializeInboundAttachments(message: IncomingMessage): Promise<IncomingMessage>;
+}
+
+export function supportsInboundAttachmentMaterializer(
+  transport: ChatTransport,
+): transport is ChatTransport & InboundAttachmentMaterializer {
+  return typeof (transport as Partial<InboundAttachmentMaterializer>)
+    .materializeInboundAttachments === "function";
+}
+
 export interface MediaTransport {
   sendMedia(message: OutgoingMediaMessage): Promise<void>;
 }

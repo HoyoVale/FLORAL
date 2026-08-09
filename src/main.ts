@@ -208,6 +208,10 @@ function createChatTransport(
     outboundTimeoutMs: contract.delivery.outboundTimeoutMs,
     textChunkBytes: contract.delivery.textChunkBytes,
     maxReplyChunks: contract.delivery.maxReplyChunks,
+    inboundRoot: resolve(repositoryRoot, env.DATA_DIR, "inbound", "feishu"),
+    inboundMaxFileBytes: 30 * 1024 * 1024,
+    inboundMaxAttachments: 8,
+    inboundTimeoutMs: 120_000,
     onFatal: () => {
       // A dead long-connection worker makes the chat ingress unavailable. Re-enter
       // the normal SIGTERM shutdown path so LaunchAgent can restart the process.
