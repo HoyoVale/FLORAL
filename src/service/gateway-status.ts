@@ -163,29 +163,60 @@ export function formatAgentSkills(skills: AgentSkillSummary[]): string {
   return lines.join("\n").trimEnd();
 }
 
-export function formatAgentApps(apps: AgentAppSummary[]): string {
-  const callableKnown = apps.filter((app) => app.callable !== undefined);
+export function formatAgentApps(
+  apps: AgentAppSummary[],
+  availableApps: AgentAppSummary[] = [],
+): string {
+  const runtimeApps = apps.filter((app) => app.source === "installed-runtime");
+  const directoryFallbackApps = apps.filter((app) => app.source === "directory-fallback");
+  const callableKnown = runtimeApps.filter((app) => app.callable !== undefined);
   const lines = [
     "Codex Apps",
-    `发现：${String(apps.length)}；可调用（已知）：${String(callableKnown.filter((app) => app.callable === true).length)}/${String(callableKnown.length)}`,
+    `已安装运行态：${String(runtimeApps.length)}；可调用（已知）：${String(callableKnown.filter((app) => app.callable === true).length)}/${String(callableKnown.length)}`,
+    `目录可见：${String(availableApps.length)}；可访问：${String(availableApps.filter((app) => app.accessible === true).length)}`,
   ];
-  if (apps.length === 0) {
-    lines.push("", "当前 Codex runtime 没有报告可用 App。 ");
-    return lines.join("\n").trimEnd();
+  if (runtimeApps.length === 0) {
+    lines.push("", "当前 Codex runtime 没有报告已安装 App。 ");
+  } else {
+    lines.push("", "已安装 / 运行态");
+    runtimeApps.slice(0, 100).forEach((app, index) => {
+      lines.push(
+        `${String(index + 1)}. ${app.runtimeName ?? app.id}`,
+        [
+          `   id=${app.id}`,
+          `enabled=${String(app.enabled)}`,
+          `callable=${app.callable === undefined ? "unknown" : String(app.callable)}`,
+          `source=${app.source}`,
+          ...(app.accessible !== undefined ? [`accessible=${String(app.accessible)}`] : []),
+        ].join(" "),
+      );
+    });
   }
-  lines.push("");
-  apps.slice(0, 100).forEach((app, index) => {
+  if (directoryFallbackApps.length > 0) {
     lines.push(
-      `${String(index + 1)}. ${app.runtimeName ?? app.id}`,
-      [
-        `   id=${app.id}`,
-        `enabled=${String(app.enabled)}`,
-        `callable=${app.callable === undefined ? "unknown" : String(app.callable)}`,
-        `source=${app.source}`,
-        ...(app.accessible !== undefined ? [`accessible=${String(app.accessible)}`] : []),
-      ].join(" "),
+      "",
+      `运行态接口不可用：app/list fallback 返回 ${String(directoryFallbackApps.length)} 个目录项；这些条目只用于发现，不视为已安装或可调用证据。`,
     );
-  });
+  }
+  if (availableApps.length > 0) {
+    lines.push("", "App 目录（安装/连接候选）");
+    availableApps.slice(0, 30).forEach((app, index) => {
+      lines.push(
+        `${String(index + 1)}. ${app.runtimeName ?? app.id}`,
+        [
+          `   id=${app.id}`,
+          `accessible=${String(app.accessible === true)}`,
+          `enabled=${String(app.enabled)}`,
+          `install=${app.installUrl ? "supported-handoff" : "unavailable"}`,
+        ].join(" "),
+        ...(app.description ? [`   ${app.description}`] : []),
+      );
+    });
+    lines.push(
+      "",
+      "需要安装/连接 App 时，Agent 应使用 floral_extensions/prepare_app_install 获取受支持安装入口；认证由用户在受支持界面完成。 ",
+    );
+  }
   lines.push(
     "",
     "source=directory-fallback 表示当前 App Server 不支持 app/installed；此时 callable=unknown，不把目录可见误报成实际可调用。",

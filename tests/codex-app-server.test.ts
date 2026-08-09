@@ -309,6 +309,29 @@ describe("CodexAppServerRuntime", () => {
           source: "installed-runtime",
         },
       ]);
+      await expect(runtime.listAvailableApps({
+        cwd: process.cwd(),
+        forceRefresh: false,
+      })).resolves.toEqual([
+        {
+          id: "github",
+          runtimeName: "GitHub",
+          description: "GitHub connector directory entry",
+          installUrl: "https://chatgpt.com/apps/github/github",
+          enabled: true,
+          accessible: true,
+          source: "directory",
+        },
+        {
+          id: "calendar-demo",
+          runtimeName: "Calendar Demo",
+          description: "Directory-only inaccessible example",
+          installUrl: "https://chatgpt.com/apps/calendar-demo/calendar-demo",
+          enabled: false,
+          accessible: false,
+          source: "directory",
+        },
+      ]);
       await expect(runtime.readApps({
         cwd: process.cwd(),
         appIds: ["github", "missing"],
@@ -351,13 +374,26 @@ describe("CodexAppServerRuntime", () => {
       await runtime.start();
       await expect(runtime.listInstalledApps({
         cwd: process.cwd(),
-      })).resolves.toEqual([{
-        id: "github",
-        runtimeName: "GitHub",
-        enabled: true,
-        accessible: true,
-        source: "directory-fallback",
-      }]);
+      })).resolves.toEqual([
+        {
+          id: "github",
+          runtimeName: "GitHub",
+          description: "GitHub connector directory entry",
+          installUrl: "https://chatgpt.com/apps/github/github",
+          enabled: true,
+          accessible: true,
+          source: "directory-fallback",
+        },
+        {
+          id: "calendar-demo",
+          runtimeName: "Calendar Demo",
+          description: "Directory-only inaccessible example",
+          installUrl: "https://chatgpt.com/apps/calendar-demo/calendar-demo",
+          enabled: false,
+          accessible: false,
+          source: "directory-fallback",
+        },
+      ]);
     } finally {
       await runtime.stop();
     }
@@ -414,6 +450,34 @@ describe("CodexAppServerRuntime", () => {
         cwd: process.cwd(),
       });
       expect(result.finalText).toBe("extension apps complete");
+    } finally {
+      await runtime.stop();
+    }
+  });
+
+  it("exposes the Codex App directory separately from installed runtime state", async () => {
+    const runtime = createRuntime("extension-available-apps");
+    try {
+      await runtime.start();
+      const result = await runtime.run({
+        text: "Show available Codex Apps.",
+        cwd: process.cwd(),
+      });
+      expect(result.finalText).toBe("extension available apps complete");
+    } finally {
+      await runtime.stop();
+    }
+  });
+
+  it("prepares a supported App installation handoff without silently installing or authenticating", async () => {
+    const runtime = createRuntime("extension-app-install-handoff");
+    try {
+      await runtime.start();
+      const result = await runtime.run({
+        text: "Prepare GitHub App installation.",
+        cwd: process.cwd(),
+      });
+      expect(result.finalText).toBe("extension app handoff complete");
     } finally {
       await runtime.stop();
     }

@@ -52,11 +52,13 @@ function hasFloralExtensionTools(params) {
   if (!namespace || !Array.isArray(namespace.tools)) return false;
   const names = namespace.tools.map((tool) => tool?.name).sort();
   return JSON.stringify(names) === JSON.stringify([
+    "available_apps",
     "installed_apps",
     "manage_mcp",
     "mcp_catalog",
     "mcp_status",
     "native_status",
+    "prepare_app_install",
     "read_apps",
   ]);
 }
@@ -298,13 +300,24 @@ lines.on("line", (line) => {
     send({
       id: message.id,
       result: {
-        data: [{
-          id: "github",
-          name: "GitHub",
-          description: "GitHub connector directory entry",
-          isAccessible: true,
-          isEnabled: true,
-        }],
+        data: [
+          {
+            id: "github",
+            name: "GitHub",
+            description: "GitHub connector directory entry",
+            installUrl: "https://chatgpt.com/apps/github/github",
+            isAccessible: true,
+            isEnabled: true,
+          },
+          {
+            id: "calendar-demo",
+            name: "Calendar Demo",
+            description: "Directory-only inaccessible example",
+            installUrl: "https://chatgpt.com/apps/calendar-demo/calendar-demo",
+            isAccessible: false,
+            isEnabled: false,
+          },
+        ],
         nextCursor: null,
       },
     });
@@ -439,6 +452,8 @@ lines.on("line", (line) => {
     if (
       (scenario === "extension-dynamic-tools"
         || scenario === "extension-installed-apps"
+        || scenario === "extension-available-apps"
+        || scenario === "extension-app-install-handoff"
         || scenario === "extension-mcp-status"
         || scenario === "extension-mcp-install"
         || scenario === "extension-mcp-install-status-pending"
@@ -901,6 +916,38 @@ lines.on("line", (line) => {
         return;
       }
 
+      if (scenario === "extension-available-apps") {
+        send({
+          id: "dynamic_1",
+          method: "item/tool/call",
+          params: {
+            threadId: activeThreadId,
+            turnId: activeTurnId,
+            callId: "call_extensions_available_apps_1",
+            namespace: "floral_extensions",
+            tool: "available_apps",
+            arguments: {},
+          },
+        });
+        return;
+      }
+
+      if (scenario === "extension-app-install-handoff") {
+        send({
+          id: "dynamic_1",
+          method: "item/tool/call",
+          params: {
+            threadId: activeThreadId,
+            turnId: activeTurnId,
+            callId: "call_extensions_app_handoff_1",
+            namespace: "floral_extensions",
+            tool: "prepare_app_install",
+            arguments: { app_id: "github" },
+          },
+        });
+        return;
+      }
+
       if (scenario === "extension-mcp-status") {
         send({
           id: "dynamic_1",
@@ -1323,6 +1370,25 @@ lines.on("line", (line) => {
       && text.includes("callable=true")
     ) {
       sendSuccess(activeThreadId, activeTurnId, "extension apps complete");
+      return;
+    }
+    if (
+      scenario === "extension-available-apps"
+      && success === true
+      && text.includes("codex_apps.available=2")
+      && text.includes("install=supported-handoff")
+    ) {
+      sendSuccess(activeThreadId, activeTurnId, "extension available apps complete");
+      return;
+    }
+    if (
+      scenario === "extension-app-install-handoff"
+      && success === true
+      && text.includes("app_install_handoff=required")
+      && text.includes("app_id=github")
+      && text.includes("install_url=https://chatgpt.com/apps/github/github")
+    ) {
+      sendSuccess(activeThreadId, activeTurnId, "extension app handoff complete");
       return;
     }
     if (

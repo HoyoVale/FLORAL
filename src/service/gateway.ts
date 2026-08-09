@@ -475,24 +475,42 @@ export class GatewayService {
           return;
         }
         try {
-          const apps = await this.agent.listInstalledApps({
-            cwd,
-            ...(projectContext?.threadId ? { threadId: projectContext.threadId } : {}),
-            forceRefresh: false,
-          });
+          const [apps, availableApps] = await Promise.all([
+            this.agent.listInstalledApps({
+              cwd,
+              ...(projectContext?.threadId ? { threadId: projectContext.threadId } : {}),
+              forceRefresh: false,
+            }),
+            this.agent.listAvailableApps({
+              cwd,
+              ...(projectContext?.threadId ? { threadId: projectContext.threadId } : {}),
+              forceRefresh: false,
+            }),
+          ]);
           await this.store.appendAudit({
             userId: resolved.userId,
             conversationId: resolved.conversationId,
             eventType: "command.apps",
             payload: {
-              count: apps.length,
-              callableCount: apps.filter((app) => app.callable === true).length,
-              callableUnknownCount: apps.filter((app) => app.callable === undefined).length,
+              count: apps.filter((app) => app.source === "installed-runtime").length,
+              fallbackDirectoryCount: apps.filter(
+                (app) => app.source === "directory-fallback",
+              ).length,
+              callableCount: apps.filter(
+                (app) => app.source === "installed-runtime" && app.callable === true,
+              ).length,
+              callableUnknownCount: apps.filter(
+                (app) => app.source === "installed-runtime" && app.callable === undefined,
+              ).length,
+              directoryCount: availableApps.length,
+              accessibleDirectoryCount: availableApps.filter(
+                (app) => app.accessible === true,
+              ).length,
             },
           });
           await this.#send(
             message.identity.conversationId,
-            formatAgentApps(apps),
+            formatAgentApps(apps, availableApps),
           );
         } catch (error) {
           await this.store.appendAudit({

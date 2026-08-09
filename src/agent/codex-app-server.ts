@@ -94,6 +94,7 @@ interface AppListResponse {
     id?: unknown;
     name?: unknown;
     description?: unknown;
+    installUrl?: unknown;
     isAccessible?: unknown;
     isEnabled?: unknown;
   }> | undefined;
@@ -129,6 +130,7 @@ interface ExperimentalFeatureListResponse {
 interface ExtensionDiscoverySnapshot {
   features?: AgentNativeFeatureSummary[] | undefined;
   installedApps?: AgentAppSummary[] | undefined;
+  availableApps?: AgentAppSummary[] | undefined;
   appDetails?: AgentAppReadResult | undefined;
   mcpServers?: AgentMcpServerSummary[] | undefined;
   errors: string[];
@@ -413,6 +415,35 @@ const FLORAL_EXTENSIONS_DYNAMIC_TOOLS = [
         inputSchema: {
           type: "object",
           properties: {},
+          additionalProperties: false,
+        },
+        deferLoading: false,
+      },
+      {
+        type: "function",
+        name: "available_apps",
+        description: "Read the per-turn Codex App directory snapshot, including accessibility, local enabled state, and a supported-surface install URL when Codex provides one.",
+        inputSchema: {
+          type: "object",
+          properties: {},
+          additionalProperties: false,
+        },
+        deferLoading: false,
+      },
+      {
+        type: "function",
+        name: "prepare_app_install",
+        description: "Prepare a safe supported-surface installation handoff for one App directory entry. This does not install, authenticate, or grant connector access by itself.",
+        inputSchema: {
+          type: "object",
+          properties: {
+            app_id: {
+              type: "string",
+              minLength: 1,
+              maxLength: 160,
+            },
+          },
+          required: ["app_id"],
           additionalProperties: false,
         },
         deferLoading: false,
@@ -736,6 +767,19 @@ export class CodexAppServerRuntime implements AgentRuntime {
     threadId?: string | undefined;
     forceRefresh?: boolean | undefined;
   }): Promise<AgentAppSummary[]> {
+    const apps = await this.listAvailableApps(input);
+    return apps.map((app) => ({
+      ...app,
+      source: "directory-fallback" as const,
+    }));
+  }
+
+  async listAvailableApps(input: {
+    cwd: string;
+    threadId?: string | undefined;
+    forceRefresh?: boolean | undefined;
+  }): Promise<AgentAppSummary[]> {
+    this.#ensureStarted();
     resolve(input.cwd);
     const output: AgentAppSummary[] = [];
     let cursor: string | null = null;
@@ -753,6 +797,8 @@ export class CodexAppServerRuntime implements AgentRuntime {
       for (const app of data) {
         const id = readBoundedPlainText(app?.id, 160);
         const runtimeName = readBoundedPlainText(app?.name, 200);
+        const description = readBoundedPlainText(app?.description, 1_000);
+        const installUrl = readHttpsUrl(app?.installUrl);
         if (
           !id
           || typeof app?.isEnabled !== "boolean"
@@ -763,9 +809,11 @@ export class CodexAppServerRuntime implements AgentRuntime {
         output.push({
           id,
           ...(runtimeName ? { runtimeName } : {}),
+          ...(description ? { description } : {}),
+          ...(installUrl ? { installUrl } : {}),
           enabled: app.isEnabled,
           accessible: app.isAccessible,
-          source: "directory-fallback",
+          source: "directory",
         });
       }
       const next = readBoundedPlainText(response?.nextCursor, 500);
@@ -1856,9 +1904,10 @@ export class CodexAppServerRuntime implements AgentRuntime {
     cwd: string,
   ): Promise<void> {
     const snapshot: ExtensionDiscoverySnapshot = { errors: [] };
-    const [featureResult, installedResult, mcpResult] = await Promise.allSettled([
+    const [featureResult, installedResult, availableResult, mcpResult] = await Promise.allSettled([
       this.listNativeExtensionFeatures({ cwd }),
       this.listInstalledApps({ cwd, threadId, forceRefresh: false }),
+      this.listAvailableApps({ cwd, threadId, forceRefresh: false }),
       this.listMcpServers({ cwd, threadId }),
     ]);
 
@@ -1870,22 +1919,32 @@ export class CodexAppServerRuntime implements AgentRuntime {
 
     if (installedResult.status === "fulfilled") {
       snapshot.installedApps = installedResult.value;
-      const appIds = installedResult.value.map((app) => app.id).slice(0, 100);
-      if (appIds.length > 0) {
-        try {
-          snapshot.appDetails = await this.readApps({
-            cwd,
-            appIds,
-            includeTools: true,
-          });
-        } catch {
-          snapshot.errors.push("app/read");
-        }
-      } else {
-        snapshot.appDetails = { apps: [], missingAppIds: [] };
-      }
     } else {
       snapshot.errors.push("app/installed");
+    }
+
+    if (availableResult.status === "fulfilled") {
+      snapshot.availableApps = availableResult.value;
+    } else {
+      snapshot.errors.push("app/list");
+    }
+
+    const appIds = [...new Set([
+      ...(snapshot.installedApps ?? []).map((app) => app.id),
+      ...(snapshot.availableApps ?? []).map((app) => app.id),
+    ])].slice(0, 100);
+    if (appIds.length > 0) {
+      try {
+        snapshot.appDetails = await this.readApps({
+          cwd,
+          appIds,
+          includeTools: true,
+        });
+      } catch {
+        snapshot.errors.push("app/read");
+      }
+    } else {
+      snapshot.appDetails = { apps: [], missingAppIds: [] };
     }
 
     if (mcpResult.status === "fulfilled") {
@@ -1965,6 +2024,53 @@ export class CodexAppServerRuntime implements AgentRuntime {
           dynamicToolResponse(
             true,
             formatInstalledAppsForTool(snapshot.installedApps),
+          ),
+        );
+        return;
+      }
+
+      if (tool === "available_apps") {
+        if (!snapshot.availableApps) {
+          throw new Error("available App snapshot unavailable");
+        }
+        this.#respondSafely(
+          request.id,
+          dynamicToolResponse(
+            true,
+            formatAvailableAppsForTool(snapshot.availableApps),
+          ),
+        );
+        return;
+      }
+
+      if (tool === "prepare_app_install") {
+        const appId = readAppId(argumentsValue.app_id);
+        const selected = appId
+          ? snapshot.availableApps?.find((app) => app.id === appId)
+          : undefined;
+        if (!selected || selected.accessible !== true || !selected.installUrl) {
+          this.#respondSafely(
+            request.id,
+            dynamicToolResponse(
+              false,
+              "app_install_handoff=unavailable\nreason=app-not-accessible-or-install-url-missing",
+            ),
+          );
+          return;
+        }
+        this.#respondSafely(
+          request.id,
+          dynamicToolResponse(
+            true,
+            [
+              "app_install_handoff=required",
+              `app_id=${safeDynamicToolToken(selected.id)}`,
+              `app_name=${JSON.stringify(selected.runtimeName ?? selected.id)}`,
+              `install_url=${selected.installUrl}`,
+              "surface=codex-supported-app-install-flow",
+              "authentication=user-mediated",
+              "post_install=start-new-session-and-verify-app-installed",
+            ].join("\n"),
           ),
         );
         return;
@@ -3086,6 +3192,18 @@ function normalizeFeatureStage(
     : "unknown";
 }
 
+function readHttpsUrl(value: unknown): string | undefined {
+  if (typeof value !== "string") return undefined;
+  const normalized = value.trim();
+  if (!normalized || normalized.length > 2_048) return undefined;
+  try {
+    const url = new URL(normalized);
+    return url.protocol === "https:" ? url.toString() : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
 function readBoundedPlainText(
   value: unknown,
   maxLength: number,
@@ -3097,6 +3215,12 @@ function readBoundedPlainText(
     .trim();
   if (!normalized) return undefined;
   return Array.from(normalized).slice(0, maxLength).join("");
+}
+
+function readAppId(value: unknown): string | undefined {
+  if (typeof value !== "string") return undefined;
+  const id = value.trim();
+  return /^[A-Za-z0-9][A-Za-z0-9._:-]{0,159}$/u.test(id) ? id : undefined;
 }
 
 function normalizeAppIds(values: readonly string[]): string[] {
@@ -3216,6 +3340,23 @@ function formatInstalledAppsForTool(apps: AgentAppSummary[]): string {
       `callable=${app.callable === undefined ? "unknown" : String(app.callable)}`,
       `source=${app.source}`,
       ...(app.accessible !== undefined ? [`accessible=${String(app.accessible)}`] : []),
+    ].join(" "));
+  }
+  return lines.join("\n");
+}
+
+function formatAvailableAppsForTool(apps: AgentAppSummary[]): string {
+  const lines = [`codex_apps.available=${String(apps.length)}`];
+  for (const app of apps.slice(0, 100)) {
+    lines.push([
+      `id=${safeDynamicToolToken(app.id)}`,
+      `name=${JSON.stringify(app.runtimeName ?? app.id)}`,
+      `accessible=${String(app.accessible === true)}`,
+      `enabled=${String(app.enabled)}`,
+      `install=${app.installUrl ? "supported-handoff" : "unavailable"}`,
+      ...(app.description
+        ? [`description=${JSON.stringify(app.description)}`]
+        : []),
     ].join(" "));
   }
   return lines.join("\n");

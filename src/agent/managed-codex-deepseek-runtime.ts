@@ -266,6 +266,26 @@ export class ManagedCodexDeepSeekRuntime implements AgentRuntime {
     });
   }
 
+  async listAvailableApps(input: {
+    cwd: string;
+    threadId?: string | undefined;
+    forceRefresh?: boolean | undefined;
+  }): Promise<AgentAppSummary[]> {
+    const slot = await this.#runtimeSlotForCwd(input.cwd);
+    const runtime = slot.runtime;
+    if (!supportsAgentExtensionDiscovery(runtime)) {
+      throw new Error("Managed Codex runtime does not expose App directory discovery");
+    }
+    const threadId = this.#extensionThreadIdForSlot(input.threadId, slot.key);
+    return await runtime.listAvailableApps({
+      cwd: input.cwd,
+      ...(threadId ? { threadId } : {}),
+      ...(input.forceRefresh !== undefined
+        ? { forceRefresh: input.forceRefresh }
+        : {}),
+    });
+  }
+
   async readApps(input: {
     cwd: string;
     appIds: string[];

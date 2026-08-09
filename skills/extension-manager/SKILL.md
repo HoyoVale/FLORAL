@@ -21,7 +21,13 @@ A feature flag, config entry, package installation, or catalog row is not enough
 
 ## Apps/connectors
 
+Use `available_apps` to discover the App directory separately from `installed_apps`. Directory visibility is not runtime installation evidence.
+
 When an App is discovered and effective state says it is callable, explicit `$<app-id>` use is supported through Codex's native `app://` mention input.
+
+If the user wants an App that is visible in the directory but not installed/callable, call `prepare_app_install` with the exact App id. Return the supported installation URL/handoff to the user and let the user complete any authentication or connector grant on the supported surface. Do not use shell, browser automation, or App Server Plugin write RPCs to silently install or authenticate it.
+
+After installation/connection, begin a new Codex session when required and verify with `installed_apps`; do not treat the directory row alone as success.
 
 If FLORAL reports `source=directory-fallback`, `callable=unknown` is intentional. Do not convert accessibility or enabled state into a claim that the App is callable. Use available metadata and runtime evidence.
 
@@ -51,7 +57,7 @@ For install/enable/disable/remove:
 5. The current turn's `mcp_status` snapshot was captured before the mutation. Treat it as stale. Do not inspect `~/.codex`, process tables, package storage, the External MCP registry, or invoke `codex mcp` / `codex plugin` through shell to compensate. Do not request a second shell approval for verification.
 6. If FLORAL blocks a forbidden shell verification attempt, treat the block as a non-fatal redirect to the authoritative extension control plane. Do not reinterpret that blocked verification step as an installation failure.
 7. End the current turn with `verification pending`. On the next turn, call `mcp_status` (or use the host `/mcp` command outside an Agent turn) to obtain a fresh runtime snapshot.
-7. Treat the capability as ready only when FLORAL reports `status=ready` and exposes tools. On Codex builds where `mcpServerStatus/list` omits startup status, FLORAL may infer `ready` from a non-empty discovered tool set; explicit starting/failed/cancelled states still take precedence.
+8. Treat the capability as ready only when FLORAL reports `status=ready` and exposes tools. On Codex builds where `mcpServerStatus/list` omits startup status, FLORAL may infer `ready` from a non-empty discovered tool set; explicit starting/failed/cancelled states still take precedence.
 
 ## GitHub authentication
 

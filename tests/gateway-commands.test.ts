@@ -122,6 +122,18 @@ class ExtensionAgent extends TestAgent implements AgentExtensionDiscoveryRuntime
     ];
   }
 
+  async listAvailableApps(): Promise<import("../src/core/contracts.js").AgentAppSummary[]> {
+    return [{
+      id: "github",
+      runtimeName: "GitHub",
+      description: "GitHub connector directory entry",
+      installUrl: "https://chatgpt.com/apps/github/github",
+      enabled: true,
+      accessible: true,
+      source: "directory",
+    }];
+  }
+
   async readApps(): Promise<import("../src/core/contracts.js").AgentAppReadResult> {
     return {
       apps: [{
@@ -848,6 +860,8 @@ describe("GatewayService identity and commands", () => {
     expect(reply).toContain("Codex Apps");
     expect(reply).toContain("GitHub");
     expect(reply).toContain("callable=true");
+    expect(reply).toContain("目录可见：1；可访问：1");
+    expect(reply).toContain("install=supported-handoff");
     expect(agent.requests).toHaveLength(0);
     await gateway.stop();
   });

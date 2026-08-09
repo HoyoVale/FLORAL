@@ -66,6 +66,17 @@ class FakeRuntime implements AgentRuntime {
       source: "installed-runtime",
     }];
   }
+  async listAvailableApps(): Promise<AgentAppSummary[]> {
+    return [{
+      id: "github",
+      runtimeName: "GitHub",
+      description: "GitHub connector directory entry",
+      installUrl: "https://chatgpt.com/apps/github/github",
+      enabled: true,
+      accessible: true,
+      source: "directory",
+    }];
+  }
   async readApps(): Promise<AgentAppReadResult> {
     return {
       apps: [{
@@ -378,6 +389,15 @@ describe("ManagedCodexDeepSeekRuntime", () => {
     await expect(managed.listInstalledApps({ cwd: process.cwd() })).resolves.toEqual([
       expect.objectContaining({ id: "github", callable: true }),
     ]);
+    await expect(managed.listAvailableApps({ cwd: process.cwd() })).resolves.toEqual([{
+      id: "github",
+      runtimeName: "GitHub",
+      description: "GitHub connector directory entry",
+      installUrl: "https://chatgpt.com/apps/github/github",
+      enabled: true,
+      accessible: true,
+      source: "directory",
+    }]);
     await expect(managed.readApps({
       cwd: process.cwd(),
       appIds: ["github"],

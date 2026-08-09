@@ -131,10 +131,12 @@ export function supportsAgentSkillControl(
 export interface AgentAppSummary {
   id: string;
   runtimeName?: string | undefined;
+  description?: string | undefined;
+  installUrl?: string | undefined;
   enabled: boolean;
   callable?: boolean | undefined;
   accessible?: boolean | undefined;
-  source: "installed-runtime" | "directory-fallback";
+  source: "installed-runtime" | "directory" | "directory-fallback";
 }
 
 export interface AgentAppToolSummary {
@@ -185,6 +187,11 @@ export interface AgentExtensionDiscoveryRuntime {
     threadId?: string | undefined;
     forceRefresh?: boolean | undefined;
   }): Promise<AgentAppSummary[]>;
+  listAvailableApps(input: {
+    cwd: string;
+    threadId?: string | undefined;
+    forceRefresh?: boolean | undefined;
+  }): Promise<AgentAppSummary[]>;
   readApps(input: {
     cwd: string;
     appIds: string[];
@@ -204,6 +211,7 @@ export function supportsAgentExtensionDiscovery(
 ): runtime is AgentRuntime & AgentExtensionDiscoveryRuntime {
   const candidate = runtime as Partial<AgentExtensionDiscoveryRuntime>;
   return typeof candidate.listInstalledApps === "function"
+    && typeof candidate.listAvailableApps === "function"
     && typeof candidate.readApps === "function"
     && typeof candidate.listNativeExtensionFeatures === "function"
     && typeof candidate.listMcpServers === "function";
