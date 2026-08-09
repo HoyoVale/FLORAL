@@ -9,9 +9,11 @@ describe("macos-ui-operation Skill", () => {
     const text = await readFile(skillPath, "utf8");
     expect(text).toContain("Terminal / native CLI / documented application CLI");
     expect(text).toContain('open -a "Visual Studio Code"');
-    expect(text).toContain("GUI-only fallback");
-    expect(text.indexOf("Terminal / native CLI / documented application CLI"))
-      .toBeLessThan(text.indexOf("GUI-only fallback"));
+    expect(text).toContain("## GUI-only fallback");
+    expect(text.indexOf("## Routing order"))
+      .toBeLessThan(text.indexOf("## GUI-only fallback"));
+    expect(text.indexOf("## Terminal-first application control"))
+      .toBeLessThan(text.indexOf("## GUI-only fallback"));
     expect(text).toContain("AppleScript");
     expect(text).toContain("cliclick");
     expect(text).toContain("floral_peekaboo/see");
