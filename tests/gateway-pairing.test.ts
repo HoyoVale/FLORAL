@@ -20,11 +20,20 @@ describe("gateway command parsing and pairing security", () => {
     expect(parseGatewayCommand("/status --debug")).toEqual({ type: "status", debug: true });
     expect(parseGatewayCommand("/status -d")).toEqual({ type: "status", debug: true });
     expect(parseGatewayCommand("/help")).toEqual({ type: "help" });
+    expect(parseGatewayCommand("/system")).toEqual({
+      type: "system",
+      componentId: undefined,
+    });
+    expect(parseGatewayCommand("/system Codex.Apps")).toEqual({
+      type: "system",
+      componentId: "codex.apps",
+    });
     expect(parseGatewayCommand("/memory")).toEqual({ type: "native-memory-status" });
     expect(parseGatewayCommand("/memory status")).toEqual({ type: "native-memory-status" });
     expect(parseGatewayCommand("/memory diagnose")).toEqual({ type: "native-memory-diagnose" });
     expect(parseGatewayCommand("/stop")).toEqual({ type: "stop" });
     expect(parseGatewayCommand("/status now")).toBeUndefined();
+    expect(parseGatewayCommand("/system not a component")).toBeUndefined();
     expect(parseGatewayCommand("hello")).toBeUndefined();
   });
 

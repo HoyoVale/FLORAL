@@ -20,6 +20,11 @@ import { GatewayService } from "../src/service/gateway.js";
 import { AuthorizationAuthority } from "../src/policy/authorization-authority.js";
 import type { McpRuntimeRegistry } from "../src/config/mcp/mcp-runtime-registry.js";
 import { MemoryThreadStore } from "../src/storage/memory-thread-store.js";
+import {
+  SYSTEM_AWARENESS_SCHEMA_VERSION,
+  createDefaultSystemDefinitionRegistry,
+  type SystemAwarenessReadProvider,
+} from "../src/system-awareness/index.js";
 
 class TestTransport implements ChatTransport {
   readonly name = "test-transport";
@@ -917,6 +922,63 @@ describe("GatewayService identity and commands", () => {
     await gateway.stop();
   });
 
+  it("reads the bounded system map through /system without starting an agent turn", async () => {
+    const transport = new TestTransport();
+    const agent = new TestAgent();
+    const registry = createDefaultSystemDefinitionRegistry();
+    let reads = 0;
+    const systemAwareness: SystemAwarenessReadProvider = {
+      read: async (context) => {
+        reads += 1;
+        expect(context?.cwd).toBe(".");
+        return {
+          definitions: registry.list(),
+          snapshot: {
+            schemaVersion: SYSTEM_AWARENESS_SCHEMA_VERSION,
+            generatedAt: "2026-08-10T00:00:00.000Z",
+            definitionFingerprint: registry.fingerprint(),
+            components: [{
+              componentId: "floral.service",
+              observed: true,
+              facts: [],
+            }],
+            observers: [{
+              observerId: "fixture",
+              status: "ok",
+              observedAt: "2026-08-10T00:00:00.000Z",
+              evidenceCount: 0,
+            }],
+          },
+        };
+      },
+    };
+    const gateway = new GatewayService(
+      transport,
+      agent,
+      new MemoryThreadStore(),
+      { cwd: ".", trustMockOwner: true, systemAwareness },
+    );
+    await gateway.start();
+
+    await transport.receive(incoming({
+      id: "system-1",
+      transport: "mock",
+      text: "/system",
+    }));
+    expect(transport.sent.at(-1)?.text).toContain("FLORAL System Awareness");
+
+    await transport.receive(incoming({
+      id: "system-2",
+      transport: "mock",
+      text: "/system floral.service",
+    }));
+    expect(transport.sent.at(-1)?.text).toContain("component=floral.service");
+    expect(transport.sent.at(-1)?.text).toContain("owner_party=floral");
+    expect(reads).toBe(2);
+    expect(agent.requests).toHaveLength(0);
+    await gateway.stop();
+  });
+
   it("provides compact QQ-style help without running the agent", async () => {
     const transport = new TestTransport();
     const agent = new TestAgent();
@@ -941,6 +1003,7 @@ describe("GatewayService identity and commands", () => {
     expect(help).toContain("/apps     查看当前 Codex App");
     expect(help).toContain("/plugins  查看 Codex Plugin 功能状态");
     expect(help).toContain("/mcp      查看当前 Codex MCP server");
+    expect(help).toContain("/system   查看 FLORAL 只读系统地图");
     expect(help).not.toContain("/approve");
     expect(agent.requests).toHaveLength(0);
     await gateway.stop();

@@ -34,6 +34,7 @@ import { ArtifactEgressPolicy } from "./policy/artifact-egress-policy.js";
 import { LocalConfirmationBroker } from "./policy/local-confirmation-broker.js";
 import { resolveLocalConfirmationDirectory } from "./policy/local-confirmation-paths.js";
 import { GatewayService } from "./service/gateway.js";
+import { createDefaultSystemAwarenessReader } from "./system-awareness/index.js";
 import { SqliteGatewayStore } from "./storage/sqlite.js";
 import { FeishuTransport } from "./transport/feishu/feishu-transport.js";
 import { MockQqTransport } from "./transport/qq/mock-qq-transport.js";
@@ -70,6 +71,11 @@ const agent: AgentRuntime = env.CODEX_MODE === "real"
       codexTurnApprovalPolicy: authority.effective.runtime.authorization.codex_turn_approval_policy,
       codexSandboxMode: authority.effective.runtime.authorization.codex_turn_sandbox_mode,
       codexApprovalsReviewer: authority.effective.runtime.authorization.codex_approvals_reviewer,
+      systemAwareness: {
+        repositoryRoot,
+        authority,
+        environment: process.env,
+      },
     })
   : new MockAgentRuntime();
 
@@ -111,6 +117,14 @@ const artifactEgressPolicy = new ArtifactEgressPolicy({
   maxBytesPerRun: 25_000_000,
 });
 await artifactEgressPolicy.initialize();
+
+const systemAwareness = createDefaultSystemAwarenessReader({
+  repositoryRoot,
+  authority,
+  env,
+  runtime: agent,
+  environment: process.env,
+});
 
 const runtimeManagedHomeForCwd = async (cwd: string): Promise<string> => {
   if (supportsAgentProjectRuntimeStorage(agent)) {
@@ -157,6 +171,7 @@ const gateway = new GatewayService(
     artifactEgress: {
       policy: artifactEgressPolicy,
     },
+    systemAwareness,
     runtimeStatusLines: async (cwd) => {
       const managedHome = await runtimeManagedHomeForCwd(cwd);
       const [snapshot, nativeMemory] = await Promise.all([

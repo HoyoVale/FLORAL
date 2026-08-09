@@ -4,6 +4,7 @@ import type { AppEnv } from "../config/env.js";
 import type { ResolvedConfigurationAuthority } from "../config/federation/config-authority.js";
 import { createDefaultSystemDefinitionRegistry } from "./default-system-definitions.js";
 import { SystemSnapshotBuilder } from "./system-snapshot-builder.js";
+import { SystemAwarenessReader } from "./system-read-interface.js";
 import type { SystemObserver } from "./system-types.js";
 import { CodexRuntimeSystemObserver } from "./observers/codex-runtime-system-observer.js";
 import { ConfigurationSystemObserver } from "./observers/configuration-system-observer.js";
@@ -64,4 +65,16 @@ export function createDefaultSystemSnapshotBuilder(
     observers: createDefaultSystemObservers(options),
     ...(options.now ? { now: options.now } : {}),
   });
+}
+
+export function createDefaultSystemAwarenessReader(
+  options: DefaultSystemAwarenessOptions,
+): SystemAwarenessReader {
+  const registry = createDefaultSystemDefinitionRegistry();
+  const builder = new SystemSnapshotBuilder({
+    registry,
+    observers: createDefaultSystemObservers(options),
+    ...(options.now ? { now: options.now } : {}),
+  });
+  return new SystemAwarenessReader(registry, builder);
 }

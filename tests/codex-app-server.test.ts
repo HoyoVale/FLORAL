@@ -1,9 +1,16 @@
 import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
-import { CodexAppServerRuntime } from "../src/agent/codex-app-server.js";
+import {
+  CodexAppServerRuntime,
+  type CodexSystemAwarenessOptions,
+} from "../src/agent/codex-app-server.js";
 import { CodexRuntimeError } from "../src/agent/codex-errors.js";
 import type { AgentEvent } from "../src/core/types.js";
+import {
+  SYSTEM_AWARENESS_SCHEMA_VERSION,
+  createDefaultSystemDefinitionRegistry,
+} from "../src/system-awareness/index.js";
 
 const fixture = fileURLToPath(new URL("./fixtures/fake-codex-app-server.mjs", import.meta.url));
 
@@ -41,6 +48,7 @@ function createRuntime(
     }>;
     permissionProfile?: string;
     permissionProfileCwd?: string;
+    systemAwareness?: CodexSystemAwarenessOptions;
   } = {},
 ): CodexAppServerRuntime {
   return new CodexAppServerRuntime({
@@ -436,6 +444,54 @@ describe("CodexAppServerRuntime", () => {
         cwd: process.cwd(),
       });
       expect(result.finalText).toBe("authoritative final");
+    } finally {
+      await runtime.stop();
+    }
+  });
+
+  it("exposes a pre-captured read-only System Awareness snapshot without nested runtime RPC", async () => {
+    const registry = createDefaultSystemDefinitionRegistry();
+    let snapshotReads = 0;
+    const runtime = createRuntime("system-awareness", 5_000, {
+      systemAwareness: {
+        definitions: registry.list(),
+        snapshotProvider: async () => {
+          snapshotReads += 1;
+          return {
+            schemaVersion: SYSTEM_AWARENESS_SCHEMA_VERSION,
+            generatedAt: "2026-08-10T00:00:00.000Z",
+            definitionFingerprint: registry.fingerprint(),
+            components: registry.list().map((definition) => ({
+              componentId: definition.id,
+              observed: definition.id === "floral.service",
+              facts: definition.id === "floral.service"
+                ? [{
+                    fact: "recorded.phase",
+                    resolution: "resolved" as const,
+                    confidence: "authoritative" as const,
+                    value: "ready",
+                    evidence: [],
+                  }]
+                : [],
+            })),
+            observers: [{
+              observerId: "fixture",
+              status: "ok" as const,
+              observedAt: "2026-08-10T00:00:00.000Z",
+              evidenceCount: 1,
+            }],
+          };
+        },
+      },
+    });
+    try {
+      await runtime.start();
+      const result = await runtime.run({
+        text: "Describe your current system state.",
+        cwd: process.cwd(),
+      });
+      expect(result.finalText).toBe("system awareness complete");
+      expect(snapshotReads).toBe(1);
     } finally {
       await runtime.stop();
     }

@@ -63,6 +63,21 @@ function hasFloralExtensionTools(params) {
   ]);
 }
 
+function hasFloralSystemTools(params) {
+  const dynamicTools = params?.dynamicTools;
+  if (!Array.isArray(dynamicTools)) return false;
+  const namespace = dynamicTools.find((entry) =>
+    entry?.type === "namespace" && entry?.name === "floral_system"
+  );
+  if (!namespace || !Array.isArray(namespace.tools)) return false;
+  const names = namespace.tools.map((tool) => tool?.name).sort();
+  return JSON.stringify(names) === JSON.stringify([
+    "capabilities",
+    "component_status",
+    "system_summary",
+  ]);
+}
+
 function hasFloralDeliveryTools(params) {
   const dynamicTools = params?.dynamicTools;
   if (!Array.isArray(dynamicTools)) return false;
@@ -443,6 +458,19 @@ lines.on("line", (line) => {
       && !hasFloralRoutingPolicy(message.params)
     ) {
       send({ id: message.id, error: { code: -32602, message: "missing FLORAL developer instructions" } });
+      return;
+    }
+    if (scenario === "system-awareness" && !hasFloralSystemTools(message.params)) {
+      send({ id: message.id, error: { code: -32602, message: "missing FLORAL system dynamic tools" } });
+      return;
+    }
+    if (
+      scenario === "system-awareness"
+      && (typeof message.params?.developerInstructions !== "string"
+        || !message.params.developerInstructions.includes("Use floral_system for FLORAL self-awareness")
+        || !message.params.developerInstructions.includes("Self-maintenance is not enabled in Phase 8A.5"))
+    ) {
+      send({ id: message.id, error: { code: -32602, message: "missing FLORAL system awareness policy" } });
       return;
     }
     if (scenario === "delivery-dynamic-tools" && !hasFloralDeliveryTools(message.params)) {
@@ -859,6 +887,22 @@ lines.on("line", (line) => {
           },
         });
         sendSuccess(activeThreadId, activeTurnId, "artifact captured");
+        return;
+      }
+
+      if (scenario === "system-awareness") {
+        send({
+          id: "dynamic_1",
+          method: "item/tool/call",
+          params: {
+            threadId: activeThreadId,
+            turnId: activeTurnId,
+            callId: "call_system_summary_1",
+            namespace: "floral_system",
+            tool: "system_summary",
+            arguments: {},
+          },
+        });
         return;
       }
 
@@ -1344,6 +1388,16 @@ lines.on("line", (line) => {
   if (message.id === "dynamic_1" && "result" in message) {
     const success = message.result?.success;
     const text = message.result?.contentItems?.[0]?.text ?? "";
+    if (
+      scenario === "system-awareness"
+      && success === true
+      && text.includes("FLORAL System Awareness")
+      && text.includes("snapshot_semantics=read-only-per-turn-frozen")
+      && text.includes("unknown_semantics=unknown-is-a-valid-state")
+    ) {
+      sendSuccess(activeThreadId, activeTurnId, "system awareness complete");
+      return;
+    }
     if (
       scenario === "delivery-register"
       && success === true

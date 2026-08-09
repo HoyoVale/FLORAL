@@ -2,6 +2,7 @@ export * from "./system-types.js";
 export * from "./system-definition-registry.js";
 export * from "./default-system-definitions.js";
 export * from "./system-snapshot-builder.js";
+export * from "./system-read-interface.js";
 export * from "./default-system-awareness.js";
 export * from "./observers/configuration-system-observer.js";
 export * from "./observers/service-state-system-observer.js";

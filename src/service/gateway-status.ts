@@ -283,6 +283,8 @@ export function gatewayHelpText(): string {
     "/apps     查看当前 Codex App（兼容 app/list fallback）",
     "/plugins  查看 Codex Plugin 功能状态与 FLORAL 接入成熟度",
     "/mcp      查看当前 Codex MCP server 启动/认证/工具状态",
+    "/system   查看 FLORAL 只读系统地图",
+    "/system <component> 查看组件所有权、状态与证据",
     "/memory   查看 Codex Native Memory 生命周期",
     "/memory diagnose 只读诊断 Native Memory Phase 2（owner）",
     "/projects 列出 Workspace Root 下的项目",

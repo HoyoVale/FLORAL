@@ -19,6 +19,7 @@ import {
   type McpRegistryAdoptionReport,
 } from "../config/adoption/mcp-registry-adoption.js";
 import type { AppEnv } from "../config/env.js";
+import type { ResolvedConfigurationAuthority } from "../config/federation/config-authority.js";
 import {
   supportsAgentExtensionControl,
   supportsAgentExtensionDiscovery,
@@ -71,6 +72,12 @@ import {
   type ExternalMcpManagementResult,
   type ExternalMcpMutationRequest,
 } from "../extensions/external-mcp-manager.js";
+import {
+  createDefaultSystemAwarenessReader,
+  createDefaultSystemDefinitionRegistry,
+  type SystemAwarenessReader,
+  type SystemObservationContext,
+} from "../system-awareness/index.js";
 
 interface ManagedBridge {
   start(): Promise<{ baseUrl: string }>;
@@ -157,10 +164,17 @@ export interface ManagedCodexDeepSeekDependencies {
   recordMcpRegistryAdoption?: ((report: McpRegistryAdoptionReport) => Promise<string>) | undefined;
 }
 
+export interface ManagedSystemAwarenessOptions {
+  repositoryRoot: string;
+  authority: ResolvedConfigurationAuthority;
+  environment?: NodeJS.ProcessEnv | undefined;
+}
+
 export interface ManagedCodexDeepSeekRuntimeOptions {
   codexTurnApprovalPolicy?: "never" | "on-request" | "untrusted" | undefined;
   codexSandboxMode?: "read-only" | "workspace-write" | undefined;
   codexApprovalsReviewer?: "user" | undefined;
+  systemAwareness?: ManagedSystemAwarenessOptions | undefined;
 }
 
 export class ManagedCodexDeepSeekRuntime implements AgentRuntime {
@@ -660,7 +674,13 @@ export class ManagedCodexDeepSeekRuntime implements AgentRuntime {
         : {}),
     };
     return this.dependencies.createRuntime?.(runtimeOptions)
-      ?? createCodexRuntime(this.env, codexHome, bridgeToken, runtimeOptions);
+      ?? createCodexRuntime(
+        this.env,
+        codexHome,
+        bridgeToken,
+        runtimeOptions,
+        this.options.systemAwareness,
+      );
   }
 
   async #externalSkillCatalogText(): Promise<string> {
@@ -1253,6 +1273,7 @@ function createCodexRuntime(
     permissionProfile?: string | undefined;
     permissionProfileCwd?: string | undefined;
   },
+  systemAwareness?: ManagedSystemAwarenessOptions | undefined,
 ): AgentRuntime {
   const processEnv: NodeJS.ProcessEnv = {
     ...process.env,
@@ -1265,7 +1286,26 @@ function createCodexRuntime(
   delete processEnv.FLORAL_REMOTE_MODE_CEILING;
   delete processEnv.FLORAL_WORKSPACE_ROOT;
 
-  return new CodexAppServerRuntime({
+  let runtime: CodexAppServerRuntime | undefined;
+  let systemReader: SystemAwarenessReader | undefined;
+  const systemRuntime = systemAwareness
+    ? {
+        definitions: createDefaultSystemDefinitionRegistry().list(),
+        snapshotProvider: async (context: SystemObservationContext) => {
+          if (!runtime) throw new Error("Codex system awareness runtime is not initialized");
+          systemReader ??= createDefaultSystemAwarenessReader({
+            repositoryRoot: systemAwareness.repositoryRoot,
+            authority: systemAwareness.authority,
+            env,
+            runtime,
+            environment: systemAwareness.environment ?? process.env,
+          });
+          return (await systemReader.read(context)).snapshot;
+        },
+      }
+    : undefined;
+
+  runtime = new CodexAppServerRuntime({
     command: env.CODEX_COMMAND,
     args: env.CODEX_ARGS.split(/\s+/).filter(Boolean),
     requestTimeoutMs: env.CODEX_REQUEST_TIMEOUT_MS,
@@ -1282,6 +1322,8 @@ function createCodexRuntime(
     manageExternalMcp: execution.manageExternalMcp,
     permissionProfile: execution.permissionProfile,
     permissionProfileCwd: execution.permissionProfileCwd,
+    ...(systemRuntime ? { systemAwareness: systemRuntime } : {}),
     processEnv,
   });
+  return runtime;
 }
