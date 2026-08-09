@@ -22,11 +22,11 @@ async function authority(environment: NodeJS.ProcessEnv = {}) {
   });
 }
 
-function legacyConfig(options: { reasoningTimeoutMs?: number } = {}): string {
+function legacyConfig(streamIdleTimeoutMs: number): string {
   return buildCodexDeepSeekConfig({
     model: "deepseek-v4-flash",
     bridgeBaseUrl: "http://127.0.0.1:9999/v1",
-    streamIdleTimeoutMs: options.reasoningTimeoutMs ?? 120_000,
+    streamIdleTimeoutMs,
     searchMcp: {
       searxngUrl: "http://127.0.0.1:8888",
       packageSpec: "mcp-searxng@1.0.3",
@@ -40,7 +40,7 @@ describe("Codex unified shadow adoption", () => {
   it("treats locked unified additions as compatible with the legacy generator", async () => {
     const resolved = await authority();
     const comparison = compareCodexShadowConfigs({
-      legacyConfig: legacyConfig(),
+      legacyConfig: legacyConfig(resolved.effective.deepseek.request_timeout_ms),
       unifiedConfig: renderCodexConfig(
         resolved.effective,
         "http://127.0.0.1:9999/v1",
@@ -84,7 +84,7 @@ describe("Codex unified shadow adoption", () => {
     );
     expect(tampered).not.toBe(unified);
     const comparison = compareCodexShadowConfigs({
-      legacyConfig: legacyConfig(),
+      legacyConfig: legacyConfig(resolved.effective.deepseek.request_timeout_ms),
       unifiedConfig: tampered,
       effectiveFingerprint: resolved.effectiveFingerprint,
     });
@@ -107,7 +107,7 @@ describe("Codex unified shadow adoption", () => {
     );
     expect(tampered).not.toBe(unified);
     const comparison = compareCodexShadowConfigs({
-      legacyConfig: legacyConfig(),
+      legacyConfig: legacyConfig(resolved.effective.deepseek.request_timeout_ms),
       unifiedConfig: tampered,
       effectiveFingerprint: resolved.effectiveFingerprint,
     });
@@ -131,7 +131,7 @@ describe("Codex unified shadow adoption", () => {
   it("detects a real reasoning-effort difference without exposing values", async () => {
     const resolved = await authority({ DEEPSEEK_REASONING_EFFORT: "max" });
     const comparison = compareCodexShadowConfigs({
-      legacyConfig: legacyConfig(),
+      legacyConfig: legacyConfig(resolved.effective.deepseek.request_timeout_ms),
       unifiedConfig: renderCodexConfig(
         resolved.effective,
         "http://127.0.0.1:9999/v1",
@@ -151,7 +151,7 @@ describe("Codex unified shadow adoption", () => {
       const resolved = await authority();
       const shadowAuthority = structuredClone(resolved);
       shadowAuthority.effective.runtime.adoption.codex.mode = "unified-shadow";
-      const legacy = legacyConfig();
+      const legacy = legacyConfig(resolved.effective.deepseek.request_timeout_ms);
       const result = await prepareCodexConfigAdoption({
         repositoryRoot: root,
         environment: {},
@@ -182,7 +182,7 @@ describe("Codex unified shadow adoption", () => {
     rollback.effective.runtime.adoption.codex.mode = "legacy";
     const root = await mkdtemp(join(tmpdir(), "floral-codex-legacy-"));
     try {
-      const legacy = legacyConfig();
+      const legacy = legacyConfig(resolved.effective.deepseek.request_timeout_ms);
       const result = await prepareCodexConfigAdoption({
         repositoryRoot: root,
         environment: {},
@@ -201,7 +201,7 @@ describe("Codex unified shadow adoption", () => {
     const root = await mkdtemp(join(tmpdir(), "floral-codex-unified-"));
     try {
       const resolved = await authority();
-      const legacy = legacyConfig();
+      const legacy = legacyConfig(resolved.effective.deepseek.request_timeout_ms);
       const unified = renderCodexConfig(
         resolved.effective,
         "http://127.0.0.1:9999/v1",
@@ -233,7 +233,7 @@ describe("Codex unified shadow adoption", () => {
     const root = await mkdtemp(join(tmpdir(), "floral-codex-unified-missing-"));
     try {
       const resolved = await authority();
-      const legacy = legacyConfig();
+      const legacy = legacyConfig(resolved.effective.deepseek.request_timeout_ms);
       const result = await prepareCodexConfigAdoption({
         repositoryRoot: root,
         environment: {},
@@ -259,7 +259,7 @@ describe("Codex unified shadow adoption", () => {
       await expect(prepareCodexConfigAdoption({
         repositoryRoot: root,
         environment: {},
-        legacyConfig: legacyConfig(),
+        legacyConfig: legacyConfig(resolved.effective.deepseek.request_timeout_ms),
         bridgeBaseUrl: "http://127.0.0.1:9999/v1",
         authority: resolved,
       })).rejects.toThrow(/shadow drift/u);

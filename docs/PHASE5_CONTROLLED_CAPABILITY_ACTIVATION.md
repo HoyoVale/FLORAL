@@ -60,19 +60,11 @@ becoming a reusable write capability. FLORAL never maps the decision to
 
 ## Opaque command escalation
 
-A Codex command approval remains `local-confirmation`, not `chat-confirmation`.
-The gateway publishes only a bounded, redacted notice to the remote chat and creates a
-private local approval record. The user must resolve it on the Mac:
-
-```bash
-corepack pnpm approval:local:list
-corepack pnpm approval:local:approve -- <id>
-corepack pnpm approval:local:deny -- <id>
-```
-
-QQ `/approve` cannot resolve a Mac-local request. The QQ notice intentionally
-omits the command body; `approval:local:list` is the only operator-facing place
-that displays the bounded, redacted local request summary.
+A Codex command approval uses `chat-confirmation`. Codex remains the
+execution-policy authority for native command escalation; FLORAL authenticates
+the owner who may answer the already-issued request instead of maintaining a
+second shell-risk classifier. The approval remains one-shot and scoped to the
+active conversation.
 
 ## Local mailbox security
 
@@ -138,7 +130,7 @@ policy.turn_sandbox=workspace-write
 policy.authorization.codex_turn_approval_policy=untrusted
 policy.authorization.codex_approvals_reviewer=user
 policy.codex.file_change=approval:chat-confirmation
-policy.codex.command=approval:local-confirmation
+policy.codex.command=approval:chat-confirmation
 policy.system_admin=deny:sandbox-capability-denied
 policy.mcp.search=allow:automatic
 policy.failures=none

@@ -29,9 +29,10 @@ disabled until their dedicated adapter phase.
 Generic write and externally visible capabilities require chat confirmation.
 `system.admin` and `system.restart` require Mac-local confirmation.
 
-Opaque Codex command escalation is also forced to local confirmation in this
-phase. FLORAL does not attempt to infer that an arbitrary shell command is safe
-from model-provided text.
+Opaque Codex command escalation uses owner chat confirmation. Codex remains
+the execution-policy authority for the native command request; FLORAL does not
+attempt to infer shell safety independently and only authenticates who may
+answer the already-issued approval request.
 
 ## QQ one-shot approval flow
 
@@ -120,7 +121,7 @@ Expected production baseline:
 policy.authorization.enabled=true
 policy.authorization.owner_only_remote=true
 policy.sandbox=read-only
-policy.codex.command=approval:local-confirmation
+policy.codex.command=approval:chat-confirmation
 policy.codex.file_change=deny:sandbox-capability-denied
 policy.system_admin=deny:sandbox-capability-denied
 policy.mcp.search=allow:automatic

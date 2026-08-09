@@ -64,8 +64,8 @@ if (check) {
   const failures: string[] = [];
   if (!config.effective.runtime.authorization.enabled) failures.push("authorization-disabled");
   if (!config.effective.runtime.authorization.owner_only_remote_approval) failures.push("remote-approval-not-owner-only");
-  if (command.status !== "approval-required" || command.approvalLevel !== "local-confirmation") {
-    failures.push("codex-command-not-local-only");
+  if (command.status !== "approval-required" || command.approvalLevel !== "chat-confirmation") {
+    failures.push("codex-command-not-chat-confirmation");
   }
   if (fileChange.status !== "approval-required" || fileChange.approvalLevel !== "chat-confirmation") {
     failures.push("controlled-file-change-not-chat-confirmation");

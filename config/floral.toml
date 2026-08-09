@@ -114,7 +114,9 @@ supports_websockets = false
 [deepseek]
 base_url = "https://api.deepseek.com"
 model = "deepseek-v4-flash"
-request_timeout_ms = 120000
+# Keep provider streaming inactivity aligned with Codex's upstream default.
+# FLORAL's foreground Codex turn timeout remains independently capped at 120s.
+request_timeout_ms = 300000
 thinking = "enabled"
 reasoning_effort = "high"
 prestream_max_attempts = 2
