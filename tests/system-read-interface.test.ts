@@ -4,6 +4,7 @@ import {
   createDefaultSystemDefinitionRegistry,
   formatSystemCapabilities,
   formatSystemComponentStatus,
+  formatSystemRuntimeContext,
   formatSystemSummary,
   validateSystemReadModel,
   type SystemReadModel,
@@ -122,6 +123,65 @@ describe("Phase 8A.5 read-only System Awareness interface", () => {
     expect(text).toContain("DEEPSEEK_API_KEY");
     expect(text).toContain("secret_semantics=dependency-and-presence-metadata-only-never-secret-values");
     expect(text).not.toContain("never-print-this");
+  });
+
+
+  it("renders Gateway request and effective turn selector without treating generic runtime prose as authority", () => {
+    const registry = createDefaultSystemDefinitionRegistry();
+    const executionDefinition = registry.require("floral.execution");
+    const evidence = (fact: string, value: string, source: string, scope: "conversation" | "runtime") => ({
+      componentId: "floral.execution",
+      fact,
+      source: { id: source, kind: "runtime-context" as const },
+      observedAt: "2026-08-10T00:00:00.000Z",
+      confidence: "authoritative" as const,
+      scope,
+      value,
+    });
+    const facts = [
+      evidence("gateway.control_mode", "full", "gateway-execution-policy", "conversation"),
+      evidence("gateway.requested_sandbox", "danger-full-access", "gateway-execution-policy", "conversation"),
+      evidence("gateway.requested_approval_policy", "untrusted", "gateway-execution-policy", "conversation"),
+      evidence("gateway.requested_approvals_reviewer", "user", "gateway-execution-policy", "conversation"),
+      evidence("gateway.approval_route", "full-auto-codex-native", "gateway-execution-policy", "conversation"),
+      evidence("turn.selector", "permission-profile", "codex-turn-execution", "runtime"),
+      evidence("turn.sandbox_mode", "not-applicable", "codex-turn-execution", "runtime"),
+      evidence("turn.permission_profile", "floral-project", "codex-turn-execution", "runtime"),
+      evidence("turn.approval_policy", "untrusted", "codex-turn-execution", "runtime"),
+      evidence("turn.approvals_reviewer", "user", "codex-turn-execution", "runtime"),
+    ];
+    const model: SystemReadModel = {
+      definitions: registry.list(),
+      snapshot: {
+        schemaVersion: SYSTEM_AWARENESS_SCHEMA_VERSION,
+        generatedAt: "2026-08-10T00:00:00.000Z",
+        definitionFingerprint: registry.fingerprint(),
+        components: [{
+          componentId: executionDefinition.id,
+          observed: true,
+          facts: facts.map((item) => ({
+            fact: item.fact,
+            resolution: "resolved" as const,
+            confidence: "authoritative" as const,
+            value: item.value,
+            evidence: [item],
+          })),
+        }],
+        observers: [],
+      },
+    };
+    const text = formatSystemRuntimeContext(model);
+    expect(text).toContain("FLORAL Runtime Self-Awareness");
+    expect(text).toContain('fact=gateway.requested_sandbox resolution=resolved confidence=authoritative value="danger-full-access"');
+    expect(text).toContain('fact=turn.selector resolution=resolved confidence=authoritative value="permission-profile"');
+    expect(text).toContain('fact=turn.permission_profile resolution=resolved confidence=authoritative value="floral-project"');
+    expect(text).toContain("precedence=turn-effective-selector-over-gateway-request-over-configured-default");
+    expect(text).toContain("generic-model-environment-context-is-not-a-FLORAL-authority-source");
+  });
+
+  it("does not materialize contextual execution facts as unknown when there is no execution context", () => {
+    const text = formatSystemSummary(createModel());
+    expect(text).toContain("component=floral.execution kind=runtime observed=false resolved=0 unknown=0 conflict=0");
   });
 
   it("describes management contracts without granting authorization or executing them", () => {

@@ -9,6 +9,8 @@ import { CodexRuntimeError } from "../src/agent/codex-errors.js";
 import type { AgentEvent } from "../src/core/types.js";
 import {
   SYSTEM_AWARENESS_SCHEMA_VERSION,
+  ExecutionContextSystemObserver,
+  SystemSnapshotBuilder,
   createDefaultSystemDefinitionRegistry,
 } from "../src/system-awareness/index.js";
 
@@ -444,6 +446,60 @@ describe("CodexAppServerRuntime", () => {
         cwd: process.cwd(),
       });
       expect(result.finalText).toBe("authoritative final");
+    } finally {
+      await runtime.stop();
+    }
+  });
+
+  it("captures the exact project permission-profile selector in runtime self-awareness", async () => {
+    const registry = createDefaultSystemDefinitionRegistry();
+    const builder = new SystemSnapshotBuilder({
+      registry,
+      observers: [new ExecutionContextSystemObserver({
+        now: () => new Date("2026-08-10T00:00:00.000Z"),
+      })],
+      now: () => new Date("2026-08-10T00:00:00.000Z"),
+    });
+    let observedContext: Parameters<typeof builder.build>[0] | undefined;
+    const runtime = createRuntime("runtime-self-awareness", 5_000, {
+      approvalPolicy: "on-request",
+      sandboxMode: "workspace-write",
+      permissionProfile: "floral-project",
+      permissionProfileCwd: process.cwd(),
+      systemAwareness: {
+        definitions: registry.list(),
+        snapshotProvider: async (context) => {
+          observedContext = context;
+          return await builder.build(context);
+        },
+      },
+    });
+    try {
+      await runtime.start();
+      const result = await runtime.run({
+        text: "Describe the exact execution policy for this turn.",
+        cwd: process.cwd(),
+        controlMode: "full",
+        sandboxMode: "danger-full-access",
+        approvalPolicy: "untrusted",
+        approvalsReviewer: "user",
+        approvalRoute: "full-auto-codex-native",
+      });
+      expect(result.finalText).toBe("runtime self awareness complete");
+      expect(observedContext?.execution?.gateway).toMatchObject({
+        controlMode: "full",
+        sandboxMode: "danger-full-access",
+        approvalPolicy: "untrusted",
+        approvalsReviewer: "user",
+        approvalRoute: "full-auto-codex-native",
+      });
+      expect(observedContext?.execution?.turn).toEqual({
+        selector: "permission-profile",
+        sandboxMode: "not-applicable",
+        permissionProfile: "floral-project",
+        approvalPolicy: "untrusted",
+        approvalsReviewer: "user",
+      });
     } finally {
       await runtime.stop();
     }

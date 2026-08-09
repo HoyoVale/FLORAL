@@ -931,6 +931,14 @@ describe("GatewayService identity and commands", () => {
       read: async (context) => {
         reads += 1;
         expect(context?.cwd).toBe(".");
+        expect(context?.execution?.gateway).toEqual({
+          controlMode: "ask",
+          sandboxMode: "workspace-write",
+          approvalPolicy: "untrusted",
+          approvalsReviewer: "user",
+          approvalRoute: "owner",
+        });
+        expect(context?.execution?.turn).toBeUndefined();
         return {
           definitions: registry.list(),
           snapshot: {

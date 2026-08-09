@@ -22,6 +22,7 @@ import {
 import { CodexRuntimeSystemObserver } from "../src/system-awareness/observers/codex-runtime-system-observer.js";
 import { ConfigurationSystemObserver } from "../src/system-awareness/observers/configuration-system-observer.js";
 import { ExternalExtensionSystemObserver } from "../src/system-awareness/observers/external-extension-system-observer.js";
+import { ExecutionContextSystemObserver } from "../src/system-awareness/observers/execution-context-system-observer.js";
 import {
   ServiceStateSystemObserver,
 } from "../src/system-awareness/observers/service-state-system-observer.js";
@@ -33,6 +34,46 @@ afterEach(async () => {
 });
 
 describe("Phase 8A read-only observers", () => {
+  it("records Gateway intent separately from the exact Codex turn permission selector", async () => {
+    const observer = new ExecutionContextSystemObserver({
+      now: () => new Date("2026-08-10T00:00:00.000Z"),
+    });
+    const evidence = await observer.observe({
+      execution: {
+        gateway: {
+          controlMode: "full",
+          sandboxMode: "danger-full-access",
+          approvalPolicy: "untrusted",
+          approvalsReviewer: "user",
+          approvalRoute: "full-auto-codex-native",
+        },
+        turn: {
+          selector: "permission-profile",
+          sandboxMode: "not-applicable",
+          permissionProfile: "floral-project",
+          approvalPolicy: "untrusted",
+          approvalsReviewer: "user",
+        },
+      },
+    });
+    expect(evidence.find((item) => item.fact === "gateway.requested_sandbox")).toMatchObject({
+      confidence: "authoritative",
+      value: "danger-full-access",
+      source: { id: "gateway-execution-policy", kind: "runtime-context" },
+    });
+    expect(evidence.find((item) => item.fact === "turn.selector")).toMatchObject({
+      confidence: "authoritative",
+      value: "permission-profile",
+      source: { id: "codex-turn-execution", kind: "runtime-context" },
+    });
+    expect(evidence.find((item) => item.fact === "turn.permission_profile")).toMatchObject({
+      value: "floral-project",
+    });
+    expect(evidence.find((item) => item.fact === "turn.sandbox_mode")).toMatchObject({
+      value: "not-applicable",
+    });
+  });
+
   it("keeps app/list fallback as directory evidence and leaves installed/callable unknown", async () => {
     const runtime = new FakeDiscoveryRuntime({
       installedApps: [{

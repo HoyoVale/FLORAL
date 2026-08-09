@@ -69,6 +69,51 @@ export const DEFAULT_SYSTEM_DEFINITIONS: readonly SystemDefinition[] = [
     tags: ["authority", "policy", "security"],
   }),
   definition({
+    id: "floral.execution",
+    displayName: "FLORAL Execution Context",
+    description: "Gateway-selected execution intent and the exact Codex turn policy selector used for the current request.",
+    kind: "runtime",
+    owner: authority("floral", "FLORAL Gateway", "Selects the per-conversation control mode and routes each Agent run into Codex."),
+    authority: authority("floral", "FLORAL execution router", "Is authoritative for what FLORAL requested and which Codex permission selector it actually sent for the current turn."),
+    parentId: "floral.authorization",
+    stateSources: [
+      source(
+        "gateway-execution-policy",
+        "runtime-context",
+        "authoritative",
+        [
+          "gateway.control_mode",
+          "gateway.requested_sandbox",
+          "gateway.requested_approval_policy",
+          "gateway.requested_approvals_reviewer",
+          "gateway.approval_route",
+        ],
+        "Conversation-scoped mode selected by the FLORAL Gateway. These are requested turn controls, not proof of the final Codex permission selector.",
+        "contextual",
+      ),
+      source(
+        "codex-turn-execution",
+        "runtime-context",
+        "authoritative",
+        [
+          "turn.selector",
+          "turn.sandbox_mode",
+          "turn.permission_profile",
+          "turn.approval_policy",
+          "turn.approvals_reviewer",
+        ],
+        "Exact turn/start execution selector constructed by CodexAppServerRuntime before the current turn. A named permission profile takes precedence over legacy sandboxPolicy.",
+        "contextual",
+      ),
+    ],
+    managementActions: [
+      action("read", "Read the current Gateway request and effective Codex turn selector.", "automatic", "automatic", "machine.status.read"),
+      action("select_mode", "Select ask/auto/full through the owner-facing Gateway mode command; this read-only system surface cannot change it.", "user-mediated", "user-mediated", undefined, "gateway-mode-command", "codex-turn-execution"),
+    ],
+    failureDomain: "floral",
+    tags: ["agent", "runtime", "authorization"],
+  }),
+  definition({
     id: "floral.workspace",
     displayName: "Project Workspace",
     description: "Machine-local workspace root and project-scoped execution boundary.",
@@ -368,8 +413,16 @@ function source(
   sourceAuthority: SystemStateSourceDefinition["authority"],
   facts: readonly string[],
   description: string,
+  availability?: SystemStateSourceDefinition["availability"],
 ): SystemStateSourceDefinition {
-  return { id, kind, authority: sourceAuthority, facts, description };
+  return {
+    id,
+    kind,
+    authority: sourceAuthority,
+    facts,
+    description,
+    ...(availability ? { availability } : {}),
+  };
 }
 
 function action(

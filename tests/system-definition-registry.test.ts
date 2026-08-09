@@ -43,6 +43,16 @@ describe("Phase 8A system definition registry", () => {
     }
     expect(registry.require("floral.service").managementActions.find((action) => action.id === "restart")?.approval)
       .toBe(approvalLevelFor("system.restart"));
+
+    const execution = registry.require("floral.execution");
+    expect(execution.parentId).toBe("floral.authorization");
+    expect(execution.stateSources.find((source) => source.id === "gateway-execution-policy")).toMatchObject({
+      kind: "runtime-context",
+      authority: "authoritative",
+      availability: "contextual",
+    });
+    expect(execution.stateSources.find((source) => source.id === "codex-turn-execution")?.facts)
+      .toContain("turn.permission_profile");
   });
 
   it("keeps secret dependencies as names rather than credential values", () => {

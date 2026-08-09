@@ -74,6 +74,7 @@ function hasFloralSystemTools(params) {
   return JSON.stringify(names) === JSON.stringify([
     "capabilities",
     "component_status",
+    "current_context",
     "system_summary",
   ]);
 }
@@ -460,15 +461,15 @@ lines.on("line", (line) => {
       send({ id: message.id, error: { code: -32602, message: "missing FLORAL developer instructions" } });
       return;
     }
-    if (scenario === "system-awareness" && !hasFloralSystemTools(message.params)) {
+    if ((scenario === "system-awareness" || scenario === "runtime-self-awareness") && !hasFloralSystemTools(message.params)) {
       send({ id: message.id, error: { code: -32602, message: "missing FLORAL system dynamic tools" } });
       return;
     }
     if (
-      scenario === "system-awareness"
+      (scenario === "system-awareness" || scenario === "runtime-self-awareness")
       && (typeof message.params?.developerInstructions !== "string"
-        || !message.params.developerInstructions.includes("Use floral_system for FLORAL self-awareness")
-        || !message.params.developerInstructions.includes("Self-maintenance is not enabled in Phase 8A.5"))
+        || !message.params.developerInstructions.includes("FLORAL runtime self-awareness policy")
+        || !message.params.developerInstructions.includes("Self-maintenance remains disabled in Phase 8B"))
     ) {
       send({ id: message.id, error: { code: -32602, message: "missing FLORAL system awareness policy" } });
       return;
@@ -572,7 +573,7 @@ lines.on("line", (line) => {
       }
     }
 
-    if (scenario === "project-permissions") {
+    if (scenario === "project-permissions" || scenario === "runtime-self-awareness") {
       if (message.params?.permissions !== "floral-project") {
         send({ id: message.id, error: { code: -32602, message: "missing project permission profile" } });
         return;
@@ -900,6 +901,22 @@ lines.on("line", (line) => {
             callId: "call_system_summary_1",
             namespace: "floral_system",
             tool: "system_summary",
+            arguments: {},
+          },
+        });
+        return;
+      }
+
+      if (scenario === "runtime-self-awareness") {
+        send({
+          id: "dynamic_1",
+          method: "item/tool/call",
+          params: {
+            threadId: activeThreadId,
+            turnId: activeTurnId,
+            callId: "call_current_context_1",
+            namespace: "floral_system",
+            tool: "current_context",
             arguments: {},
           },
         });
@@ -1396,6 +1413,19 @@ lines.on("line", (line) => {
       && text.includes("unknown_semantics=unknown-is-a-valid-state")
     ) {
       sendSuccess(activeThreadId, activeTurnId, "system awareness complete");
+      return;
+    }
+    if (
+      scenario === "runtime-self-awareness"
+      && success === true
+      && text.includes("FLORAL Runtime Self-Awareness")
+      && text.includes("fact=turn.selector")
+      && text.includes('value="permission-profile"')
+      && text.includes("fact=turn.permission_profile")
+      && text.includes('value="floral-project"')
+      && text.includes("precedence=turn-effective-selector-over-gateway-request-over-configured-default")
+    ) {
+      sendSuccess(activeThreadId, activeTurnId, "runtime self awareness complete");
       return;
     }
     if (

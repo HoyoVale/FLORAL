@@ -556,9 +556,20 @@ export class GatewayService {
             ? await this.store.getActiveThread(resolved.conversationId)
             : undefined);
         try {
+          const controlMode = this.#controlMode(resolved.conversationId);
+          const executionPolicy = executionPolicyForMode(controlMode);
           const model = await provider.read({
             cwd,
             ...(threadId ? { threadId } : {}),
+            execution: {
+              gateway: {
+                controlMode,
+                sandboxMode: executionPolicy.sandboxMode,
+                approvalPolicy: executionPolicy.approvalPolicy,
+                approvalsReviewer: executionPolicy.approvalsReviewer,
+                approvalRoute: executionPolicy.approvalRoute,
+              },
+            },
           });
           const text = command.componentId
             ? formatSystemComponentStatus(model, command.componentId)
@@ -1660,6 +1671,8 @@ export class GatewayService {
           approvalPolicy: executionPolicy.approvalPolicy,
           sandboxMode: executionPolicy.sandboxMode,
           approvalsReviewer: executionPolicy.approvalsReviewer,
+          controlMode,
+          approvalRoute: executionPolicy.approvalRoute,
           ...(this.options.model ? { model: this.options.model } : {}),
           ...(this.options.artifactEgress ? {
             artifactRegistrationHandler: async (request) =>
@@ -2553,8 +2566,8 @@ function modeStatusText(
   if (mode === "full") {
     return [
       "执行模式=full",
-      "Codex sandbox=danger-full-access。",
-      "Codex 原生命令/文件/结构化权限请求自动批准；GUI shell bypass 仍硬拒绝，MCP/Artifact 策略保持独立。",
+      "Gateway 请求 Codex sandbox=danger-full-access；若当前项目 runtime 使用 named permission profile，则该 profile 是实际 turn 权限选择器。",
+      "Codex 原生命令/文件/结构化权限请求自动批准；项目隔离 profile、GUI shell bypass、MCP/Artifact 策略仍保持独立。",
       `本机权限上限=${ceiling}`,
     ].join("\n");
   }
@@ -2563,20 +2576,20 @@ function modeStatusText(
       "执行模式=auto",
       "Codex approvalsReviewer=auto_review。",
       "FLORAL 不会为本模式补做远程人工审批；未被 Codex 自动审查接管的请求将拒绝。",
-      `sandbox=${policy.sandboxMode}；本机权限上限=${ceiling}`,
+      `Gateway 请求 sandbox=${policy.sandboxMode}；项目 runtime 可能由 named permission profile 接管实际权限选择器；本机权限上限=${ceiling}`,
     ].join("\n");
   }
   return [
     "执行模式=ask",
     "Codex 原生审批请求会转交当前已绑定 owner 处理。",
     "可使用 /approve、/approve-session 或 /deny。",
-    `sandbox=${policy.sandboxMode}；本机权限上限=${ceiling}`,
+    `Gateway 请求 sandbox=${policy.sandboxMode}；项目 runtime 可能由 named permission profile 接管实际权限选择器；本机权限上限=${ceiling}`,
   ].join("\n");
 }
 
 function modeChangedText(mode: AgentControlMode): string {
   if (mode === "full") {
-    return "已切换到 full：Codex 使用 danger-full-access，Codex-native 执行审批自动通过；GUI/MCP/Artifact 的 FLORAL 专属边界不随之取消。服务重启后恢复 ask。";
+    return "已切换到 full：Gateway 请求 danger-full-access，Codex-native 执行审批自动通过；项目 runtime 的 named permission profile 仍优先保持项目隔离，GUI/MCP/Artifact 的 FLORAL 专属边界也不取消。服务重启后恢复 ask。";
   }
   return mode === "auto"
     ? "已切换到 auto：Codex 使用 auto_review；当前 sandbox 保持 workspace-write。服务重启后会恢复 ask。"

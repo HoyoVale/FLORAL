@@ -53,6 +53,7 @@ export type SystemEvidenceSourceKind =
   | "filesystem"
   | "process"
   | "probe"
+  | "runtime-context"
   | "derived";
 
 export type SystemEvidenceConfidence =
@@ -75,6 +76,7 @@ export interface SystemStateSourceDefinition {
   authority: "authoritative" | "observational" | "supporting";
   facts: readonly string[];
   description: string;
+  availability?: "always" | "contextual" | undefined;
 }
 
 export type SystemManagementDisposition =
@@ -176,9 +178,31 @@ export interface SystemSnapshot {
   observers: readonly SystemObserverSnapshot[];
 }
 
+export interface SystemGatewayExecutionContext {
+  controlMode: "ask" | "auto" | "full";
+  sandboxMode: "read-only" | "workspace-write" | "danger-full-access";
+  approvalPolicy: "never" | "on-request" | "untrusted";
+  approvalsReviewer: "user" | "auto_review";
+  approvalRoute?: "owner" | "auto-review" | "full-auto-codex-native" | undefined;
+}
+
+export interface SystemTurnExecutionContext {
+  selector: "sandbox-policy" | "permission-profile";
+  sandboxMode: "read-only" | "workspace-write" | "danger-full-access" | "not-applicable";
+  permissionProfile: string | "none";
+  approvalPolicy: "never" | "on-request" | "untrusted";
+  approvalsReviewer: "user" | "auto_review";
+}
+
+export interface SystemExecutionObservationContext {
+  gateway?: SystemGatewayExecutionContext | undefined;
+  turn?: SystemTurnExecutionContext | undefined;
+}
+
 export interface SystemObservationContext {
   cwd?: string | undefined;
   threadId?: string | undefined;
+  execution?: SystemExecutionObservationContext | undefined;
 }
 
 export interface SystemObserver {

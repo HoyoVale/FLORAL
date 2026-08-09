@@ -172,6 +172,8 @@ export interface AgentRunRequest {
   approvalPolicy?: "never" | "on-request" | "untrusted";
   sandboxMode?: "read-only" | "workspace-write" | "danger-full-access";
   approvalsReviewer?: "user" | "auto_review";
+  controlMode?: "ask" | "auto" | "full";
+  approvalRoute?: "owner" | "auto-review" | "full-auto-codex-native";
   approvalHandler?: AgentApprovalHandler;
   mcpToolApprovalHandler?: AgentApprovalHandler;
   skillManagementApprovalHandler?: AgentApprovalHandler;

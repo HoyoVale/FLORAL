@@ -9,6 +9,7 @@ import type { SystemObserver } from "./system-types.js";
 import { CodexRuntimeSystemObserver } from "./observers/codex-runtime-system-observer.js";
 import { ConfigurationSystemObserver } from "./observers/configuration-system-observer.js";
 import { ExternalExtensionSystemObserver } from "./observers/external-extension-system-observer.js";
+import { ExecutionContextSystemObserver } from "./observers/execution-context-system-observer.js";
 import { ServiceStateSystemObserver } from "./observers/service-state-system-observer.js";
 
 export interface DefaultSystemAwarenessOptions {
@@ -30,6 +31,9 @@ export function createDefaultSystemObservers(
     [options.authority.effective.mcp.macos.id]: "mcp.floral_peekaboo",
   };
   const observers: SystemObserver[] = [
+    new ExecutionContextSystemObserver({
+      ...(now ? { now } : {}),
+    }),
     new ConfigurationSystemObserver({
       authority: options.authority,
       env: options.env,

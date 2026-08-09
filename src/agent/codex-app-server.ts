@@ -43,6 +43,7 @@ import {
   SystemDefinitionRegistry,
   formatSystemCapabilities,
   formatSystemComponentStatus,
+  formatSystemRuntimeContext,
   formatSystemSummary,
   type SystemDefinition,
   type SystemObservationContext,
@@ -242,21 +243,26 @@ export const FLORAL_AGENT_DEVELOPER_INSTRUCTIONS = [
   "- Terminal-first does not authorize synthetic GUI automation. Never use direct Peekaboo CLI mutation, osascript/AppleScript/System Events, cliclick, coordinate automation, or ad-hoc accessibility scripts to synthesize clicks or keystrokes.",
   "- For macOS screen observation, use floral_peekaboo/image or floral_peekaboo/see. Use floral_vision only for pixel semantics or OCR. After a terminal/native action that should change visible state, verify with see when the command result alone is insufficient.",
   "- When a step has no reliable terminal/native CLI route and requires GUI interaction, floral_peekaboo/see is mandatory immediately before the action. Select the target only from the fresh Snapshot ID and opaque element ID returned by see. Do not infer an actionable target from visual coordinates, arrow direction, OCR, or a screenshot.",
-  "- The only currently supported controlled GUI mutation is floral_peekaboo/click. If a required GUI-only mutation is unavailable, state the limitation instead of bypassing FLORAL.",
+  "- For GUI mutation, use only FLORAL-exposed controlled GUI tools. If current availability matters, consult floral_system; if the required governed route is unavailable, state the limitation instead of bypassing FLORAL.",
   "- If the requested UI is already in the desired state, do not mutate it and do not request approval.",
   "- After every successful click, call floral_peekaboo/see again before evaluating state or doing another GUI action.",
   "- A local filesystem path or Markdown link/image is not a delivered chat attachment.",
   "- When the user explicitly asks to receive a screenshot or another already-registered artifact, call floral_delivery/send_artifact with the artifactId returned by the trusted producer. Never claim delivery unless that tool reports success.",
   "- For terminal-produced files, first create or copy the final attachment into <cwd>/artifacts/outbound, then call floral_delivery/register_outbound_file, then floral_delivery/send_artifact. Do not register or send arbitrary paths outside that staging root.",
   "- Manage Skills through floral_skills and Codex-native Skill discovery. Project Skills may be created under <cwd>/.agents/skills. Never edit data/external-skills/registry.json directly or use shell/git to bypass External Skill approval.",
-  "- Discover and manage supported extensions through floral_extensions. Prefer Codex App metadata when available; if app/installed is unsupported, FLORAL may fall back to app/list and must report callable state as unknown. Use mcp_status before claiming GitHub or Browser MCP is ready. Shared external MCP changes must use manage_mcp and user approval; never edit Codex config or run codex mcp/plugin installation commands through shell as a bypass.",
+  "- Discover and manage supported extensions through floral_extensions. Use floral_system when current ownership, readiness, or management authority matters. Shared external MCP changes must use manage_mcp and user approval; never edit Codex config or run codex mcp/plugin installation commands through shell as a bypass.",
   "- Extension control-plane routing overrides terminal-first application routing. After manage_mcp changes shared MCP state, the current turn's extension snapshot predates that mutation and cannot verify the reload. Do not inspect ~/.codex, process tables, package storage, or run codex mcp/plugin commands to verify it. End the current turn with verification pending; on the next turn use floral_extensions/mcp_status or the /mcp command. If FLORAL blocks a forbidden same-turn shell verification attempt, treat that block as a non-fatal control-plane redirect rather than evidence that the MCP installation failed.",
-  "- FLORAL does not call plugin/list, plugin/read, plugin/install, plugin/uninstall, or marketplace mutation from production Agent flows because upstream still marks those Plugin RPCs under development. Plugin installation remains a supported-surface handoff until upstream promotes a production management API.",
+  "- Extension operations not exposed by FLORAL are unsupported for this Agent turn. Never use shell, direct Codex config edits, or undocumented RPCs to bypass the governed extension surface; consult floral_system/capabilities for the current management contract.",
 ].join("\n");
 
 const FLORAL_SYSTEM_DEVELOPER_INSTRUCTIONS = [
-  "- Use floral_system for FLORAL self-awareness. system_summary, component_status, and capabilities are read-only views of a snapshot captured before the current turn. Treat unknown and conflict as valid states; never use shell, config files, or guesswork to upgrade them into certainty.",
-  "- floral_system/capabilities describes declared ownership, management disposition, approval requirements, and verification contracts only. It grants no authorization and performs no maintenance action. Self-maintenance is not enabled in Phase 8A.5.",
+  "FLORAL runtime self-awareness policy:",
+  "- Developer instructions are routing and safety invariants, not evidence of current system state. When a claim depends on current FLORAL availability, ownership, health, permissions, or management authority, query floral_system instead of relying on memorized architecture prose.",
+  "- Use floral_system/current_context before claiming the current FLORAL control mode, requested sandbox, effective Codex permission selector, approval policy, or reviewer. turn.* facts under floral.execution are the FLORAL authority for what this host actually sent to Codex for the current turn.",
+  "- Configured defaults are intent, not the effective turn selector. Generic Codex/model environment or sandbox prose is not a FLORAL evidence source and must not be presented as a competing FLORAL authority. If such context disagrees with floral.execution, report the FLORAL evidence and do not invent a reconciliation.",
+  "- system_summary, component_status, current_context, and capabilities are read-only views of a snapshot captured before the current turn. Treat unknown and conflict as valid states; never use shell, config files, or guesswork to upgrade them into certainty.",
+  "- The per-turn snapshot is frozen. A mutation performed later in the same turn does not refresh floral_system; use a fresh next turn or an owner-facing status command for post-mutation verification.",
+  "- floral_system/capabilities describes declared ownership, management disposition, approval requirements, and verification contracts only. It grants no authorization and performs no maintenance action. Self-maintenance remains disabled in Phase 8B.",
 ].join("\n");
 
 const FLORAL_DELIVERY_DYNAMIC_TOOLS = [
@@ -546,6 +552,17 @@ const FLORAL_SYSTEM_DYNAMIC_TOOLS = [
     name: "floral_system",
     description: "Read-only FLORAL system awareness. Facts come from a bounded per-turn snapshot with explicit authority, evidence, unknown, and conflict semantics. This namespace never performs maintenance or grants authorization.",
     tools: [
+      {
+        type: "function",
+        name: "current_context",
+        description: "Read the current FLORAL Gateway execution request and the exact Codex turn permission selector captured before this turn. Use this before making claims about current mode, sandbox/profile, approval policy, or reviewer.",
+        inputSchema: {
+          type: "object",
+          properties: {},
+          additionalProperties: false,
+        },
+        deferLoading: false,
+      },
       {
         type: "function",
         name: "system_summary",
@@ -1227,8 +1244,40 @@ export class CodexAppServerRuntime implements AgentRuntime {
     this.#client.on("exit", exitListener);
 
     try {
+      const effectiveApprovalPolicy = request.approvalPolicy ?? this.#approvalPolicy;
+      const effectiveApprovalsReviewer = request.approvalsReviewer ?? this.#approvalsReviewer;
+      const requestedSandboxMode = request.sandboxMode ?? this.#sandboxMode;
+      const executionContext: NonNullable<SystemObservationContext["execution"]> = {
+        ...(request.controlMode
+          ? {
+              gateway: {
+                controlMode: request.controlMode,
+                sandboxMode: requestedSandboxMode,
+                approvalPolicy: effectiveApprovalPolicy,
+                approvalsReviewer: effectiveApprovalsReviewer,
+                ...(request.approvalRoute ? { approvalRoute: request.approvalRoute } : {}),
+              },
+            }
+          : {}),
+        turn: this.#permissionProfile
+          ? {
+              selector: "permission-profile",
+              sandboxMode: "not-applicable",
+              permissionProfile: this.#permissionProfile,
+              approvalPolicy: effectiveApprovalPolicy,
+              approvalsReviewer: effectiveApprovalsReviewer,
+            }
+          : {
+              selector: "sandbox-policy",
+              sandboxMode: requestedSandboxMode,
+              permissionProfile: "none",
+              approvalPolicy: effectiveApprovalPolicy,
+              approvalsReviewer: effectiveApprovalsReviewer,
+            },
+      };
+
       await this.#refreshExtensionSnapshot(threadId, cwd);
-      await this.#refreshSystemSnapshot(threadId, cwd);
+      await this.#refreshSystemSnapshot(threadId, cwd, executionContext);
       const turnInput: Array<Record<string, unknown>> = [
         { type: "text", text: request.text },
       ];
@@ -1263,17 +1312,15 @@ export class CodexAppServerRuntime implements AgentRuntime {
         threadId,
         input: turnInput,
         cwd,
-        approvalPolicy: toAppServerApprovalPolicy(
-          request.approvalPolicy ?? this.#approvalPolicy,
-        ),
-        approvalsReviewer: request.approvalsReviewer ?? this.#approvalsReviewer,
+        approvalPolicy: toAppServerApprovalPolicy(effectiveApprovalPolicy),
+        approvalsReviewer: effectiveApprovalsReviewer,
       };
       if (this.#permissionProfile) {
         turnParams.permissions = this.#permissionProfile;
         turnParams.runtimeWorkspaceRoots = [cwd];
       } else {
         turnParams.sandboxPolicy = buildTurnSandboxPolicy(
-          request.sandboxMode ?? this.#sandboxMode,
+          requestedSandboxMode,
           cwd,
         );
       }
@@ -2001,13 +2048,18 @@ export class CodexAppServerRuntime implements AgentRuntime {
   async #refreshSystemSnapshot(
     threadId: string,
     cwd: string,
+    execution?: SystemObservationContext["execution"],
   ): Promise<void> {
     const provider = this.#systemSnapshotProvider;
     const registry = this.#systemDefinitionRegistry;
     if (!provider || !registry) return;
 
     try {
-      const snapshot = await provider({ cwd, threadId });
+      const snapshot = await provider({
+        cwd,
+        threadId,
+        ...(execution ? { execution } : {}),
+      });
       if (snapshot.definitionFingerprint !== registry.fingerprint()) {
         throw new Error("System snapshot definition fingerprint mismatch");
       }
@@ -2131,6 +2183,14 @@ export class CodexAppServerRuntime implements AgentRuntime {
       snapshot,
     };
     try {
+      if (tool === "current_context") {
+        this.#respondSafely(
+          request.id,
+          dynamicToolResponse(true, boundedDynamicToolText(formatSystemRuntimeContext(model))),
+        );
+        return;
+      }
+
       if (tool === "system_summary") {
         this.#respondSafely(
           request.id,

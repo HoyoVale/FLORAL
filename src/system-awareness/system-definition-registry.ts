@@ -114,6 +114,9 @@ export function validateSystemDefinition(definition: SystemDefinition): void {
 function validateStateSource(source: SystemStateSourceDefinition): void {
   requireToken(source.id, "state source id");
   requireText(source.description, "state source description");
+  if (source.availability && source.availability !== "always" && source.availability !== "contextual") {
+    throw new Error(`Invalid state source availability: ${source.availability}`);
+  }
   if (source.facts.length === 0) {
     throw new Error(`State source ${source.id} must declare at least one fact`);
   }

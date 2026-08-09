@@ -176,6 +176,8 @@ describe("Gateway full-auto authority", () => {
       await transport.emit("perform trusted maintenance", "full-run");
       expect(runtime.requests).toHaveLength(1);
       expect(runtime.requests[0]).toMatchObject({
+        controlMode: "full",
+        approvalRoute: "full-auto-codex-native",
         approvalPolicy: "untrusted",
         sandboxMode: "danger-full-access",
         approvalsReviewer: "user",
@@ -193,9 +195,9 @@ describe("Gateway full-auto authority", () => {
       const status = transport.sent.at(-1)?.text ?? "";
       expect(status).toContain("mode=full");
       expect(status).toContain("mode_ceiling=full");
-      expect(status).toContain("sandbox=danger-full-access");
-      expect(status).toContain("approval_policy=untrusted");
-      expect(status).toContain("reviewer=user");
+      expect(status).toContain("requested_sandbox=danger-full-access");
+      expect(status).toContain("requested_approval_policy=untrusted");
+      expect(status).toContain("requested_reviewer=user");
       expect(status).toContain("approval_route=full-auto-codex-native");
     } finally {
       await gateway.stop();

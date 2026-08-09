@@ -14,6 +14,7 @@ import type { SystemSnapshotBuilder } from "./system-snapshot-builder.js";
 const MAX_SUMMARY_LENGTH = 12_000;
 const MAX_COMPONENT_LENGTH = 12_000;
 const MAX_CAPABILITY_LENGTH = 12_000;
+const MAX_RUNTIME_CONTEXT_LENGTH = 8_000;
 const MAX_VALUE_LENGTH = 1_600;
 
 export interface SystemReadModel {
@@ -171,6 +172,37 @@ export function formatSystemComponentStatus(
   return boundedText(lines.join("\n"), MAX_COMPONENT_LENGTH);
 }
 
+export function formatSystemRuntimeContext(model: SystemReadModel): string {
+  const registry = validateSystemReadModel(model);
+  const definition = registry.require("floral.execution");
+  const component = model.snapshot.components.find((entry) => entry.componentId === definition.id);
+  const facts = materializeComponentFacts(definition, component);
+  const lines = [
+    "FLORAL Runtime Self-Awareness",
+    `generated_at=${model.snapshot.generatedAt}`,
+    `component=${definition.id}`,
+    `observed=${String(component?.observed === true)}`,
+  ];
+  for (const fact of facts) {
+    lines.push([
+      `fact=${fact.fact}`,
+      `resolution=${fact.resolution}`,
+      `confidence=${fact.confidence}`,
+      `value=${formatValue(fact.value)}`,
+      `evidence=${String(fact.evidence.length)}`,
+    ].join(" "));
+    for (const item of fact.evidence) lines.push(formatEvidenceLine(fact.fact, item));
+  }
+  if (facts.length === 0) lines.push("facts=none", "turn_context=not-active-or-not-supplied");
+  lines.push(
+    "precedence=turn-effective-selector-over-gateway-request-over-configured-default",
+    "permission_profile_semantics=when-turn.selector-is-permission-profile-turn.sandbox_mode-is-not-applicable",
+    "external_context_semantics=generic-model-environment-context-is-not-a-FLORAL-authority-source",
+    "snapshot_semantics=read-only-per-turn-frozen",
+  );
+  return boundedText(lines.join("\n"), MAX_RUNTIME_CONTEXT_LENGTH);
+}
+
 export function formatSystemCapabilities(
   model: SystemReadModel,
   componentId?: string | undefined,
@@ -212,6 +244,10 @@ function materializeComponentFacts(
   );
   const factNames = new Set<string>();
   for (const source of definition.stateSources) {
+    const sourceObserved = (component?.facts ?? []).some((fact) =>
+      fact.evidence.some((item) => item.source.id === source.id)
+    );
+    if (source.availability === "contextual" && !sourceObserved) continue;
     for (const fact of source.facts) factNames.add(fact);
   }
   for (const fact of component?.facts ?? []) factNames.add(fact.fact);
