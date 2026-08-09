@@ -21,7 +21,9 @@ function hasFloralRoutingPolicy(params) {
     && instructions.includes("floral_peekaboo/see")
     && instructions.includes("floral_peekaboo/click")
     && instructions.includes("floral_delivery/send_artifact")
-    && instructions.includes("local filesystem path");
+    && instructions.includes("local filesystem path")
+    && instructions.includes("Extension control-plane routing overrides terminal-first")
+    && instructions.includes("Do not inspect ~/.codex");
 }
 
 function hasFloralSkillTools(params) {
@@ -438,7 +440,9 @@ lines.on("line", (line) => {
       (scenario === "extension-dynamic-tools"
         || scenario === "extension-installed-apps"
         || scenario === "extension-mcp-status"
-        || scenario === "extension-mcp-install")
+        || scenario === "extension-mcp-install"
+        || scenario === "extension-mcp-install-status-pending"
+        || scenario === "extension-mcp-install-shell-verification")
       && !hasFloralExtensionTools(message.params)
     ) {
       send({ id: message.id, error: { code: -32602, message: "missing FLORAL extension dynamic tools" } });
@@ -913,7 +917,11 @@ lines.on("line", (line) => {
         return;
       }
 
-      if (scenario === "extension-mcp-install") {
+      if (
+        scenario === "extension-mcp-install"
+        || scenario === "extension-mcp-install-status-pending"
+        || scenario === "extension-mcp-install-shell-verification"
+      ) {
         send({
           id: "dynamic_1",
           method: "item/tool/call",
@@ -1258,6 +1266,34 @@ lines.on("line", (line) => {
     return;
   }
 
+  if (message.id === "dynamic_2" && "result" in message) {
+    const success = message.result?.success;
+    const text = message.result?.contentItems?.[0]?.text ?? "";
+    if (
+      scenario === "extension-mcp-install-status-pending"
+      && success === true
+      && text.includes("codex_mcp.verification=pending")
+      && text.includes("next=verify-on-next-turn")
+      && text.includes("shell_verification=forbidden")
+    ) {
+      sendSuccess(activeThreadId, activeTurnId, "extension mcp verification deferred safely");
+      return;
+    }
+    send({
+      method: "turn/completed",
+      params: {
+        threadId: activeThreadId,
+        turn: {
+          id: activeTurnId,
+          status: "failed",
+          error: { message: `unexpected second dynamic tool response: ${text}` },
+          items: [],
+        },
+      },
+    });
+    return;
+  }
+
   if (message.id === "dynamic_1" && "result" in message) {
     const success = message.result?.success;
     const text = message.result?.contentItems?.[0]?.text ?? "";
@@ -1300,11 +1336,46 @@ lines.on("line", (line) => {
       return;
     }
     if (
-      scenario === "extension-mcp-install"
+      (scenario === "extension-mcp-install"
+        || scenario === "extension-mcp-install-status-pending"
+        || scenario === "extension-mcp-install-shell-verification")
       && success === true
       && text.includes("external_mcp.install=ok")
       && text.includes("id=chrome-devtools")
+      && text.includes("verification=next-turn")
+      && text.includes("shell_verification=forbidden")
     ) {
+      if (scenario === "extension-mcp-install-status-pending") {
+        send({
+          id: "dynamic_2",
+          method: "item/tool/call",
+          params: {
+            threadId: activeThreadId,
+            turnId: activeTurnId,
+            callId: "call_extensions_mcp_status_after_install",
+            namespace: "floral_extensions",
+            tool: "mcp_status",
+            arguments: {},
+          },
+        });
+        return;
+      }
+      if (scenario === "extension-mcp-install-shell-verification") {
+        waitingForApproval = true;
+        send({
+          id: "approval_1",
+          method: "item/commandExecution/requestApproval",
+          params: {
+            threadId: activeThreadId,
+            turnId: activeTurnId,
+            itemId: "command_extension_verify_1",
+            command: "/bin/zsh -lc \"ps aux | grep -i chrome-devtools; ls -la ~/.codex\"",
+            cwd: process.cwd(),
+            reason: "verify MCP installation with shell",
+          },
+        });
+        return;
+      }
       sendSuccess(activeThreadId, activeTurnId, "extension mcp install complete");
       return;
     }
@@ -1423,6 +1494,28 @@ lines.on("line", (line) => {
     }
 
     const decision = message.result?.decision;
+    if (scenario === "extension-mcp-install-shell-verification") {
+      if (decision === "decline") {
+        sendSuccess(
+          activeThreadId,
+          activeTurnId,
+          "extension verification shell bypass declined safely",
+        );
+      } else {
+        const error = {
+          message: `unexpected extension verification shell decision: ${String(decision)}`,
+          codexErrorInfo: "Other",
+        };
+        send({
+          method: "turn/completed",
+          params: {
+            threadId: activeThreadId,
+            turn: { id: activeTurnId, status: "failed", error, items: [] },
+          },
+        });
+      }
+      return;
+    }
     if (scenario === "gui-shell-bypass") {
       if (decision === "decline") {
         sendSuccess(activeThreadId, activeTurnId, "gui shell bypass declined safely");

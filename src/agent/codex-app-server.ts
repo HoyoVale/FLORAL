@@ -232,6 +232,7 @@ export const FLORAL_AGENT_DEVELOPER_INSTRUCTIONS = [
   "- For terminal-produced files, first create or copy the final attachment into <cwd>/artifacts/outbound, then call floral_delivery/register_outbound_file, then floral_delivery/send_artifact. Do not register or send arbitrary paths outside that staging root.",
   "- Manage Skills through floral_skills and Codex-native Skill discovery. Project Skills may be created under <cwd>/.agents/skills. Never edit data/external-skills/registry.json directly or use shell/git to bypass External Skill approval.",
   "- Discover and manage supported extensions through floral_extensions. Prefer Codex App metadata when available; if app/installed is unsupported, FLORAL may fall back to app/list and must report callable state as unknown. Use mcp_status before claiming GitHub or Browser MCP is ready. Shared external MCP changes must use manage_mcp and user approval; never edit Codex config or run codex mcp/plugin installation commands through shell as a bypass.",
+  "- Extension control-plane routing overrides terminal-first application routing. After manage_mcp changes shared MCP state, the current turn's extension snapshot predates that mutation and cannot verify the reload. Do not inspect ~/.codex, process tables, package storage, or run codex mcp/plugin commands to verify it. End the current turn with verification pending; on the next turn use floral_extensions/mcp_status or the /mcp command.",
   "- FLORAL does not call plugin/list, plugin/read, plugin/install, plugin/uninstall, or marketplace mutation from production Agent flows because upstream still marks those Plugin RPCs under development. Plugin installation remains a supported-surface handoff until upstream promotes a production management API.",
 ].join("\n");
 
@@ -525,6 +526,7 @@ export class CodexAppServerRuntime implements AgentRuntime {
   readonly #artifactDeliveryHandlers = new Map<string, AgentArtifactDeliveryHandler>();
   readonly #threadCwds = new Map<string, string>();
   readonly #extensionSnapshots = new Map<string, ExtensionDiscoverySnapshot>();
+  readonly #extensionMutationPendingVerification = new Set<string>();
   readonly #approvalItemSummaries = new Map<string, string>();
   readonly #inFlightMcpToolCalls = new Map<string, InFlightMcpToolCall>();
   #skillsDirty = false;
@@ -904,6 +906,7 @@ export class CodexAppServerRuntime implements AgentRuntime {
     this.#artifactDeliveryHandlers.delete(normalized);
     this.#threadCwds.delete(normalized);
     this.#extensionSnapshots.delete(normalized);
+    this.#extensionMutationPendingVerification.delete(normalized);
     this.#deleteApprovalItemSummaries(normalized);
     this.#deleteInFlightMcpToolCalls(normalized);
   }
@@ -1214,6 +1217,7 @@ export class CodexAppServerRuntime implements AgentRuntime {
       this.#artifactDeliveryHandlers.delete(threadId);
       this.#threadCwds.delete(threadId);
       this.#extensionSnapshots.delete(threadId);
+      this.#extensionMutationPendingVerification.delete(threadId);
       this.#deleteApprovalItemSummaries(threadId);
       this.#deleteInFlightMcpToolCalls(threadId);
     }
@@ -1245,6 +1249,7 @@ export class CodexAppServerRuntime implements AgentRuntime {
     this.#artifactDeliveryHandlers.clear();
     this.#threadCwds.clear();
     this.#extensionSnapshots.clear();
+    this.#extensionMutationPendingVerification.clear();
     this.#approvalItemSummaries.clear();
     this.#inFlightMcpToolCalls.clear();
     await this.#client.stop();
@@ -1350,6 +1355,16 @@ export class CodexAppServerRuntime implements AgentRuntime {
         && isGuiAutomationShellBypass(readString(params?.command))
       ) {
         process.stderr.write("codex.gui_shell_bypass=declined\n");
+        this.#respondSafely(request.id, { decision: "decline" });
+        return;
+      }
+      if (
+        request.method === "item/commandExecution/requestApproval"
+        && threadId
+        && this.#extensionMutationPendingVerification.has(threadId)
+        && isExtensionVerificationShellBypass(readString(params?.command))
+      ) {
+        process.stderr.write("codex.extension_shell_verification=declined\n");
         this.#respondSafely(request.id, { decision: "decline" });
         return;
       }
@@ -1967,6 +1982,22 @@ export class CodexAppServerRuntime implements AgentRuntime {
       }
 
       if (tool === "mcp_status") {
+        if (this.#extensionMutationPendingVerification.has(threadId)) {
+          this.#respondSafely(
+            request.id,
+            dynamicToolResponse(
+              true,
+              [
+                "codex_mcp.verification=pending",
+                "reason=same-turn-snapshot-predates-extension-mutation",
+                "next=verify-on-next-turn",
+                "verification_tool=floral_extensions/mcp_status",
+                "shell_verification=forbidden",
+              ].join("\n"),
+            ),
+          );
+          return;
+        }
         if (!snapshot.mcpServers) {
           throw new Error("MCP status snapshot unavailable");
         }
@@ -2038,11 +2069,24 @@ export class CodexAppServerRuntime implements AgentRuntime {
             error instanceof Error ? error.name : "Error",
           )}`,
         }));
+        const succeeded = !result.message.includes("=failed");
+        if (succeeded && result.changed) {
+          this.#extensionMutationPendingVerification.add(threadId);
+        }
+        const resultText = succeeded && result.changed
+          ? [
+              result.message,
+              "verification=next-turn",
+              "same_turn_mcp_status_snapshot=stale",
+              "verification_tool=floral_extensions/mcp_status",
+              "shell_verification=forbidden",
+            ].join("\n")
+          : result.message;
         this.#respondSafely(
           request.id,
           dynamicToolResponse(
-            !result.message.includes("=failed"),
-            boundedDynamicToolText(result.message),
+            succeeded,
+            boundedDynamicToolText(resultText),
           ),
         );
         return;
@@ -2443,6 +2487,24 @@ function redactApprovalText(value: string | undefined): string | undefined {
     .trim();
   if (!normalized) return undefined;
   return normalized.length <= 240 ? normalized : `${normalized.slice(0, 237)}...`;
+}
+
+function isExtensionVerificationShellBypass(command: string | undefined): boolean {
+  if (!command) return false;
+  const normalized = command.toLowerCase().replace(/\s+/gu, " ");
+  const extensionMarkers = [
+    ".codex",
+    "external-mcp",
+    "chrome-devtools",
+    "chrome_devtools",
+    "devtools-mcp",
+    "github-mcp",
+    "github_mcp",
+    "codex mcp",
+    "codex plugin",
+    "codex plugins",
+  ];
+  return extensionMarkers.some((marker) => normalized.includes(marker));
 }
 
 function isUnavailableThreadResume(error: unknown): boolean {

@@ -17,5 +17,9 @@ describe("extension-manager Skill", () => {
     expect(text).toContain("Codex CLI `/plugins` browser");
     expect(text).toContain("Do not call App Server `plugin/list`");
     expect(text).toContain("do not ask the user to paste the secret into chat");
+    expect(text).toContain("current turn's `mcp_status` snapshot");
+    expect(text).toContain("Do not inspect `~/.codex`");
+    expect(text).toContain("Do not request a second shell approval for verification");
+    expect(text).toContain("verification pending");
   });
 });

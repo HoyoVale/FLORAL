@@ -483,6 +483,76 @@ describe("CodexAppServerRuntime", () => {
     }
   });
 
+  it("marks same-turn MCP status as stale after a managed MCP mutation", async () => {
+    const runtime = createRuntime("extension-mcp-install-status-pending", 5_000, {
+      externalMcpCatalog: async () =>
+        "external_mcp_catalog.count=2\nid=chrome-devtools installed=false",
+      manageExternalMcp: async () => ({
+        changed: true,
+        message: "external_mcp.install=ok\nid=chrome-devtools",
+        registry: {
+          version: 1,
+          packages: [{
+            id: "chrome-devtools",
+            enabled: true,
+            installedAt: "2026-08-10T00:00:00.000Z",
+            updatedAt: "2026-08-10T00:00:00.000Z",
+          }],
+        },
+      }),
+    });
+    try {
+      await runtime.start();
+      const result = await runtime.run({
+        text: "Install and verify Chrome MCP safely.",
+        cwd: process.cwd(),
+        extensionManagementApprovalHandler: async () => "approve",
+      });
+      expect(result.finalText).toBe("extension mcp verification deferred safely");
+    } finally {
+      await runtime.stop();
+    }
+  });
+
+  it("declines shell/config verification after a managed MCP mutation without delegating a second approval", async () => {
+    const runtime = createRuntime("extension-mcp-install-shell-verification", 5_000, {
+      externalMcpCatalog: async () =>
+        "external_mcp_catalog.count=2\nid=chrome-devtools installed=false",
+      manageExternalMcp: async () => ({
+        changed: true,
+        message: "external_mcp.install=ok\nid=chrome-devtools",
+        registry: {
+          version: 1,
+          packages: [{
+            id: "chrome-devtools",
+            enabled: true,
+            installedAt: "2026-08-10T00:00:00.000Z",
+            updatedAt: "2026-08-10T00:00:00.000Z",
+          }],
+        },
+      }),
+    });
+    let shellApprovals = 0;
+    try {
+      await runtime.start();
+      const result = await runtime.run({
+        text: "Install Chrome MCP and do not bypass the control plane.",
+        cwd: process.cwd(),
+        extensionManagementApprovalHandler: async () => "approve",
+        approvalHandler: async () => {
+          shellApprovals += 1;
+          return "approve";
+        },
+      });
+      expect(result.finalText).toBe(
+        "extension verification shell bypass declined safely",
+      );
+      expect(shellApprovals).toBe(0);
+    } finally {
+      await runtime.stop();
+    }
+  });
+
   it("resumes an existing thread before starting a turn", async () => {
     const runtime = createRuntime("resume");
     try {
