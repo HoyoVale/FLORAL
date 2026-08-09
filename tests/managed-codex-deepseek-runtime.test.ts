@@ -33,6 +33,8 @@ class FakeRuntime implements AgentRuntime {
   stops = 0;
   interrupts = 0;
   skillRootUpdates: string[][] = [];
+  appQueries: Array<{ cwd: string; threadId?: string | undefined }> = [];
+  mcpQueries: Array<{ cwd: string; threadId?: string | undefined }> = [];
   mcpReloads = 0;
   async start(): Promise<void> { this.starts += 1; }
   async run(request: AgentRunRequest): Promise<AgentRunResult> {
@@ -51,7 +53,11 @@ class FakeRuntime implements AgentRuntime {
   async setSkillRoots(roots: string[]): Promise<void> {
     this.skillRootUpdates.push([...roots]);
   }
-  async listInstalledApps(): Promise<AgentAppSummary[]> {
+  async listInstalledApps(input: {
+    cwd: string;
+    threadId?: string | undefined;
+  }): Promise<AgentAppSummary[]> {
+    this.appQueries.push({ ...input });
     return [{
       id: "github",
       runtimeName: "GitHub",
@@ -79,7 +85,11 @@ class FakeRuntime implements AgentRuntime {
       defaultEnabled: false,
     }];
   }
-  async listMcpServers(): Promise<AgentMcpServerSummary[]> {
+  async listMcpServers(input: {
+    cwd: string;
+    threadId?: string | undefined;
+  }): Promise<AgentMcpServerSummary[]> {
+    this.mcpQueries.push({ ...input });
     return [{
       name: "floral_search",
       status: "ready",
@@ -463,13 +473,61 @@ describe("ManagedCodexDeepSeekRuntime", () => {
 
     try {
       await managed.start();
-      await managed.run({ text: "alpha one", cwd: projectA });
+
+      // After a service restart the persisted Project thread id is known to
+      // Gateway but the in-memory thread->runtime map is intentionally empty.
+      // Extension discovery must still select the Project runtime by cwd and
+      // omit the unconfirmed thread id instead of querying global CODEX_HOME.
+      await managed.listInstalledApps({
+        cwd: projectA,
+        threadId: "persisted-alpha",
+      });
+      await managed.listMcpServers({
+        cwd: projectA,
+        threadId: "persisted-alpha",
+      });
+
+      const canonicalProjectA = await realpath(projectA);
+      const alphaKeyBeforeRun = projectRuntimeNamespace(canonicalProjectA);
+      const alphaHomeBeforeRun = join(managedHome, "projects", alphaKeyBeforeRun);
+      expect(runtimeByHome.get(alphaHomeBeforeRun)?.appQueries.at(-1)).toEqual({
+        cwd: projectA,
+      });
+      expect(runtimeByHome.get(alphaHomeBeforeRun)?.mcpQueries.at(-1)).toEqual({
+        cwd: projectA,
+      });
+      expect(runtimeByHome.get(managedHome)?.appQueries).toEqual([]);
+      expect(runtimeByHome.get(managedHome)?.mcpQueries).toEqual([]);
+
+      // Once the Project turn has been resumed, the mapping is authoritative
+      // and thread-scoped discovery may safely use it.
+      await managed.run({
+        text: "alpha one",
+        cwd: projectA,
+        threadId: "persisted-alpha",
+      });
+      await managed.listInstalledApps({
+        cwd: projectA,
+        threadId: "persisted-alpha",
+      });
+      await managed.listMcpServers({
+        cwd: projectA,
+        threadId: "persisted-alpha",
+      });
+      expect(runtimeByHome.get(alphaHomeBeforeRun)?.appQueries.at(-1)).toEqual({
+        cwd: projectA,
+        threadId: "persisted-alpha",
+      });
+      expect(runtimeByHome.get(alphaHomeBeforeRun)?.mcpQueries.at(-1)).toEqual({
+        cwd: projectA,
+        threadId: "persisted-alpha",
+      });
+
       await managed.run({ text: "alpha two", cwd: projectA });
       await managed.run({ text: "beta", cwd: projectB });
 
-      const canonicalProjectA = await realpath(projectA);
       const canonicalProjectB = await realpath(projectB);
-      const alphaKey = projectRuntimeNamespace(canonicalProjectA);
+      const alphaKey = alphaKeyBeforeRun;
       const betaKey = projectRuntimeNamespace(canonicalProjectB);
       const alphaHome = join(managedHome, "projects", alphaKey);
       const betaHome = join(managedHome, "projects", betaKey);

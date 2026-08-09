@@ -251,13 +251,19 @@ export class ManagedCodexDeepSeekRuntime implements AgentRuntime {
     threadId?: string | undefined;
     forceRefresh?: boolean | undefined;
   }): Promise<AgentAppSummary[]> {
-    const runtime = input.threadId
-      ? this.#runtimeForThread(input.threadId)
-      : (await this.#runtimeSlotForCwd(input.cwd)).runtime;
+    const slot = await this.#runtimeSlotForCwd(input.cwd);
+    const runtime = slot.runtime;
     if (!supportsAgentExtensionDiscovery(runtime)) {
       throw new Error("Managed Codex runtime does not expose App discovery");
     }
-    return await runtime.listInstalledApps(input);
+    const threadId = this.#extensionThreadIdForSlot(input.threadId, slot.key);
+    return await runtime.listInstalledApps({
+      cwd: input.cwd,
+      ...(threadId ? { threadId } : {}),
+      ...(input.forceRefresh !== undefined
+        ? { forceRefresh: input.forceRefresh }
+        : {}),
+    });
   }
 
   async readApps(input: {
@@ -286,13 +292,16 @@ export class ManagedCodexDeepSeekRuntime implements AgentRuntime {
     cwd: string;
     threadId?: string | undefined;
   }): Promise<AgentMcpServerSummary[]> {
-    const runtime = input.threadId
-      ? this.#runtimeForThread(input.threadId)
-      : (await this.#runtimeSlotForCwd(input.cwd)).runtime;
+    const slot = await this.#runtimeSlotForCwd(input.cwd);
+    const runtime = slot.runtime;
     if (!supportsAgentExtensionDiscovery(runtime)) {
       throw new Error("Managed Codex runtime does not expose MCP discovery");
     }
-    return await runtime.listMcpServers(input);
+    const threadId = this.#extensionThreadIdForSlot(input.threadId, slot.key);
+    return await runtime.listMcpServers({
+      cwd: input.cwd,
+      ...(threadId ? { threadId } : {}),
+    });
   }
 
   async listThreads(input: {
@@ -1015,6 +1024,18 @@ export class ManagedCodexDeepSeekRuntime implements AgentRuntime {
       codexHome: join(managedHome, "projects", key),
       inboundRoot: join(dataRoot, "inbound", "feishu"),
     };
+  }
+
+  #extensionThreadIdForSlot(
+    threadId: string | undefined,
+    slotKey: string,
+  ): string | undefined {
+    if (!threadId) return undefined;
+    if (this.#threadRuntimeKeys.get(threadId) === slotKey) return threadId;
+    process.stderr.write(
+      `agent.stack.extensions.thread_scope=runtime-config:${slotKey}\n`,
+    );
+    return undefined;
   }
 
   #runtimeForThread(threadId: string): AgentRuntime {

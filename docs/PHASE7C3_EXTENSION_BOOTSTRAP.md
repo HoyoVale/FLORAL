@@ -100,7 +100,7 @@ Mutation handling returns to the dynamic tool first and schedules the reload asy
 
 ## Runtime verification
 
-`mcpServerStatus/list` is the authority for MCP readiness.
+`mcpServerStatus/list` is the authority for MCP readiness. FLORAL omits the optional `detail` field for pinned Codex 0.146.1 compatibility; the server default is sufficient for tool/auth inspection. Extension status commands route by Project `cwd`, and only pass a persisted `threadId` after the managed runtime has confirmed that the thread belongs to that Project runtime. This keeps post-restart `/apps` and `/mcp` probes out of the global CODEX_HOME.
 
 FLORAL does not claim an MCP capability is usable merely because it is present in registry/config. A usable runtime must report:
 

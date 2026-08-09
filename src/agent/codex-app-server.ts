@@ -832,7 +832,6 @@ export class CodexAppServerRuntime implements AgentRuntime {
         {
           cursor,
           limit: 100,
-          detail: "toolsAndAuthOnly",
           ...(input.threadId ? { threadId: input.threadId } : {}),
         },
       );

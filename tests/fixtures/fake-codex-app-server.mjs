@@ -310,6 +310,13 @@ lines.on("line", (line) => {
   }
 
   if (message.method === "mcpServerStatus/list") {
+    if (message.params?.detail !== undefined) {
+      send({
+        id: message.id,
+        error: { code: -32602, message: "unsupported MCP detail value" },
+      });
+      return;
+    }
     send({
       id: message.id,
       result: {

@@ -73,7 +73,7 @@ describe("configuration inventory", () => {
   it("validates catalog shape and extraction helpers", async () => {
     const catalog = await loadUpstreamConfigCatalog(repositoryRoot);
     expect(catalog.schemaVersion).toBe(1);
-    expect(Object.keys(catalog.environmentKeyPolicies)).toHaveLength(70);
+    expect(Object.keys(catalog.environmentKeyPolicies)).toHaveLength(71);
     expect(catalog.classifications).toEqual([
       "floral-owned",
       "upstream-managed",
