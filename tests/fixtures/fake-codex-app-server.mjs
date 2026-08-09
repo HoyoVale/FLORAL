@@ -86,6 +86,22 @@ lines.on("line", (line) => {
     return;
   }
 
+  if (message.method === "permissionProfile/list") {
+    if (message.params?.cwd !== undefined
+      && (typeof message.params.cwd !== "string" || !isAbsolute(message.params.cwd))) {
+      send({ id: message.id, error: { code: -32602, message: "permission profile cwd must be absolute" } });
+      return;
+    }
+    const data = scenario === "permission-profile-missing"
+      ? [{ id: ":read-only", description: "Read only", allowed: true }]
+      : [
+          { id: ":read-only", description: "Read only", allowed: true },
+          { id: "floral-project", description: "FLORAL project isolation", allowed: true },
+        ];
+    send({ id: message.id, result: { data, nextCursor: null } });
+    return;
+  }
+
   if (message.method === "skills/extraRoots/set") {
     const roots = message.params?.extraRoots;
     if (
@@ -237,6 +253,27 @@ lines.on("line", (line) => {
   }
 
   if (message.method === "turn/start") {
+    if (scenario === "project-permissions") {
+      if (message.params?.permissions !== "floral-project") {
+        send({ id: message.id, error: { code: -32602, message: "missing project permission profile" } });
+        return;
+      }
+      if (message.params?.sandboxPolicy !== undefined) {
+        send({ id: message.id, error: { code: -32602, message: "permissions cannot be combined with sandboxPolicy" } });
+        return;
+      }
+      const roots = message.params?.runtimeWorkspaceRoots;
+      if (
+        typeof message.params?.cwd !== "string"
+        || !isAbsolute(message.params.cwd)
+        || !Array.isArray(roots)
+        || roots.length !== 1
+        || roots[0] !== message.params.cwd
+      ) {
+        send({ id: message.id, error: { code: -32602, message: "project runtimeWorkspaceRoots must equal cwd" } });
+        return;
+      }
+    }
     if (scenario === "on-request-file-approval" && message.params?.approvalPolicy !== "untrusted") {
       send({
         id: message.id,

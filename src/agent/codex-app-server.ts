@@ -45,6 +45,14 @@ interface TurnResponse {
   turn: { id: string; status?: string };
 }
 
+interface PermissionProfileListResponse {
+  data?: Array<{
+    id?: unknown;
+    description?: unknown;
+    allowed?: unknown;
+  }> | undefined;
+}
+
 interface SkillsListResponse {
   data?: Array<{
     cwd?: unknown;
@@ -116,6 +124,8 @@ export interface CodexAppServerOptions {
   processCwd?: string | undefined;
   processEnv?: NodeJS.ProcessEnv | undefined;
   skillRoots?: string[] | undefined;
+  permissionProfile?: string | undefined;
+  permissionProfileCwd?: string | undefined;
 }
 
 interface TurnTerminalState {
@@ -220,6 +230,8 @@ export class CodexAppServerRuntime implements AgentRuntime {
   readonly #approvalsReviewer: "user" | "auto_review";
   readonly #developerInstructions: string;
   readonly #skillRoots: string[];
+  readonly #permissionProfile: string | undefined;
+  readonly #permissionProfileCwd: string | undefined;
   readonly #loadedThreads = new Set<string>();
   readonly #activeTurns = new Map<string, string>();
   readonly #eventHandlers = new Map<string, (event: AgentEvent) => void>();
@@ -251,6 +263,10 @@ export class CodexAppServerRuntime implements AgentRuntime {
         .filter(Boolean)
         .map((root) => resolve(root)),
     )];
+    this.#permissionProfile = options.permissionProfile?.trim() || undefined;
+    this.#permissionProfileCwd = options.permissionProfileCwd?.trim()
+      ? resolve(options.permissionProfileCwd)
+      : undefined;
     this.#client.on("serverRequest", (request: CodexServerRequest) => {
       void this.#handleServerRequest(request).catch(() => {
         this.#respondSafely(request.id, undefined, {
@@ -274,6 +290,9 @@ export class CodexAppServerRuntime implements AgentRuntime {
         },
         { experimentalApi: true },
       );
+      if (this.#permissionProfile) {
+        await this.#assertPermissionProfileAvailable();
+      }
       if (this.#skillRoots.length > 0) {
         await this.#client.request("skills/extraRoots/set", {
           extraRoots: this.#skillRoots,
@@ -287,6 +306,34 @@ export class CodexAppServerRuntime implements AgentRuntime {
       await this.#client.stop();
       throw error;
     }
+  }
+
+  async #assertPermissionProfileAvailable(): Promise<void> {
+    const profile = this.#permissionProfile;
+    if (!profile) return;
+    const response = await this.#client.request<PermissionProfileListResponse>(
+      "permissionProfile/list",
+      {
+        cursor: null,
+        limit: 100,
+        ...(this.#permissionProfileCwd ? { cwd: this.#permissionProfileCwd } : {}),
+      },
+    );
+    const entries = Array.isArray(response?.data) ? response.data : [];
+    const selected = entries.find((entry) =>
+      typeof entry?.id === "string" && entry.id === profile
+    );
+    if (!selected) {
+      throw codexProtocolError(
+        `Codex permission profile is not available: ${profile}`,
+      );
+    }
+    if (selected.allowed !== true) {
+      throw codexProtocolError(
+        `Codex permission profile is blocked by effective requirements: ${profile}`,
+      );
+    }
+    process.stderr.write(`agent.stack.permissions.profile=${profile}\n`);
   }
 
   async listSkills(input: {
@@ -573,11 +620,16 @@ export class CodexAppServerRuntime implements AgentRuntime {
           request.approvalPolicy ?? this.#approvalPolicy,
         ),
         approvalsReviewer: request.approvalsReviewer ?? this.#approvalsReviewer,
-        sandboxPolicy: buildTurnSandboxPolicy(
+      };
+      if (this.#permissionProfile) {
+        turnParams.permissions = this.#permissionProfile;
+        turnParams.runtimeWorkspaceRoots = [cwd];
+      } else {
+        turnParams.sandboxPolicy = buildTurnSandboxPolicy(
           request.sandboxMode ?? this.#sandboxMode,
           cwd,
-        ),
-      };
+        );
+      }
       const model = request.model ?? this.#defaultModel;
       if (model) turnParams.model = model;
 

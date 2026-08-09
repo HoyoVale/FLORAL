@@ -75,6 +75,8 @@ interface ProjectRuntimeScope {
   inboundRoot: string;
 }
 
+const FLORAL_PROJECT_PERMISSION_PROFILE = "floral-project";
+
 export interface ManagedCodexDeepSeekDependencies {
   createToken?: (() => string) | undefined;
   checkSearch?: (() => Promise<SearchEndpoint>) | undefined;
@@ -94,6 +96,8 @@ export interface ManagedCodexDeepSeekDependencies {
     sandboxMode: "read-only" | "workspace-write";
     approvalsReviewer: "user";
     skillRoots: string[];
+    permissionProfile?: string | undefined;
+    permissionProfileCwd?: string | undefined;
   }) => AgentRuntime) | undefined;
   prepareCodexConfig?: ((options: {
     legacyConfig: string;
@@ -442,24 +446,34 @@ export class ManagedCodexDeepSeekRuntime implements AgentRuntime {
       ?? createPersistentCodexWorkspace(codexHome, config, options));
   }
 
-  #createRuntime(codexHome: string, bridgeToken: string): AgentRuntime {
+  #createRuntime(
+    codexHome: string,
+    bridgeToken: string,
+    permissionScope?: {
+      profile: string;
+      cwd: string;
+    },
+  ): AgentRuntime {
     const approvalPolicy = this.options.codexTurnApprovalPolicy ?? "never";
     const sandboxMode = this.options.codexSandboxMode ?? "read-only";
     const approvalsReviewer = this.options.codexApprovalsReviewer ?? "user";
     const skillRoots = [resolve(process.cwd(), "skills")];
-    return this.dependencies.createRuntime?.({
+    const runtimeOptions = {
       codexHome,
       bridgeToken,
       approvalPolicy,
       sandboxMode,
       approvalsReviewer,
       skillRoots,
-    }) ?? createCodexRuntime(this.env, codexHome, bridgeToken, {
-      approvalPolicy,
-      sandboxMode,
-      approvalsReviewer,
-      skillRoots,
-    });
+      ...(permissionScope
+        ? {
+            permissionProfile: permissionScope.profile,
+            permissionProfileCwd: permissionScope.cwd,
+          }
+        : {}),
+    };
+    return this.dependencies.createRuntime?.(runtimeOptions)
+      ?? createCodexRuntime(this.env, codexHome, bridgeToken, runtimeOptions);
   }
 
   async #recordMcpRegistryAdoption(
@@ -587,7 +601,7 @@ export class ManagedCodexDeepSeekRuntime implements AgentRuntime {
     const scopedConfig = scopeCodexConfigForProject(
       config,
       resolve(process.cwd(), this.env.DATA_DIR, "inbound", "feishu"),
-      scope.inboundRoot,
+      scope,
     );
     const workspace = await this.#createWorkspace(
       scopedConfig,
@@ -595,7 +609,10 @@ export class ManagedCodexDeepSeekRuntime implements AgentRuntime {
       undefined,
       modelCatalog,
     );
-    const runtime = this.#createRuntime(workspace.codexHome, token);
+    const runtime = this.#createRuntime(workspace.codexHome, token, {
+      profile: FLORAL_PROJECT_PERMISSION_PROFILE,
+      cwd: scope.projectPath,
+    });
     try {
       await runtime.start();
     } catch (error) {
@@ -668,14 +685,41 @@ async function resolveConfiguredWorkspaceRoot(
 function scopeCodexConfigForProject(
   config: string,
   globalInboundRoot: string,
-  projectInboundRoot: string,
+  scope: ProjectRuntimeScope,
 ): string {
   const globalAssignment =
     `FLORAL_VISION_INBOUND_ROOT = ${JSON.stringify(globalInboundRoot)}`;
-  if (!config.includes(globalAssignment)) return config;
   const projectAssignment =
-    `FLORAL_VISION_INBOUND_ROOT = ${JSON.stringify(projectInboundRoot)}`;
-  return config.replace(globalAssignment, projectAssignment);
+    `FLORAL_VISION_INBOUND_ROOT = ${JSON.stringify(scope.inboundRoot)}`;
+  const visionScoped = config.includes(globalAssignment)
+    ? config.replace(globalAssignment, projectAssignment)
+    : config;
+
+  const profileHeader = `[permissions.${FLORAL_PROJECT_PERMISSION_PROFILE}]`;
+  if (visionScoped.includes(profileHeader)) {
+    throw new Error("Project Codex config already defines the FLORAL permission profile");
+  }
+
+  return `${visionScoped.trimEnd()}\n\n${renderProjectPermissionProfile(scope)}\n`;
+}
+
+function renderProjectPermissionProfile(scope: ProjectRuntimeScope): string {
+  const sharedSkillRoot = resolve(process.cwd(), "skills");
+  return [
+    `[permissions.${FLORAL_PROJECT_PERMISSION_PROFILE}]`,
+    'description = "FLORAL project-isolated filesystem profile"',
+    "",
+    `[permissions.${FLORAL_PROJECT_PERMISSION_PROFILE}.filesystem]`,
+    '":minimal" = "read"',
+    `${JSON.stringify(sharedSkillRoot)} = "read"`,
+    `${JSON.stringify(scope.inboundRoot)} = "read"`,
+    "",
+    `[permissions.${FLORAL_PROJECT_PERMISSION_PROFILE}.filesystem.":workspace_roots"]`,
+    '"." = "write"',
+    "",
+    `[permissions.${FLORAL_PROJECT_PERMISSION_PROFILE}.network]`,
+    "enabled = false",
+  ].join("\n");
 }
 
 export async function createPersistentCodexWorkspace(
@@ -774,6 +818,8 @@ function createCodexRuntime(
     sandboxMode: "read-only" | "workspace-write";
     approvalsReviewer: "user";
     skillRoots: string[];
+    permissionProfile?: string | undefined;
+    permissionProfileCwd?: string | undefined;
   },
 ): AgentRuntime {
   const processEnv: NodeJS.ProcessEnv = {
@@ -797,6 +843,8 @@ function createCodexRuntime(
     approvalsReviewer: execution.approvalsReviewer,
     processCwd: env.CODEX_CWD,
     skillRoots: execution.skillRoots,
+    permissionProfile: execution.permissionProfile,
+    permissionProfileCwd: execution.permissionProfileCwd,
     processEnv,
   });
 }

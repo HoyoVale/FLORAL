@@ -1,6 +1,6 @@
-import { mkdtemp, mkdir, readFile, rm, stat, writeFile } from "node:fs/promises";
+import { mkdtemp, mkdir, readFile, realpath, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 import { describe, expect, it } from "vitest";
 import {
   ManagedCodexDeepSeekRuntime,
@@ -192,6 +192,10 @@ describe("ManagedCodexDeepSeekRuntime", () => {
 
     const bridgeCalls: string[] = [];
     const runtimeByHome = new Map<string, FakeRuntime>();
+    const runtimeOptionsByHome = new Map<string, {
+      permissionProfile?: string | undefined;
+      permissionProfileCwd?: string | undefined;
+    }>();
     const workspaceConfigs = new Map<string, string>();
     const managed = new ManagedCodexDeepSeekRuntime(loadEnv({
       DEEPSEEK_API_KEY: "secret",
@@ -222,9 +226,13 @@ describe("ManagedCodexDeepSeekRuntime", () => {
           cleanup: async () => undefined,
         };
       },
-      createRuntime: ({ codexHome }) => {
+      createRuntime: ({ codexHome, permissionProfile, permissionProfileCwd }) => {
         const runtime = new FakeRuntime();
         runtimeByHome.set(codexHome, runtime);
+        runtimeOptionsByHome.set(codexHome, {
+          permissionProfile,
+          permissionProfileCwd,
+        });
         return runtime;
       },
     });
@@ -235,8 +243,10 @@ describe("ManagedCodexDeepSeekRuntime", () => {
       await managed.run({ text: "alpha two", cwd: projectA });
       await managed.run({ text: "beta", cwd: projectB });
 
-      const alphaKey = projectRuntimeNamespace(projectA);
-      const betaKey = projectRuntimeNamespace(projectB);
+      const canonicalProjectA = await realpath(projectA);
+      const canonicalProjectB = await realpath(projectB);
+      const alphaKey = projectRuntimeNamespace(canonicalProjectA);
+      const betaKey = projectRuntimeNamespace(canonicalProjectB);
       const alphaHome = join(managedHome, "projects", alphaKey);
       const betaHome = join(managedHome, "projects", betaKey);
 
@@ -249,6 +259,26 @@ describe("ManagedCodexDeepSeekRuntime", () => {
       expect(runtimeByHome.get(alphaHome)?.starts).toBe(1);
       expect(runtimeByHome.get(betaHome)?.starts).toBe(1);
       expect(bridgeCalls).toEqual(["start"]);
+      expect(runtimeOptionsByHome.get(managedHome)?.permissionProfile).toBeUndefined();
+      expect(runtimeOptionsByHome.get(alphaHome)).toEqual({
+        permissionProfile: "floral-project",
+        permissionProfileCwd: canonicalProjectA,
+      });
+      expect(runtimeOptionsByHome.get(betaHome)).toEqual({
+        permissionProfile: "floral-project",
+        permissionProfileCwd: canonicalProjectB,
+      });
+
+      expect(workspaceConfigs.get(alphaHome)).toContain(
+        '[permissions.floral-project.filesystem.":workspace_roots"]',
+      );
+      expect(workspaceConfigs.get(alphaHome)).toContain('"." = "write"');
+      expect(workspaceConfigs.get(alphaHome)).toContain(
+        `${JSON.stringify(resolve(process.cwd(), "skills"))} = "read"`,
+      );
+      expect(workspaceConfigs.get(alphaHome)).toContain(
+        `${JSON.stringify(join(dataDir, "projects", alphaKey, "inbound", "feishu"))} = "read"`,
+      );
 
       expect(workspaceConfigs.get(alphaHome)).toContain(
         `FLORAL_VISION_INBOUND_ROOT = ${JSON.stringify(join(dataDir, "projects", alphaKey, "inbound", "feishu"))}`,

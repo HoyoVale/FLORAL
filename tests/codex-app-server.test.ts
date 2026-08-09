@@ -14,6 +14,8 @@ function createRuntime(
     sandboxMode?: "read-only" | "workspace-write";
     approvalsReviewer?: "user" | "auto_review";
     skillRoots?: string[];
+    permissionProfile?: string;
+    permissionProfileCwd?: string;
   } = {},
 ): CodexAppServerRuntime {
   return new CodexAppServerRuntime({
@@ -78,6 +80,34 @@ describe("CodexAppServerRuntime", () => {
         cwd: process.cwd(),
       });
       expect(result.finalText).toBe("authoritative final");
+    } finally {
+      await runtime.stop();
+    }
+  });
+
+  it("selects a Codex-native project permission profile instead of legacy sandboxPolicy", async () => {
+    const runtime = createRuntime("project-permissions", 5_000, {
+      approvalPolicy: "on-request",
+      sandboxMode: "workspace-write",
+      permissionProfile: "floral-project",
+      permissionProfileCwd: process.cwd(),
+    });
+    try {
+      await runtime.start();
+      const result = await runtime.run({ text: "read project only", cwd: process.cwd() });
+      expect(result.finalText).toBe("authoritative final");
+    } finally {
+      await runtime.stop();
+    }
+  });
+
+  it("fails closed when the configured Codex permission profile is unavailable", async () => {
+    const runtime = createRuntime("permission-profile-missing", 5_000, {
+      permissionProfile: "floral-project",
+      permissionProfileCwd: process.cwd(),
+    });
+    try {
+      await expect(runtime.start()).rejects.toThrow(/permission profile is not available/u);
     } finally {
       await runtime.stop();
     }
