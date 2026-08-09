@@ -41,6 +41,7 @@ import type {
 } from "../policy/artifact-egress-policy.js";
 import {
   formatAgentApps,
+  formatAgentMcpServers,
   formatAgentSkills,
   formatGatewayStatus,
   formatNativePluginStatus,
@@ -485,7 +486,8 @@ export class GatewayService {
             eventType: "command.apps",
             payload: {
               count: apps.length,
-              callableCount: apps.filter((app) => app.callable).length,
+              callableCount: apps.filter((app) => app.callable === true).length,
+              callableUnknownCount: apps.filter((app) => app.callable === undefined).length,
             },
           });
           await this.#send(
@@ -502,6 +504,51 @@ export class GatewayService {
           await this.#send(
             message.identity.conversationId,
             "Codex App 状态读取失败；当前 Codex App Server 版本可能不支持该接口，请检查服务日志。",
+          );
+        }
+        return;
+      }
+
+      case "mcp": {
+        const projectContext = await this.#resolveSelectedProjectContext(
+          resolved.conversationId,
+        );
+        const cwd = projectContext?.project.path ?? this.options.cwd;
+        if (!supportsAgentExtensionDiscovery(this.agent)) {
+          await this.#send(
+            message.identity.conversationId,
+            "当前 Agent Runtime 不支持 Codex MCP 状态发现。",
+          );
+          return;
+        }
+        try {
+          const servers = await this.agent.listMcpServers({
+            cwd,
+            ...(projectContext?.threadId ? { threadId: projectContext.threadId } : {}),
+          });
+          await this.store.appendAudit({
+            userId: resolved.userId,
+            conversationId: resolved.conversationId,
+            eventType: "command.mcp",
+            payload: {
+              count: servers.length,
+              readyCount: servers.filter((server) => server.status === "ready").length,
+            },
+          });
+          await this.#send(
+            message.identity.conversationId,
+            formatAgentMcpServers(servers),
+          );
+        } catch (error) {
+          await this.store.appendAudit({
+            userId: resolved.userId,
+            conversationId: resolved.conversationId,
+            eventType: "command.mcp_failed",
+            payload: { errorType: error instanceof Error ? error.name : "Error" },
+          });
+          await this.#send(
+            message.identity.conversationId,
+            "Codex MCP 状态读取失败，请检查 App Server 版本与服务日志。",
           );
         }
         return;
@@ -1570,7 +1617,21 @@ export class GatewayService {
             },
           } : {}),
           ...(this.#approvalBroker ? {
+            mcpToolApprovalHandler: async (request) =>
+              await this.#requestRemoteApproval(
+                message.identity.conversationId,
+                resolved,
+                active,
+                request,
+              ),
             skillManagementApprovalHandler: async (request) =>
+              await this.#requestRemoteApproval(
+                message.identity.conversationId,
+                resolved,
+                active,
+                request,
+              ),
+            extensionManagementApprovalHandler: async (request) =>
               await this.#requestRemoteApproval(
                 message.identity.conversationId,
                 resolved,

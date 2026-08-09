@@ -131,6 +131,11 @@ describe("configuration federation authority", () => {
     expect(authority.effective.feishu.presentation.visible_activity_delay_ms).toBe(7_000);
     expect(authority.effective.secrets.feishu_app_id.present).toBe(true);
     expect(authority.effective.secrets.feishu_app_secret.present).toBe(true);
+    expect(authority.effective.secrets.github_pat_token).toEqual({
+      kind: "environment",
+      name: "GITHUB_PAT_TOKEN",
+      present: false,
+    });
     const rendered = renderConfigurationAuthority(authority);
     expect(rendered).toContain("config.chat_transport=feishu");
     expect(rendered).toContain("config.secret.feishu_app_secret=present");

@@ -1,5 +1,9 @@
 import type { Capability, GatewayRole } from "../core/types.js";
 import type { McpRuntimeRegistry } from "../config/mcp/mcp-runtime-registry.js";
+import {
+  externalMcpCapabilityForTool,
+  isCuratedExternalMcpServer,
+} from "../extensions/external-mcp-registry.js";
 import { approvalLevelFor, type ApprovalLevel } from "./approval.js";
 import { roleAllows } from "./permissions.js";
 
@@ -10,6 +14,7 @@ export type AuthorizationSource =
   | "codex-permission-profile"
   | "mcp-tool"
   | "floral-skill"
+  | "floral-extension"
   | "floral";
 
 export interface AuthorizationRequest {
@@ -95,6 +100,12 @@ export class AuthorizationAuthority {
       && request.capability === "codex.permission.grant";
     const scopedFloralSkillSupplyChainGrant = request.source === "floral-skill"
       && request.capability === "software.install";
+    const scopedFloralExtensionSupplyChainGrant = request.source === "floral-extension"
+      && request.capability === "software.install";
+    const scopedExternalBrowserGrant = request.source === "mcp-tool"
+      && request.capability === "browser.submit"
+      && Boolean(request.mcpServerId)
+      && isCuratedExternalMcpServer(request.mcpServerId!);
 
     if (
       !sandboxAllows(this.options.sandboxMode, request.capability)
@@ -102,6 +113,8 @@ export class AuthorizationAuthority {
       && !scopedPeekabooClickGrant
       && !scopedCodexPermissionGrant
       && !scopedFloralSkillSupplyChainGrant
+      && !scopedFloralExtensionSupplyChainGrant
+      && !scopedExternalBrowserGrant
     ) {
       return {
         status: "deny",
@@ -140,8 +153,14 @@ export class AuthorizationAuthority {
       && candidate.enabled
       && candidate.integrationStatus === "active"
     );
-    if (!server) return false;
-    return server.tools.some((tool) => tool.enabled && tool.name === toolName);
+    if (server) {
+      return server.tools.some((tool) => tool.enabled && tool.name === toolName);
+    }
+    // External MCP servers are only materialized from FLORAL's curated,
+    // machine-local registry. The request can only exist after Codex loaded
+    // one of those exact server ids from the managed config overlay.
+    return isCuratedExternalMcpServer(serverId)
+      && externalMcpCapabilityForTool(serverId, toolName) !== undefined;
   }
 }
 
@@ -161,7 +180,7 @@ export function capabilityForMcpTool(
   if (serverId === "floral_peekaboo" && (toolName === "image" || toolName === "see")) {
     return "screen.capture";
   }
-  return undefined;
+  return externalMcpCapabilityForTool(serverId, toolName);
 }
 
 export function validateMcpCapabilityCoverage(registry: McpRuntimeRegistry): void {

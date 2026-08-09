@@ -24,6 +24,7 @@ export interface ConfigurationProvenance {
 export type SecretId =
   | "deepseek_api_key"
   | "mimo_api_key"
+  | "github_pat_token"
   | "qq_app_id"
   | "qq_app_secret"
   | "feishu_app_id"
@@ -71,6 +72,7 @@ interface EnvironmentBinding {
 export const SECRET_ENVIRONMENT_REFERENCES: Record<SecretId, string> = {
   deepseek_api_key: "DEEPSEEK_API_KEY",
   mimo_api_key: "MIMO_API_KEY",
+  github_pat_token: "GITHUB_PAT_TOKEN",
   qq_app_id: "QQBOT_APP_ID",
   qq_app_secret: "QQBOT_APP_SECRET",
   feishu_app_id: "FEISHU_APP_ID",

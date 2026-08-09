@@ -24,7 +24,8 @@ export type AgentApprovalKind =
   | "permission-request"
   | "permission-profile"
   | "mcp-tool"
-  | "skill-management";
+  | "skill-management"
+  | "extension-management";
 
 export type AgentApprovalDecision = "approve" | "approve-session" | "deny";
 export type AgentLocalApprovalDecision = Exclude<AgentApprovalDecision, "approve-session">;
@@ -172,7 +173,9 @@ export interface AgentRunRequest {
   sandboxMode?: "read-only" | "workspace-write" | "danger-full-access";
   approvalsReviewer?: "user" | "auto_review";
   approvalHandler?: AgentApprovalHandler;
+  mcpToolApprovalHandler?: AgentApprovalHandler;
   skillManagementApprovalHandler?: AgentApprovalHandler;
+  extensionManagementApprovalHandler?: AgentApprovalHandler;
   artifactRegistrationHandler?: AgentArtifactRegistrationHandler;
   artifactDeliveryHandler?: AgentArtifactDeliveryHandler;
 }

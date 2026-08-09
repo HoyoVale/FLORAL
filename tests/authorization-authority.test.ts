@@ -162,6 +162,44 @@ describe("AuthorizationAuthority", () => {
     });
   });
 
+  it("requires owner chat approval for curated External MCP supply-chain changes", () => {
+    expect(authority("read-only").evaluate({
+      role: "owner",
+      capability: "software.install",
+      source: "floral-extension",
+    })).toEqual({
+      status: "approval-required",
+      approvalLevel: "chat-confirmation",
+      reason: "policy",
+    });
+    expect(authority("read-only").evaluate({
+      role: "operator",
+      capability: "software.install",
+      source: "floral-extension",
+    })).toMatchObject({ status: "deny", reason: "role-capability-denied" });
+  });
+
+  it("routes curated Chrome MCP write approval through browser.submit without broad MCP allowlisting", () => {
+    expect(authority("read-only").evaluate({
+      role: "owner",
+      capability: "browser.submit",
+      source: "mcp-tool",
+      mcpServerId: "chrome-devtools",
+      mcpToolName: "navigate_page",
+    })).toEqual({
+      status: "approval-required",
+      approvalLevel: "chat-confirmation",
+      reason: "policy",
+    });
+    expect(authority("read-only").evaluate({
+      role: "owner",
+      capability: "browser.submit",
+      source: "mcp-tool",
+      mcpServerId: "not-curated",
+      mcpToolName: "navigate_page",
+    })).toMatchObject({ status: "deny", reason: "mcp-tool-not-allowlisted" });
+  });
+
   it("requires local confirmation for system administration", () => {
     expect(authority("danger-full-access").evaluate({
       role: "owner",

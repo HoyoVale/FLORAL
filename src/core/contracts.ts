@@ -132,7 +132,9 @@ export interface AgentAppSummary {
   id: string;
   runtimeName?: string | undefined;
   enabled: boolean;
-  callable: boolean;
+  callable?: boolean | undefined;
+  accessible?: boolean | undefined;
+  source: "installed-runtime" | "directory-fallback";
 }
 
 export interface AgentAppToolSummary {
@@ -164,6 +166,19 @@ export interface AgentNativeFeatureSummary {
   defaultEnabled: boolean;
 }
 
+export interface AgentMcpToolSummary {
+  name: string;
+  readOnly?: boolean | undefined;
+}
+
+export interface AgentMcpServerSummary {
+  name: string;
+  status: "starting" | "ready" | "failed" | "cancelled" | "unknown";
+  authStatus?: string | undefined;
+  failureReason?: string | undefined;
+  tools: AgentMcpToolSummary[];
+}
+
 export interface AgentExtensionDiscoveryRuntime {
   listInstalledApps(input: {
     cwd: string;
@@ -178,6 +193,10 @@ export interface AgentExtensionDiscoveryRuntime {
   listNativeExtensionFeatures(input: {
     cwd: string;
   }): Promise<AgentNativeFeatureSummary[]>;
+  listMcpServers(input: {
+    cwd: string;
+    threadId?: string | undefined;
+  }): Promise<AgentMcpServerSummary[]>;
 }
 
 export function supportsAgentExtensionDiscovery(
@@ -186,7 +205,20 @@ export function supportsAgentExtensionDiscovery(
   const candidate = runtime as Partial<AgentExtensionDiscoveryRuntime>;
   return typeof candidate.listInstalledApps === "function"
     && typeof candidate.readApps === "function"
-    && typeof candidate.listNativeExtensionFeatures === "function";
+    && typeof candidate.listNativeExtensionFeatures === "function"
+    && typeof candidate.listMcpServers === "function";
+}
+
+export interface AgentExtensionControlRuntime extends AgentExtensionDiscoveryRuntime {
+  reloadMcpServers(): Promise<void>;
+}
+
+export function supportsAgentExtensionControl(
+  runtime: AgentRuntime,
+): runtime is AgentRuntime & AgentExtensionControlRuntime {
+  const candidate = runtime as Partial<AgentExtensionControlRuntime>;
+  return supportsAgentExtensionDiscovery(runtime)
+    && typeof candidate.reloadMcpServers === "function";
 }
 
 export interface AgentProjectRuntimeStorage {

@@ -1368,6 +1368,10 @@
       "component": "floral",
       "classification": "floral-owned"
     },
+    "GITHUB_PAT_TOKEN": {
+      "component": "mcp",
+      "classification": "locked"
+    },
     "HOST": {
       "component": "floral",
       "classification": "floral-owned"

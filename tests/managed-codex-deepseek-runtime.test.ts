@@ -19,6 +19,7 @@ import { loadEnv } from "../src/config/env.js";
 import type {
   AgentAppReadResult,
   AgentAppSummary,
+  AgentMcpServerSummary,
   AgentNativeFeatureSummary,
   AgentRuntime,
   AgentSkillSummary,
@@ -32,6 +33,7 @@ class FakeRuntime implements AgentRuntime {
   stops = 0;
   interrupts = 0;
   skillRootUpdates: string[][] = [];
+  mcpReloads = 0;
   async start(): Promise<void> { this.starts += 1; }
   async run(request: AgentRunRequest): Promise<AgentRunResult> {
     return { threadId: request.threadId ?? "thread-1", finalText: "ok" };
@@ -50,7 +52,13 @@ class FakeRuntime implements AgentRuntime {
     this.skillRootUpdates.push([...roots]);
   }
   async listInstalledApps(): Promise<AgentAppSummary[]> {
-    return [{ id: "github", runtimeName: "GitHub", enabled: true, callable: true }];
+    return [{
+      id: "github",
+      runtimeName: "GitHub",
+      enabled: true,
+      callable: true,
+      source: "installed-runtime",
+    }];
   }
   async readApps(): Promise<AgentAppReadResult> {
     return {
@@ -71,6 +79,14 @@ class FakeRuntime implements AgentRuntime {
       defaultEnabled: false,
     }];
   }
+  async listMcpServers(): Promise<AgentMcpServerSummary[]> {
+    return [{
+      name: "floral_search",
+      status: "ready",
+      tools: [{ name: "searxng_web_search", readOnly: true }],
+    }];
+  }
+  async reloadMcpServers(): Promise<void> { this.mcpReloads += 1; }
   async stop(): Promise<void> { this.stops += 1; }
 }
 
@@ -91,6 +107,9 @@ function setup(options: {
   externalSkillRoots?: string[];
   externalSkillRootsAfterMutation?: string[];
   manageExternalSkill?: ManagedCodexDeepSeekDependencies["manageExternalSkill"];
+  readExternalMcpRegistry?: ManagedCodexDeepSeekDependencies["readExternalMcpRegistry"];
+  manageExternalMcp?: ManagedCodexDeepSeekDependencies["manageExternalMcp"];
+  workspaceConfigs?: string[];
 } = {}) {
   const calls: string[] = [];
   const runtime = new FakeRuntime();
@@ -119,8 +138,14 @@ function setup(options: {
     createWorkspace: async (config, codexHome) => {
       calls.push(config.includes("floral_search") ? "workspace.search" : "workspace.missing");
       calls.push(`workspace.home=${codexHome}`);
+      options.workspaceConfigs?.push(config);
       return {
         codexHome: "/tmp/fake-codex",
+        ...(options.workspaceConfigs ? {
+          replaceConfig: async (replacement: string) => {
+            options.workspaceConfigs!.push(replacement);
+          },
+        } : {}),
         cleanup: async () => { calls.push("workspace.cleanup"); },
       };
     },
@@ -153,6 +178,9 @@ function setup(options: {
           return result;
         }
       : undefined,
+    readExternalMcpRegistry: options.readExternalMcpRegistry
+      ?? (async () => ({ version: 1, packages: [] })),
+    manageExternalMcp: options.manageExternalMcp,
   });
   return {
     managed,
@@ -240,6 +268,45 @@ describe("ManagedCodexDeepSeekRuntime", () => {
     await managed.stop();
   });
 
+  it("hot-reloads a curated External MCP overlay through native config reload", async () => {
+    const workspaceConfigs: string[] = [];
+    const { managed, runtime, getCreatedRuntimeOptions } = setup({
+      workspaceConfigs,
+      manageExternalMcp: async (request) => {
+        expect(request).toEqual({ action: "install", id: "chrome-devtools" });
+        return {
+          changed: true,
+          message: "external_mcp.install=ok\nid=chrome-devtools",
+          registry: {
+            version: 1,
+            packages: [{
+              id: "chrome-devtools",
+              enabled: true,
+              installedAt: "2026-08-10T00:00:00.000Z",
+              updatedAt: "2026-08-10T00:00:00.000Z",
+            }],
+          },
+        };
+      },
+    });
+
+    await managed.start();
+    expect(workspaceConfigs[0]).not.toContain("[mcp_servers.chrome-devtools]");
+    const control = getCreatedRuntimeOptions();
+    const result = await control!.manageExternalMcp({
+      action: "install",
+      id: "chrome-devtools",
+    });
+    expect(result.message).toContain("hot_reload=scheduled");
+    await new Promise<void>((resolvePromise) => setImmediate(resolvePromise));
+    await new Promise<void>((resolvePromise) => setImmediate(resolvePromise));
+    expect(workspaceConfigs.at(-1)).toContain("[mcp_servers.chrome-devtools]");
+    expect(workspaceConfigs.at(-1)).toContain("chrome-devtools-mcp@1.6.0");
+    expect(workspaceConfigs.at(-1)).toContain('default_tools_approval_mode = "writes"');
+    expect(runtime.mcpReloads).toBe(1);
+    await managed.stop();
+  });
+
   it("passes the FLORAL turn-scoped approval profile to Codex runtime creation", async () => {
     let observed: { approvalPolicy: string; sandboxMode: string; approvalsReviewer: string } | undefined;
     const runtime = new FakeRuntime();
@@ -313,6 +380,11 @@ describe("ManagedCodexDeepSeekRuntime", () => {
       cwd: process.cwd(),
     })).resolves.toEqual([
       expect.objectContaining({ name: "plugins", stage: "underDevelopment" }),
+    ]);
+    await expect(managed.listMcpServers({
+      cwd: process.cwd(),
+    })).resolves.toEqual([
+      expect.objectContaining({ name: "floral_search", status: "ready" }),
     ]);
     await managed.stop();
   });

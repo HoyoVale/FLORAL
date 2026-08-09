@@ -51,6 +51,9 @@ function hasFloralExtensionTools(params) {
   const names = namespace.tools.map((tool) => tool?.name).sort();
   return JSON.stringify(names) === JSON.stringify([
     "installed_apps",
+    "manage_mcp",
+    "mcp_catalog",
+    "mcp_status",
     "native_status",
     "read_apps",
   ]);
@@ -186,6 +189,13 @@ lines.on("line", (line) => {
             scope: "user",
             enabled: true,
           },
+          {
+            name: "extension-manager",
+            description: "Discover and bootstrap FLORAL extension capabilities safely.",
+            path: `${root}/extension-manager/SKILL.md`,
+            scope: "user",
+            enabled: true,
+          },
           ...(typeof extraSkillRoots[1] === "string"
             ? [{
                 name: "superpowers:brainstorming",
@@ -252,6 +262,13 @@ lines.on("line", (line) => {
   }
 
   if (message.method === "app/installed") {
+    if (scenario === "app-installed-fallback") {
+      send({
+        id: message.id,
+        error: { code: -32601, message: "Method not found: app/installed" },
+      });
+      return;
+    }
     send({
       id: message.id,
       result: {
@@ -274,6 +291,57 @@ lines.on("line", (line) => {
     return;
   }
 
+
+  if (message.method === "app/list") {
+    send({
+      id: message.id,
+      result: {
+        data: [{
+          id: "github",
+          name: "GitHub",
+          description: "GitHub connector directory entry",
+          isAccessible: true,
+          isEnabled: true,
+        }],
+        nextCursor: null,
+      },
+    });
+    return;
+  }
+
+  if (message.method === "mcpServerStatus/list") {
+    send({
+      id: message.id,
+      result: {
+        data: [
+          {
+            name: "github",
+            status: "ready",
+            authStatus: "authenticated",
+            tools: {
+              search_repositories: { annotations: { readOnlyHint: true } },
+            },
+          },
+          {
+            name: "chrome-devtools",
+            status: "ready",
+            authStatus: "not-required",
+            tools: [
+              { name: "navigate_page", annotations: { readOnlyHint: false } },
+              { name: "take_screenshot", annotations: { readOnlyHint: true } },
+            ],
+          },
+        ],
+        nextCursor: null,
+      },
+    });
+    return;
+  }
+
+  if (message.method === "config/mcpServer/reload") {
+    send({ id: message.id, result: {} });
+    return;
+  }
   if (message.method === "app/read") {
     const ids = message.params?.appIds;
     if (!Array.isArray(ids) || ids.length < 1 || ids.length > 100) {
@@ -362,7 +430,10 @@ lines.on("line", (line) => {
       return;
     }
     if (
-      (scenario === "extension-dynamic-tools" || scenario === "extension-installed-apps")
+      (scenario === "extension-dynamic-tools"
+        || scenario === "extension-installed-apps"
+        || scenario === "extension-mcp-status"
+        || scenario === "extension-mcp-install")
       && !hasFloralExtensionTools(message.params)
     ) {
       send({ id: message.id, error: { code: -32602, message: "missing FLORAL extension dynamic tools" } });
@@ -438,6 +509,17 @@ lines.on("line", (line) => {
   }
 
   if (message.method === "turn/start") {
+    if (scenario === "app-mention") {
+      const input = message.params?.input;
+      const mention = Array.isArray(input)
+        ? input.find((item) => item?.type === "mention" && item?.path === "app://github")
+        : undefined;
+      if (!mention || mention?.name !== "GitHub") {
+        send({ id: message.id, error: { code: -32602, message: "missing GitHub App mention" } });
+        return;
+      }
+    }
+
     if (scenario === "project-permissions") {
       if (message.params?.permissions !== "floral-project") {
         send({ id: message.id, error: { code: -32602, message: "missing project permission profile" } });
@@ -810,6 +892,75 @@ lines.on("line", (line) => {
         return;
       }
 
+      if (scenario === "extension-mcp-status") {
+        send({
+          id: "dynamic_1",
+          method: "item/tool/call",
+          params: {
+            threadId: activeThreadId,
+            turnId: activeTurnId,
+            callId: "call_extensions_mcp_status_1",
+            namespace: "floral_extensions",
+            tool: "mcp_status",
+            arguments: {},
+          },
+        });
+        return;
+      }
+
+      if (scenario === "extension-mcp-install") {
+        send({
+          id: "dynamic_1",
+          method: "item/tool/call",
+          params: {
+            threadId: activeThreadId,
+            turnId: activeTurnId,
+            callId: "call_extensions_mcp_install_1",
+            namespace: "floral_extensions",
+            tool: "manage_mcp",
+            arguments: { action: "install", id: "chrome-devtools" },
+          },
+        });
+        return;
+      }
+
+      if (scenario === "external-mcp-approval") {
+        waitingForApproval = true;
+        send({
+          method: "item/started",
+          params: {
+            threadId: activeThreadId,
+            turnId: activeTurnId,
+            item: {
+              id: "mcp_browser_1",
+              type: "mcpToolCall",
+              server: "chrome-devtools",
+              tool: "navigate_page",
+              status: "inProgress",
+              arguments: { url: "https://example.com" },
+            },
+          },
+        });
+        send({
+          id: "approval_1",
+          method: "mcpServer/elicitation/request",
+          params: {
+            threadId: activeThreadId,
+            turnId: activeTurnId,
+            serverName: "chrome-devtools",
+            mode: "form",
+            _meta: {
+              codex_approval_kind: "mcp_tool_call",
+              tool_title: "Navigate page",
+              tool_params: { url: "https://example.com" },
+            },
+            message: "Allow chrome-devtools to navigate?",
+            requestedSchema: { type: "object", properties: {} },
+          },
+        });
+        return;
+      }
+
       if (scenario === "skill-control-disable") {
         send({
           id: "dynamic_1",
@@ -1126,11 +1277,30 @@ lines.on("line", (line) => {
     if (
       scenario === "extension-installed-apps"
       && success === true
-      && text.includes("codex_apps.installed=2")
+      && text.includes("codex_apps.discovered=2")
       && text.includes("id=github")
       && text.includes("callable=true")
     ) {
       sendSuccess(activeThreadId, activeTurnId, "extension apps complete");
+      return;
+    }
+    if (
+      scenario === "extension-mcp-status"
+      && success === true
+      && text.includes("codex_mcp.servers=2")
+      && text.includes("server=github")
+      && text.includes("server=chrome-devtools")
+    ) {
+      sendSuccess(activeThreadId, activeTurnId, "extension mcp status complete");
+      return;
+    }
+    if (
+      scenario === "extension-mcp-install"
+      && success === true
+      && text.includes("external_mcp.install=ok")
+      && text.includes("id=chrome-devtools")
+    ) {
+      sendSuccess(activeThreadId, activeTurnId, "extension mcp install complete");
       return;
     }
     if (
@@ -1223,7 +1393,7 @@ lines.on("line", (line) => {
 
   if (waitingForApproval && message.id === "approval_1" && "result" in message) {
     waitingForApproval = false;
-    if (scenario === "mcp-approval") {
+    if (scenario === "mcp-approval" || scenario === "external-mcp-approval") {
       const action = message.result?.action;
       if (action === "decline") {
         sendSuccess(activeThreadId, activeTurnId, "mcp approval declined safely");

@@ -1,5 +1,6 @@
 import type {
   AgentAppSummary,
+  AgentMcpServerSummary,
   AgentNativeFeatureSummary,
   AgentSkillSummary,
 } from "../core/contracts.js";
@@ -163,22 +164,58 @@ export function formatAgentSkills(skills: AgentSkillSummary[]): string {
 }
 
 export function formatAgentApps(apps: AgentAppSummary[]): string {
+  const callableKnown = apps.filter((app) => app.callable !== undefined);
   const lines = [
     "Codex Apps",
-    `已安装：${String(apps.length)}；可调用：${String(apps.filter((app) => app.callable).length)}`,
+    `发现：${String(apps.length)}；可调用（已知）：${String(callableKnown.filter((app) => app.callable === true).length)}/${String(callableKnown.length)}`,
   ];
   if (apps.length === 0) {
-    lines.push("", "当前 Codex runtime 没有报告已安装 App。 ");
+    lines.push("", "当前 Codex runtime 没有报告可用 App。 ");
     return lines.join("\n").trimEnd();
   }
   lines.push("");
   apps.slice(0, 100).forEach((app, index) => {
     lines.push(
       `${String(index + 1)}. ${app.runtimeName ?? app.id}`,
-      `   id=${app.id} enabled=${String(app.enabled)} callable=${String(app.callable)}`,
+      [
+        `   id=${app.id}`,
+        `enabled=${String(app.enabled)}`,
+        `callable=${app.callable === undefined ? "unknown" : String(app.callable)}`,
+        `source=${app.source}`,
+        ...(app.accessible !== undefined ? [`accessible=${String(app.accessible)}`] : []),
+      ].join(" "),
     );
   });
-  lines.push("", "callable=true 只表示当前配置和策略允许至少一个模型可见工具；是否适合当前任务仍需读取 App 工具摘要。 ");
+  lines.push(
+    "",
+    "source=directory-fallback 表示当前 App Server 不支持 app/installed；此时 callable=unknown，不把目录可见误报成实际可调用。",
+  );
+  return lines.join("\n").trimEnd();
+}
+
+export function formatAgentMcpServers(servers: AgentMcpServerSummary[]): string {
+  const ready = servers.filter((server) => server.status === "ready");
+  const lines = [
+    "Codex MCP",
+    `配置：${String(servers.length)}；ready：${String(ready.length)}`,
+  ];
+  if (servers.length === 0) {
+    lines.push("", "当前 Codex runtime 没有报告 MCP server。 ");
+    return lines.join("\n").trimEnd();
+  }
+  lines.push("");
+  servers.slice(0, 100).forEach((server, index) => {
+    lines.push(
+      `${String(index + 1)}. ${server.name}`,
+      [
+        `   status=${server.status}`,
+        `tools=${String(server.tools.length)}`,
+        ...(server.authStatus ? [`auth=${server.authStatus}`] : []),
+        ...(server.failureReason ? [`failure=${server.failureReason}`] : []),
+      ].join(" "),
+    );
+  });
+  lines.push("", "只有 status=ready 且工具已发现，才能作为当前 runtime 的可用 MCP 证据。 ");
   return lines.join("\n").trimEnd();
 }
 
@@ -197,9 +234,9 @@ export function formatNativePluginStatus(
     line("plugins", plugins),
     line("apps", apps),
     "",
-    "FLORAL 当前只使用生产文档已开放的 App 只读接口（app/installed、app/read）。",
-    "Codex 的 plugin/list、plugin/read、plugin/install、plugin/uninstall 仍被上游标记为 under development；FLORAL 不在生产 Agent 中调用这些接口。",
-    "因此这里报告的是 Plugin 功能开关/成熟度，不把它误报成实际已安装 Plugin 清单。",
+    "Apps：FLORAL 使用 app/installed；本机接口不兼容时回退 app/list，并把 callable 明确标为 unknown。可用 App 可通过原生 app:// mention 调用。",
+    "MCP：FLORAL 使用 mcpServerStatus/list 验证真实启动/工具状态，并通过受控 External MCP Registry + config/mcpServer/reload 管理批准后的 GitHub/Browser MCP。",
+    "Plugins：Codex CLI 的 /plugins 是当前正式安装面；App Server 的 plugin/list/read/install/uninstall 仍被上游标记为 under development，因此 FLORAL 生产 Agent 不调用这些写接口。",
   ].join("\n");
 }
 
@@ -212,8 +249,9 @@ export function gatewayHelpText(): string {
     "/new      开始新会话",
     "/status   查看运行状态",
     "/skills   查看当前 Codex Skill",
-    "/apps     查看当前 Codex 已安装/可调用 App",
+    "/apps     查看当前 Codex App（兼容 app/list fallback）",
     "/plugins  查看 Codex Plugin 功能状态与 FLORAL 接入成熟度",
+    "/mcp      查看当前 Codex MCP server 启动/认证/工具状态",
     "/memory   查看 Codex Native Memory 生命周期",
     "/memory diagnose 只读诊断 Native Memory Phase 2（owner）",
     "/projects 列出 Workspace Root 下的项目",

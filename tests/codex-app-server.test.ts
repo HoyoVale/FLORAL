@@ -22,6 +22,23 @@ function createRuntime(
       id: string;
       ref?: string | undefined;
     }) => Promise<{ changed: boolean; message: string }>;
+    externalMcpCatalog?: () => Promise<string>;
+    manageExternalMcp?: (request: {
+      action: "install" | "enable" | "disable" | "remove";
+      id: "github-readonly" | "chrome-devtools";
+    }) => Promise<{
+      changed: boolean;
+      message: string;
+      registry: {
+        version: 1;
+        packages: Array<{
+          id: "github-readonly" | "chrome-devtools";
+          enabled: boolean;
+          installedAt: string;
+          updatedAt: string;
+        }>;
+      };
+    }>;
     permissionProfile?: string;
     permissionProfileCwd?: string;
   } = {},
@@ -70,6 +87,7 @@ describe("CodexAppServerRuntime", () => {
         "attachment-analysis",
         "macos-ui-operation",
         "skill-manager",
+        "extension-manager",
       ]);
       expect(skills.every((skill) => skill.enabled)).toBe(true);
       expect(skills[0]?.path).toMatch(/system-status[\\/]SKILL\.md$/u);
@@ -276,8 +294,20 @@ describe("CodexAppServerRuntime", () => {
         cwd: process.cwd(),
         forceRefresh: false,
       })).resolves.toEqual([
-        { id: "github", runtimeName: "GitHub", enabled: true, callable: true },
-        { id: "disabled-app", runtimeName: "Disabled App", enabled: false, callable: false },
+        {
+          id: "github",
+          runtimeName: "GitHub",
+          enabled: true,
+          callable: true,
+          source: "installed-runtime",
+        },
+        {
+          id: "disabled-app",
+          runtimeName: "Disabled App",
+          enabled: false,
+          callable: false,
+          source: "installed-runtime",
+        },
       ]);
       await expect(runtime.readApps({
         cwd: process.cwd(),
@@ -315,6 +345,66 @@ describe("CodexAppServerRuntime", () => {
     }
   });
 
+  it("falls back to app/list without inventing callable state when app/installed is unsupported", async () => {
+    const runtime = createRuntime("app-installed-fallback");
+    try {
+      await runtime.start();
+      await expect(runtime.listInstalledApps({
+        cwd: process.cwd(),
+      })).resolves.toEqual([{
+        id: "github",
+        runtimeName: "GitHub",
+        enabled: true,
+        accessible: true,
+        source: "directory-fallback",
+      }]);
+    } finally {
+      await runtime.stop();
+    }
+  });
+
+  it("lists MCP startup/auth/tool state through the native app-server status API", async () => {
+    const runtime = createRuntime("normal");
+    try {
+      await runtime.start();
+      await expect(runtime.listMcpServers({
+        cwd: process.cwd(),
+      })).resolves.toEqual([
+        {
+          name: "github",
+          status: "ready",
+          authStatus: "authenticated",
+          tools: [{ name: "search_repositories", readOnly: true }],
+        },
+        {
+          name: "chrome-devtools",
+          status: "ready",
+          authStatus: "not-required",
+          tools: [
+            { name: "navigate_page", readOnly: false },
+            { name: "take_screenshot", readOnly: true },
+          ],
+        },
+      ]);
+    } finally {
+      await runtime.stop();
+    }
+  });
+
+  it("injects a Codex App mention for an explicit accessible $app token", async () => {
+    const runtime = createRuntime("app-mention");
+    try {
+      await runtime.start();
+      const result = await runtime.run({
+        text: "$github inspect this repository",
+        cwd: process.cwd(),
+      });
+      expect(result.finalText).toBe("authoritative final");
+    } finally {
+      await runtime.stop();
+    }
+  });
+
   it("exposes read-only FLORAL extension discovery as client-hosted dynamic tools", async () => {
     const runtime = createRuntime("extension-installed-apps");
     try {
@@ -324,6 +414,70 @@ describe("CodexAppServerRuntime", () => {
         cwd: process.cwd(),
       });
       expect(result.finalText).toBe("extension apps complete");
+    } finally {
+      await runtime.stop();
+    }
+  });
+
+  it("exposes per-turn MCP status through floral_extensions without nested RPC", async () => {
+    const runtime = createRuntime("extension-mcp-status");
+    try {
+      await runtime.start();
+      const result = await runtime.run({
+        text: "Check MCP status.",
+        cwd: process.cwd(),
+      });
+      expect(result.finalText).toBe("extension mcp status complete");
+    } finally {
+      await runtime.stop();
+    }
+  });
+
+  it("requires one-shot approval before Agent-managed shared MCP installation", async () => {
+    let approvals = 0;
+    let mutations = 0;
+    const runtime = createRuntime("extension-mcp-install", 5_000, {
+      externalMcpCatalog: async () =>
+        "external_mcp_catalog.count=2\nid=chrome-devtools installed=false",
+      manageExternalMcp: async (request) => {
+        mutations += 1;
+        expect(request).toEqual({
+          action: "install",
+          id: "chrome-devtools",
+        });
+        return {
+          changed: true,
+          message: "external_mcp.install=ok\nid=chrome-devtools",
+          registry: {
+            version: 1,
+            packages: [{
+              id: "chrome-devtools",
+              enabled: true,
+              installedAt: "2026-08-10T00:00:00.000Z",
+              updatedAt: "2026-08-10T00:00:00.000Z",
+            }],
+          },
+        };
+      },
+    });
+    try {
+      await runtime.start();
+      const result = await runtime.run({
+        text: "Install the curated Chrome MCP.",
+        cwd: process.cwd(),
+        extensionManagementApprovalHandler: async (request) => {
+          approvals += 1;
+          expect(request).toMatchObject({
+            kind: "extension-management",
+            capability: "software.install",
+            source: "floral",
+          });
+          return "approve";
+        },
+      });
+      expect(result.finalText).toBe("extension mcp install complete");
+      expect(approvals).toBe(1);
+      expect(mutations).toBe(1);
     } finally {
       await runtime.stop();
     }
@@ -683,6 +837,31 @@ describe("CodexAppServerRuntime", () => {
         capability: "application.control",
         kind: "mcp-tool",
       }));
+    } finally {
+      await runtime.stop();
+    }
+  });
+
+  it("routes curated Chrome MCP write approval through the dedicated MCP handler", async () => {
+    const runtime = createRuntime("external-mcp-approval");
+    try {
+      await runtime.start();
+      const result = await runtime.run({
+        text: "Navigate the browser.",
+        cwd: process.cwd(),
+        mcpToolApprovalHandler: async (request) => {
+          expect(request).toMatchObject({
+            kind: "mcp-tool",
+            capability: "browser.submit",
+            source: "mcp",
+            mcpServerId: "chrome-devtools",
+            mcpToolName: "navigate_page",
+          });
+          expect(request.summary).toContain("https://example.com");
+          return "approve";
+        },
+      });
+      expect(result.finalText).toBe("mcp approval accepted safely");
     } finally {
       await runtime.stop();
     }

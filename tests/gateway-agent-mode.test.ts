@@ -160,6 +160,10 @@ describe("Gateway Codex-native execution mode", () => {
       expect(runtime.requests[0]?.skillManagementApprovalHandler).toBeTypeOf(
         "function",
       );
+      expect(runtime.requests[0]?.extensionManagementApprovalHandler).toBeTypeOf(
+        "function",
+      );
+      expect(runtime.requests[0]?.mcpToolApprovalHandler).toBeTypeOf("function");
 
       await transport.emit("/status --debug", "status-1");
       expect(transport.sent.at(-1)?.text).toContain("mode=auto");

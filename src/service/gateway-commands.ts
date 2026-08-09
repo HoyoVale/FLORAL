@@ -8,6 +8,7 @@ export type GatewayCommand =
   | { type: "skills" }
   | { type: "plugins" }
   | { type: "apps" }
+  | { type: "mcp" }
   | { type: "stop" }
   | { type: "mode"; value: string | undefined }
   | { type: "projects" }
@@ -42,6 +43,7 @@ export function parseGatewayCommand(text: string): GatewayCommand | undefined {
   if (/^\/skills$/i.test(trimmed)) return { type: "skills" };
   if (/^\/plugins$/i.test(trimmed)) return { type: "plugins" };
   if (/^\/apps$/i.test(trimmed)) return { type: "apps" };
+  if (/^\/mcp$/i.test(trimmed)) return { type: "mcp" };
   if (/^\/memory(?:\s+status)?$/i.test(trimmed)) return { type: "native-memory-status" };
   if (/^\/memory\s+diagnose$/i.test(trimmed)) return { type: "native-memory-diagnose" };
   if (/^\/stop$/i.test(trimmed)) return { type: "stop" };

@@ -2,6 +2,7 @@ import { isAbsolute, relative, resolve, sep } from "node:path";
 import type {
   AgentAppReadResult,
   AgentAppSummary,
+  AgentMcpServerSummary,
   AgentNativeFeatureSummary,
   AgentRuntime,
   AgentSkillSummary,
@@ -28,6 +29,11 @@ import type {
   ExternalSkillManagementResult,
   ExternalSkillMutationRequest,
 } from "../skills/external-skill-manager.js";
+import { isCuratedExternalMcpServer } from "../extensions/external-mcp-registry.js";
+import type {
+  ExternalMcpManagementResult,
+  ExternalMcpMutationRequest,
+} from "../extensions/external-mcp-manager.js";
 import {
   CodexRpcClient,
   type CodexExitEvent,
@@ -83,6 +89,22 @@ interface AppInstalledResponse {
   }> | undefined;
 }
 
+interface AppListResponse {
+  data?: Array<{
+    id?: unknown;
+    name?: unknown;
+    description?: unknown;
+    isAccessible?: unknown;
+    isEnabled?: unknown;
+  }> | undefined;
+  nextCursor?: unknown;
+}
+
+interface McpServerStatusListResponse {
+  data?: unknown[] | undefined;
+  nextCursor?: unknown;
+}
+
 interface AppReadResponse {
   apps?: Array<{
     id?: unknown;
@@ -108,6 +130,7 @@ interface ExtensionDiscoverySnapshot {
   features?: AgentNativeFeatureSummary[] | undefined;
   installedApps?: AgentAppSummary[] | undefined;
   appDetails?: AgentAppReadResult | undefined;
+  mcpServers?: AgentMcpServerSummary[] | undefined;
   errors: string[];
 }
 
@@ -173,6 +196,10 @@ export interface CodexAppServerOptions {
   manageExternalSkill?: ((
     request: ExternalSkillMutationRequest,
   ) => Promise<ExternalSkillManagementResult>) | undefined;
+  externalMcpCatalog?: (() => Promise<string>) | undefined;
+  manageExternalMcp?: ((
+    request: ExternalMcpMutationRequest,
+  ) => Promise<ExternalMcpManagementResult>) | undefined;
   permissionProfile?: string | undefined;
   permissionProfileCwd?: string | undefined;
 }
@@ -204,7 +231,8 @@ export const FLORAL_AGENT_DEVELOPER_INSTRUCTIONS = [
   "- When the user explicitly asks to receive a screenshot or another already-registered artifact, call floral_delivery/send_artifact with the artifactId returned by the trusted producer. Never claim delivery unless that tool reports success.",
   "- For terminal-produced files, first create or copy the final attachment into <cwd>/artifacts/outbound, then call floral_delivery/register_outbound_file, then floral_delivery/send_artifact. Do not register or send arbitrary paths outside that staging root.",
   "- Manage Skills through floral_skills and Codex-native Skill discovery. Project Skills may be created under <cwd>/.agents/skills. Never edit data/external-skills/registry.json directly or use shell/git to bypass External Skill approval.",
-  "- Discover Codex connector Apps and extension feature state through floral_extensions before claiming GitHub, Browser, Chrome, or another native extension is available. app/installed and app/read are the authoritative App metadata paths. FLORAL does not call plugin/list, plugin/read, plugin/install, plugin/uninstall, or marketplace mutation because upstream marks those Plugin RPCs under development for production clients.",
+  "- Discover and manage supported extensions through floral_extensions. Prefer Codex App metadata when available; if app/installed is unsupported, FLORAL may fall back to app/list and must report callable state as unknown. Use mcp_status before claiming GitHub or Browser MCP is ready. Shared external MCP changes must use manage_mcp and user approval; never edit Codex config or run codex mcp/plugin installation commands through shell as a bypass.",
+  "- FLORAL does not call plugin/list, plugin/read, plugin/install, plugin/uninstall, or marketplace mutation from production Agent flows because upstream still marks those Plugin RPCs under development. Plugin installation remains a supported-surface handoff until upstream promotes a production management API.",
 ].join("\n");
 
 const FLORAL_DELIVERY_DYNAMIC_TOOLS = [
@@ -364,7 +392,7 @@ const FLORAL_EXTENSIONS_DYNAMIC_TOOLS = [
   {
     type: "namespace",
     name: "floral_extensions",
-    description: "Read-only Codex-native extension discovery. Uses stable App RPCs plus experimental feature metadata; Plugin catalog/install RPCs remain blocked because upstream marks them under development for production clients.",
+    description: "Codex-native App/MCP discovery plus FLORAL-controlled curated MCP lifecycle. Plugin catalog/install RPCs remain blocked because upstream marks them under development for production clients.",
     tools: [
       {
         type: "function",
@@ -412,6 +440,49 @@ const FLORAL_EXTENSIONS_DYNAMIC_TOOLS = [
         },
         deferLoading: false,
       },
+      {
+        type: "function",
+        name: "mcp_catalog",
+        description: "List FLORAL-curated external MCP capabilities and their install/auth state. No secret values are returned.",
+        inputSchema: {
+          type: "object",
+          properties: {},
+          additionalProperties: false,
+        },
+        deferLoading: false,
+      },
+      {
+        type: "function",
+        name: "mcp_status",
+        description: "Read the per-turn snapshot of Codex MCP server startup/auth/tool status.",
+        inputSchema: {
+          type: "object",
+          properties: {},
+          additionalProperties: false,
+        },
+        deferLoading: false,
+      },
+      {
+        type: "function",
+        name: "manage_mcp",
+        description: "Install, enable, disable, or remove one curated external MCP capability. This is a machine-wide extension mutation and requires FLORAL user approval.",
+        inputSchema: {
+          type: "object",
+          properties: {
+            action: {
+              type: "string",
+              enum: ["install", "enable", "disable", "remove"],
+            },
+            id: {
+              type: "string",
+              enum: ["github-readonly", "chrome-devtools"],
+            },
+          },
+          required: ["action", "id"],
+          additionalProperties: false,
+        },
+        deferLoading: false,
+      },
     ],
   },
 ] as const;
@@ -437,13 +508,19 @@ export class CodexAppServerRuntime implements AgentRuntime {
   readonly #manageExternalSkill: ((
     request: ExternalSkillMutationRequest,
   ) => Promise<ExternalSkillManagementResult>) | undefined;
+  readonly #externalMcpCatalog: (() => Promise<string>) | undefined;
+  readonly #manageExternalMcp: ((
+    request: ExternalMcpMutationRequest,
+  ) => Promise<ExternalMcpManagementResult>) | undefined;
   readonly #permissionProfile: string | undefined;
   readonly #permissionProfileCwd: string | undefined;
   readonly #loadedThreads = new Set<string>();
   readonly #activeTurns = new Map<string, string>();
   readonly #eventHandlers = new Map<string, (event: AgentEvent) => void>();
   readonly #approvalHandlers = new Map<string, AgentApprovalHandler>();
+  readonly #mcpToolApprovalHandlers = new Map<string, AgentApprovalHandler>();
   readonly #skillManagementApprovalHandlers = new Map<string, AgentApprovalHandler>();
+  readonly #extensionManagementApprovalHandlers = new Map<string, AgentApprovalHandler>();
   readonly #artifactRegistrationHandlers = new Map<string, AgentArtifactRegistrationHandler>();
   readonly #artifactDeliveryHandlers = new Map<string, AgentArtifactDeliveryHandler>();
   readonly #threadCwds = new Map<string, string>();
@@ -474,6 +551,8 @@ export class CodexAppServerRuntime implements AgentRuntime {
     );
     this.#externalSkillCatalog = options.externalSkillCatalog;
     this.#manageExternalSkill = options.manageExternalSkill;
+    this.#externalMcpCatalog = options.externalMcpCatalog;
+    this.#manageExternalMcp = options.manageExternalMcp;
     this.#permissionProfile = options.permissionProfile?.trim() || undefined;
     this.#permissionProfileCwd = options.permissionProfileCwd?.trim()
       ? resolve(options.permissionProfileCwd)
@@ -611,27 +690,86 @@ export class CodexAppServerRuntime implements AgentRuntime {
   }): Promise<AgentAppSummary[]> {
     this.#ensureStarted();
     resolve(input.cwd);
-    const response = await this.#client.request<AppInstalledResponse>(
-      "app/installed",
-      {
-        ...(input.threadId ? { threadId: input.threadId } : {}),
-        forceRefresh: input.forceRefresh === true,
-      },
-    );
-    const apps = Array.isArray(response?.apps) ? response.apps : [];
-    return apps.flatMap((app) => {
-      const id = readBoundedPlainText(app?.id, 160);
-      if (!id || typeof app?.enabled !== "boolean" || typeof app?.callable !== "boolean") {
-        return [];
+    try {
+      const response = await this.#client.request<AppInstalledResponse>(
+        "app/installed",
+        {
+          ...(input.threadId ? { threadId: input.threadId } : {}),
+          forceRefresh: input.forceRefresh === true,
+        },
+      );
+      const apps = Array.isArray(response?.apps) ? response.apps : [];
+      return apps.flatMap((app) => {
+        const id = readBoundedPlainText(app?.id, 160);
+        if (
+          !id
+          || typeof app?.enabled !== "boolean"
+          || typeof app?.callable !== "boolean"
+        ) {
+          return [];
+        }
+        const runtimeName = readBoundedPlainText(app?.runtimeName, 200);
+        return [{
+          id,
+          ...(runtimeName ? { runtimeName } : {}),
+          enabled: app.enabled,
+          callable: app.callable,
+          source: "installed-runtime",
+        } satisfies AgentAppSummary];
+      });
+    } catch (error) {
+      if (!isAppInstalledCompatibilityError(error)) throw error;
+      process.stderr.write(
+        `agent.stack.extensions.app_installed=fallback:${safeDynamicToolToken(
+          error instanceof Error ? error.name : "Error",
+        )}\n`,
+      );
+      return await this.#listAvailableAppsFallback(input);
+    }
+  }
+
+  async #listAvailableAppsFallback(input: {
+    cwd: string;
+    threadId?: string | undefined;
+    forceRefresh?: boolean | undefined;
+  }): Promise<AgentAppSummary[]> {
+    resolve(input.cwd);
+    const output: AgentAppSummary[] = [];
+    let cursor: string | null = null;
+    for (let page = 0; page < 5; page += 1) {
+      const response = await this.#client.request<AppListResponse>(
+        "app/list",
+        {
+          cursor,
+          limit: 100,
+          ...(input.threadId ? { threadId: input.threadId } : {}),
+          forceRefetch: input.forceRefresh === true,
+        },
+      );
+      const data = Array.isArray(response?.data) ? response.data : [];
+      for (const app of data) {
+        const id = readBoundedPlainText(app?.id, 160);
+        const runtimeName = readBoundedPlainText(app?.name, 200);
+        if (
+          !id
+          || typeof app?.isEnabled !== "boolean"
+          || typeof app?.isAccessible !== "boolean"
+        ) {
+          continue;
+        }
+        output.push({
+          id,
+          ...(runtimeName ? { runtimeName } : {}),
+          enabled: app.isEnabled,
+          accessible: app.isAccessible,
+          source: "directory-fallback",
+        });
       }
-      const runtimeName = readBoundedPlainText(app?.runtimeName, 200);
-      return [{
-        id,
-        ...(runtimeName ? { runtimeName } : {}),
-        enabled: app.enabled,
-        callable: app.callable,
-      } satisfies AgentAppSummary];
-    });
+      const next = readBoundedPlainText(response?.nextCursor, 500);
+      if (!next) break;
+      cursor = next;
+    }
+    return output;
   }
 
   async readApps(input: {
@@ -680,6 +818,42 @@ export class CodexAppServerRuntime implements AgentRuntime {
     });
   }
 
+  async listMcpServers(input: {
+    cwd: string;
+    threadId?: string | undefined;
+  }): Promise<AgentMcpServerSummary[]> {
+    this.#ensureStarted();
+    resolve(input.cwd);
+    const output: AgentMcpServerSummary[] = [];
+    let cursor: string | null = null;
+    for (let page = 0; page < 5; page += 1) {
+      const response = await this.#client.request<McpServerStatusListResponse>(
+        "mcpServerStatus/list",
+        {
+          cursor,
+          limit: 100,
+          detail: "toolsAndAuthOnly",
+          ...(input.threadId ? { threadId: input.threadId } : {}),
+        },
+      );
+      const data = Array.isArray(response?.data) ? response.data : [];
+      for (const value of data) {
+        const parsed = parseMcpServerStatus(value);
+        if (parsed) output.push(parsed);
+      }
+      const next = readBoundedPlainText(response?.nextCursor, 500);
+      if (!next) break;
+      cursor = next;
+    }
+    return output;
+  }
+
+  async reloadMcpServers(): Promise<void> {
+    this.#ensureStarted();
+    await this.#client.request("config/mcpServer/reload", {});
+    process.stderr.write("agent.stack.mcp.reload=queued\n");
+  }
+
   async listThreads(input: {
     cwd: string;
     limit?: number | undefined;
@@ -724,7 +898,9 @@ export class CodexAppServerRuntime implements AgentRuntime {
     this.#activeTurns.delete(normalized);
     this.#eventHandlers.delete(normalized);
     this.#approvalHandlers.delete(normalized);
+    this.#mcpToolApprovalHandlers.delete(normalized);
     this.#skillManagementApprovalHandlers.delete(normalized);
+    this.#extensionManagementApprovalHandlers.delete(normalized);
     this.#artifactRegistrationHandlers.delete(normalized);
     this.#artifactDeliveryHandlers.delete(normalized);
     this.#threadCwds.delete(normalized);
@@ -745,10 +921,19 @@ export class CodexAppServerRuntime implements AgentRuntime {
     this.#threadCwds.set(threadId, cwd);
     if (onEvent) this.#eventHandlers.set(threadId, onEvent);
     if (request.approvalHandler) this.#approvalHandlers.set(threadId, request.approvalHandler);
+    if (request.mcpToolApprovalHandler) {
+      this.#mcpToolApprovalHandlers.set(threadId, request.mcpToolApprovalHandler);
+    }
     if (request.skillManagementApprovalHandler) {
       this.#skillManagementApprovalHandlers.set(
         threadId,
         request.skillManagementApprovalHandler,
+      );
+    }
+    if (request.extensionManagementApprovalHandler) {
+      this.#extensionManagementApprovalHandlers.set(
+        threadId,
+        request.extensionManagementApprovalHandler,
       );
     }
     if (request.artifactRegistrationHandler) {
@@ -910,6 +1095,7 @@ export class CodexAppServerRuntime implements AgentRuntime {
         { type: "text", text: request.text },
       ];
       const explicitSkillNames = extractExplicitSkillNames(request.text);
+      const resolvedExplicitSkillNames = new Set<string>();
       if (explicitSkillNames.length > 0) {
         const availableSkills = await this.listSkills({ cwd });
         const byName = new Map(
@@ -920,6 +1106,7 @@ export class CodexAppServerRuntime implements AgentRuntime {
         for (const name of explicitSkillNames) {
           const skill = byName.get(name);
           if (!skill) continue;
+          resolvedExplicitSkillNames.add(name);
           turnInput.push({
             type: "skill",
             name: skill.name,
@@ -927,6 +1114,12 @@ export class CodexAppServerRuntime implements AgentRuntime {
           });
         }
       }
+      appendExplicitAppMentions(
+        turnInput,
+        request.text,
+        this.#extensionSnapshots.get(threadId)?.installedApps ?? [],
+        resolvedExplicitSkillNames,
+      );
 
       const turnParams: Record<string, unknown> = {
         threadId,
@@ -1015,7 +1208,9 @@ export class CodexAppServerRuntime implements AgentRuntime {
       this.#activeTurns.delete(threadId);
       this.#eventHandlers.delete(threadId);
       this.#approvalHandlers.delete(threadId);
+      this.#mcpToolApprovalHandlers.delete(threadId);
       this.#skillManagementApprovalHandlers.delete(threadId);
+      this.#extensionManagementApprovalHandlers.delete(threadId);
       this.#artifactRegistrationHandlers.delete(threadId);
       this.#artifactDeliveryHandlers.delete(threadId);
       this.#threadCwds.delete(threadId);
@@ -1044,7 +1239,9 @@ export class CodexAppServerRuntime implements AgentRuntime {
     this.#activeTurns.clear();
     this.#eventHandlers.clear();
     this.#approvalHandlers.clear();
+    this.#mcpToolApprovalHandlers.clear();
     this.#skillManagementApprovalHandlers.clear();
+    this.#extensionManagementApprovalHandlers.clear();
     this.#artifactRegistrationHandlers.clear();
     this.#artifactDeliveryHandlers.clear();
     this.#threadCwds.clear();
@@ -1234,7 +1431,10 @@ export class CodexAppServerRuntime implements AgentRuntime {
         kind: approval.kind,
         detail: { summary: approval.summary },
       });
-      const handler = threadId ? this.#approvalHandlers.get(threadId) : undefined;
+      const handler = threadId
+        ? this.#mcpToolApprovalHandlers.get(threadId)
+          ?? this.#approvalHandlers.get(threadId)
+        : undefined;
       const decision = handler
         ? await handler(approval).catch(() => "deny" as const)
         : "deny";
@@ -1621,9 +1821,10 @@ export class CodexAppServerRuntime implements AgentRuntime {
     cwd: string,
   ): Promise<void> {
     const snapshot: ExtensionDiscoverySnapshot = { errors: [] };
-    const [featureResult, installedResult] = await Promise.allSettled([
+    const [featureResult, installedResult, mcpResult] = await Promise.allSettled([
       this.listNativeExtensionFeatures({ cwd }),
       this.listInstalledApps({ cwd, threadId, forceRefresh: false }),
+      this.listMcpServers({ cwd, threadId }),
     ]);
 
     if (featureResult.status === "fulfilled") {
@@ -1650,6 +1851,12 @@ export class CodexAppServerRuntime implements AgentRuntime {
       }
     } else {
       snapshot.errors.push("app/installed");
+    }
+
+    if (mcpResult.status === "fulfilled") {
+      snapshot.mcpServers = mcpResult.value;
+    } else {
+      snapshot.errors.push("mcpServerStatus/list");
     }
 
     this.#extensionSnapshots.set(threadId, snapshot);
@@ -1759,6 +1966,88 @@ export class CodexAppServerRuntime implements AgentRuntime {
         );
         return;
       }
+
+      if (tool === "mcp_status") {
+        if (!snapshot.mcpServers) {
+          throw new Error("MCP status snapshot unavailable");
+        }
+        this.#respondSafely(
+          request.id,
+          dynamicToolResponse(true, formatMcpServersForTool(snapshot.mcpServers)),
+        );
+        return;
+      }
+
+      if (tool === "mcp_catalog") {
+        if (!this.#externalMcpCatalog) {
+          throw new Error("External MCP catalog unavailable");
+        }
+        const text = await this.#externalMcpCatalog();
+        this.#respondSafely(
+          request.id,
+          dynamicToolResponse(true, boundedDynamicToolText(text)),
+        );
+        return;
+      }
+
+      if (tool === "manage_mcp") {
+        const action = readExternalMcpAction(argumentsValue.action);
+        const id = readExternalMcpId(argumentsValue.id);
+        const handler = this.#extensionManagementApprovalHandlers.get(threadId);
+        if (!action || !id || !handler || !this.#manageExternalMcp) {
+          this.#respondSafely(
+            request.id,
+            dynamicToolResponse(
+              false,
+              "external_mcp=denied\nreason=invalid-arguments-or-handler",
+            ),
+          );
+          return;
+        }
+
+        const approval: AgentApprovalRequest = {
+          requestId: `extension-${String(params?.callId ?? request.id)}`,
+          kind: "extension-management",
+          capability: "software.install",
+          summary: [
+            "FLORAL Agent 请求修改共享 External MCP：",
+            `action=${action}`,
+            `id=${id}`,
+          ].join(" "),
+          source: "floral",
+        };
+        this.#eventHandlers.get(threadId)?.({
+          type: "approval.requested",
+          requestId: approval.requestId,
+          capability: approval.capability,
+          kind: approval.kind,
+          detail: { summary: approval.summary },
+        });
+        const decision = await handler(approval).catch(() => "deny" as const);
+        if (decision !== "approve" && decision !== "approve-session") {
+          this.#respondSafely(
+            request.id,
+            dynamicToolResponse(false, "external_mcp=denied\nreason=user-approval"),
+          );
+          return;
+        }
+
+        const result = await this.#manageExternalMcp({ action, id }).catch((error) => ({
+          changed: false,
+          registry: { version: 1 as const, packages: [] },
+          message: `external_mcp.${action}=failed reason=${safeDynamicToolToken(
+            error instanceof Error ? error.name : "Error",
+          )}`,
+        }));
+        this.#respondSafely(
+          request.id,
+          dynamicToolResponse(
+            !result.message.includes("=failed"),
+            boundedDynamicToolText(result.message),
+          ),
+        );
+        return;
+      }
     } catch (error) {
       process.stderr.write(
         `agent.stack.extensions.read=error:${safeDynamicToolToken(
@@ -1793,11 +2082,11 @@ export class CodexAppServerRuntime implements AgentRuntime {
       call.threadId === threadId
       && call.turnId === turnId
       && call.server === serverId
-      && capabilityForMcpTool(call.server, call.tool) === "application.control"
+      && capabilityForMcpTool(call.server, call.tool) !== undefined
     );
     // The real Codex elicitation intentionally does not carry tool_name. Only
-    // correlate when exactly one in-flight control-capable MCP call exists for
-    // this thread/turn/server. Parallel ambiguous mutations fail closed.
+    // correlate when exactly one capability-mapped MCP call exists for this
+    // thread/turn/server. Parallel ambiguous mutations fail closed.
     return matches.length === 1 ? matches[0] : undefined;
   }
 
@@ -2044,14 +2333,14 @@ function buildMcpToolApprovalRequest(
   context: InFlightMcpToolCall | undefined,
 ): AgentApprovalRequest | undefined {
   const params = asRecord(request.params);
-  if (readString(params?.mode) !== "form") return undefined;
+  const mode = readString(params?.mode);
+  if (mode !== "form" && mode !== "openai/form") return undefined;
   const metadata = asPlainRecord(params?._meta);
   if (readString(metadata?.codex_approval_kind) !== "mcp_tool_call") return undefined;
 
   const serverId = readString(params?.serverName);
-  if (!context || serverId !== context.server || context.tool !== "click") return undefined;
+  if (!context || !serverId || serverId !== context.server) return undefined;
   const toolName = context.tool;
-
   const schema = asPlainRecord(params?.requestedSchema);
   const properties = asPlainRecord(schema?.properties);
   if (schema?.type !== "object" || !properties || Object.keys(properties).length !== 0) {
@@ -2059,20 +2348,50 @@ function buildMcpToolApprovalRequest(
   }
 
   const capability = capabilityForMcpTool(serverId, toolName);
-  if (capability !== "application.control") return undefined;
+  if (!capability) return undefined;
   const toolParams = asPlainRecord(metadata?.tool_params);
-  if (!toolParams || !sameMcpClickApprovalArguments(toolParams, context.arguments)) {
+  if (!toolParams) return undefined;
+
+  if (serverId === "floral_peekaboo") {
+    if (
+      toolName !== "click"
+      || capability !== "application.control"
+      || !sameMcpClickApprovalArguments(toolParams, context.arguments)
+    ) {
+      return undefined;
+    }
+    const intent = redactApprovalText(readString(context.arguments.intent));
+    return {
+      requestId: String(request.id),
+      kind: "mcp-tool",
+      capability,
+      summary: intent
+        ? `MCP ${serverId}/${toolName} 请求执行一次操作：${intent}`
+        : `MCP ${serverId}/${toolName} 请求执行一次 ${capability} 操作。`,
+      source: "mcp",
+      mcpServerId: serverId,
+      mcpToolName: toolName,
+    };
+  }
+
+  if (
+    !isCuratedExternalMcpServer(serverId)
+    || !sameJsonSafeObject(toolParams, context.arguments)
+  ) {
     return undefined;
   }
-  const intent = redactApprovalText(readString(context.arguments.intent));
-  const summary = intent
-    ? `MCP ${serverId}/${toolName} 请求执行一次操作：${intent}`
-    : `MCP ${serverId}/${toolName} 请求执行一次 ${capability} 操作。`;
+  const detail = redactApprovalText(
+    readString(context.arguments.intent)
+      ?? readString(context.arguments.reason)
+      ?? readString(context.arguments.url),
+  );
   return {
     requestId: String(request.id),
     kind: "mcp-tool",
     capability,
-    summary,
+    summary: detail
+      ? `MCP ${serverId}/${toolName} 请求执行 ${capability}：${detail}`
+      : `MCP ${serverId}/${toolName} 请求执行一次 ${capability} 操作。`,
     source: "mcp",
     mcpServerId: serverId,
     mcpToolName: toolName,
@@ -2091,6 +2410,27 @@ function sameMcpClickApprovalArguments(
   return expectedKeys.every((key) =>
     readString(metadataArguments[key]) === readString(lifecycleArguments[key])
   );
+}
+
+function sameJsonSafeObject(
+  left: Record<string, unknown>,
+  right: Record<string, unknown>,
+): boolean {
+  if (!isJsonSafe(left) || !isJsonSafe(right)) return false;
+  return stableJson(left) === stableJson(right);
+}
+
+function stableJson(value: unknown): string {
+  if (Array.isArray(value)) {
+    return `[${value.map(stableJson).join(",")}]`;
+  }
+  const record = asPlainRecord(value);
+  if (record) {
+    return `{${Object.keys(record).sort().map((key) =>
+      `${JSON.stringify(key)}:${stableJson(record[key])}`
+    ).join(",")}}`;
+  }
+  return JSON.stringify(value);
 }
 
 function redactApprovalText(value: string | undefined): string | undefined {
@@ -2130,7 +2470,7 @@ function readInFlightMcpToolCall(
     || typeof item.id !== "string"
     || typeof item.server !== "string"
     || typeof item.tool !== "string"
-    || capabilityForMcpTool(item.server, item.tool) !== "application.control"
+    || capabilityForMcpTool(item.server, item.tool) === undefined
   ) {
     return undefined;
   }
@@ -2509,6 +2849,145 @@ function boundedDynamicToolText(value: string): string {
     : `${normalized.slice(0, 11_980)}\ntruncated=true`;
 }
 
+function isAppInstalledCompatibilityError(error: unknown): boolean {
+  return error instanceof CodexRuntimeError
+    && error.method === "app/installed"
+    && (error.code === -32601 || error.code === -32602);
+}
+
+function parseMcpServerStatus(value: unknown): AgentMcpServerSummary | undefined {
+  const record = asPlainRecord(value);
+  if (!record) return undefined;
+  const name = readBoundedPlainText(record.name ?? record.serverName, 160);
+  if (!name) return undefined;
+  const rawStatus = readBoundedPlainText(record.status, 80)?.toLowerCase();
+  const status: AgentMcpServerSummary["status"] = rawStatus === "starting"
+    || rawStatus === "ready"
+    || rawStatus === "failed"
+    || rawStatus === "cancelled"
+    ? rawStatus
+    : "unknown";
+  const authStatus = readBoundedPlainText(
+    record.authStatus ?? record.authenticationStatus ?? readStatusScalar(record.auth),
+    240,
+  );
+  const failureReason = readBoundedPlainText(
+    record.failureReason ?? record.error,
+    500,
+  );
+  const tools = parseMcpToolSummaries(record.tools);
+  return {
+    name,
+    status,
+    ...(authStatus ? { authStatus } : {}),
+    ...(failureReason ? { failureReason } : {}),
+    tools,
+  };
+}
+
+function readStatusScalar(value: unknown): unknown {
+  if (typeof value === "string") return value;
+  const record = asPlainRecord(value);
+  if (!record) return undefined;
+  return record.status ?? record.state ?? record.type;
+}
+
+function parseMcpToolSummaries(
+  value: unknown,
+): AgentMcpServerSummary["tools"] {
+  const output: AgentMcpServerSummary["tools"] = [];
+  const append = (nameValue: unknown, detailValue: unknown) => {
+    if (output.length >= 200) return;
+    const detail = asPlainRecord(detailValue);
+    const name = readBoundedPlainText(nameValue ?? detail?.name, 200);
+    if (!name) return;
+    const annotations = asPlainRecord(detail?.annotations);
+    const readOnly = typeof detail?.readOnly === "boolean"
+      ? detail.readOnly
+      : typeof detail?.isReadOnly === "boolean"
+        ? detail.isReadOnly
+        : typeof annotations?.readOnlyHint === "boolean"
+          ? annotations.readOnlyHint
+          : undefined;
+    output.push({ name, ...(readOnly !== undefined ? { readOnly } : {}) });
+  };
+  if (Array.isArray(value)) {
+    for (const item of value) append(undefined, item);
+    return output;
+  }
+  const record = asPlainRecord(value);
+  if (!record) return output;
+  for (const [name, detail] of Object.entries(record)) append(name, detail);
+  return output;
+}
+
+function formatMcpServersForTool(servers: AgentMcpServerSummary[]): string {
+  const lines = [
+    `codex_mcp.servers=${String(servers.length)}`,
+    `codex_mcp.ready=${String(servers.filter((server) => server.status === "ready").length)}`,
+  ];
+  for (const server of servers.slice(0, 100)) {
+    lines.push([
+      `server=${safeDynamicToolToken(server.name)}`,
+      `status=${server.status}`,
+      `tools=${String(server.tools.length)}`,
+      ...(server.authStatus ? [`auth=${JSON.stringify(server.authStatus)}`] : []),
+      ...(server.failureReason ? [`failure=${JSON.stringify(server.failureReason)}`] : []),
+    ].join(" "));
+    for (const tool of server.tools.slice(0, 50)) {
+      lines.push([
+        `tool=${safeDynamicToolToken(tool.name)}`,
+        ...(tool.readOnly !== undefined ? [`read_only=${String(tool.readOnly)}`] : []),
+      ].join(" "));
+    }
+  }
+  return boundedDynamicToolText(lines.join("\n"));
+}
+
+function readExternalMcpAction(
+  value: unknown,
+): ExternalMcpMutationRequest["action"] | undefined {
+  return value === "install" || value === "enable" || value === "disable" || value === "remove"
+    ? value
+    : undefined;
+}
+
+function readExternalMcpId(
+  value: unknown,
+): ExternalMcpMutationRequest["id"] | undefined {
+  return value === "github-readonly" || value === "chrome-devtools"
+    ? value
+    : undefined;
+}
+
+function appendExplicitAppMentions(
+  turnInput: Array<Record<string, unknown>>,
+  text: string,
+  apps: AgentAppSummary[],
+  explicitSkillNames: ReadonlySet<string>,
+): void {
+  const byToken = new Map<string, AgentAppSummary>();
+  for (const app of apps) {
+    if (!app.enabled || app.accessible === false || app.callable === false) continue;
+    byToken.set(app.id.toLowerCase(), app);
+    if (app.runtimeName) byToken.set(app.runtimeName.toLowerCase(), app);
+  }
+  const seen = new Set<string>();
+  const pattern = /(?:^|\s)\$([a-z0-9][a-z0-9_-]{0,159})(?=\s|$|[.,!?;:])/giu;
+  for (const match of text.matchAll(pattern)) {
+    const token = match[1]?.toLowerCase();
+    if (!token || explicitSkillNames.has(token)) continue;
+    const app = byToken.get(token);
+    if (!app || seen.has(app.id)) continue;
+    seen.add(app.id);
+    turnInput.push({
+      type: "mention",
+      name: app.runtimeName ?? app.id,
+      path: `app://${app.id}`,
+    });
+  }
+}
+
 function normalizeFeatureStage(
   value: unknown,
 ): AgentNativeFeatureSummary["stage"] {
@@ -2621,28 +3100,36 @@ function formatNativeExtensionStatus(
       : `${name}.stage=unknown ${name}.enabled=unknown ${name}.default_enabled=unknown`;
   };
   return [
-    "codex_extensions=read-only",
+    "codex_extensions=managed",
     format("apps"),
     format("plugins"),
-    "apps.discovery=app/installed+app/read",
+    "apps.discovery=app/installed+app/list-fallback+app/read",
+    "apps.invocation=app-mention",
+    "mcp.discovery=mcpServerStatus/list",
+    "mcp.lifecycle=floral-curated+config/mcpServer/reload",
     "plugins.catalog_rpc=blocked-by-floral",
     "plugins.catalog_reason=upstream-under-development-for-production-clients",
     "plugins.install_rpc=blocked-by-floral",
-    "browser.availability=not-inferred-from-plugin-feature",
+    "plugins.install_surface=codex-cli-/plugins",
+    "browser.availability=requires-ready-browser-mcp-on-headless-host",
   ].join("\n");
 }
 
 function formatInstalledAppsForTool(apps: AgentAppSummary[]): string {
+  const callableKnown = apps.filter((app) => app.callable !== undefined);
   const lines = [
-    `codex_apps.installed=${String(apps.length)}`,
-    `codex_apps.callable=${String(apps.filter((app) => app.callable).length)}`,
+    `codex_apps.discovered=${String(apps.length)}`,
+    `codex_apps.callable_known=${String(callableKnown.length)}`,
+    `codex_apps.callable=${String(callableKnown.filter((app) => app.callable === true).length)}`,
   ];
   for (const app of apps.slice(0, 100)) {
     lines.push([
       `id=${safeDynamicToolToken(app.id)}`,
       `name=${JSON.stringify(app.runtimeName ?? app.id)}`,
       `enabled=${String(app.enabled)}`,
-      `callable=${String(app.callable)}`,
+      `callable=${app.callable === undefined ? "unknown" : String(app.callable)}`,
+      `source=${app.source}`,
+      ...(app.accessible !== undefined ? [`accessible=${String(app.accessible)}`] : []),
     ].join(" "));
   }
   return lines.join("\n");

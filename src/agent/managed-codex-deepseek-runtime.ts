@@ -20,12 +20,14 @@ import {
 } from "../config/adoption/mcp-registry-adoption.js";
 import type { AppEnv } from "../config/env.js";
 import {
+  supportsAgentExtensionControl,
   supportsAgentExtensionDiscovery,
   supportsAgentSkillControl,
   supportsAgentSkills,
   supportsAgentThreadManagement,
   type AgentAppReadResult,
   type AgentAppSummary,
+  type AgentMcpServerSummary,
   type AgentNativeFeatureSummary,
   type AgentRuntime,
   type AgentSkillSummary,
@@ -58,6 +60,17 @@ import {
   type ExternalSkillManagementResult,
   type ExternalSkillMutationRequest,
 } from "../skills/external-skill-manager.js";
+import {
+  EXTERNAL_MCP_REGISTRY_VERSION,
+  externalMcpRegistryFingerprint,
+  renderExternalMcpOverlay,
+  type ExternalMcpRegistry,
+} from "../extensions/external-mcp-registry.js";
+import {
+  ExternalMcpHostManager,
+  type ExternalMcpManagementResult,
+  type ExternalMcpMutationRequest,
+} from "../extensions/external-mcp-manager.js";
 
 interface ManagedBridge {
   start(): Promise<{ baseUrl: string }>;
@@ -80,6 +93,7 @@ interface ManagedRuntimeSlot {
   runtime: AgentRuntime;
   workspace: ManagedWorkspace;
   codexHome: string;
+  scope?: ProjectRuntimeScope | undefined;
 }
 
 interface ProjectRuntimeScope {
@@ -115,6 +129,10 @@ export interface ManagedCodexDeepSeekDependencies {
     manageExternalSkill: (
       request: ExternalSkillMutationRequest,
     ) => Promise<ExternalSkillManagementResult>;
+    externalMcpCatalog: () => Promise<string>;
+    manageExternalMcp: (
+      request: ExternalMcpMutationRequest,
+    ) => Promise<ExternalMcpManagementResult>;
     permissionProfile?: string | undefined;
     permissionProfileCwd?: string | undefined;
   }) => AgentRuntime) | undefined;
@@ -123,6 +141,11 @@ export interface ManagedCodexDeepSeekDependencies {
   manageExternalSkill?: ((
     request: ExternalSkillMutationRequest,
   ) => Promise<ExternalSkillManagementResult>) | undefined;
+  externalMcpCatalog?: (() => Promise<string>) | undefined;
+  readExternalMcpRegistry?: (() => Promise<ExternalMcpRegistry>) | undefined;
+  manageExternalMcp?: ((
+    request: ExternalMcpMutationRequest,
+  ) => Promise<ExternalMcpManagementResult>) | undefined;
   prepareCodexConfig?: ((options: {
     legacyConfig: string;
     bridgeBaseUrl: string;
@@ -157,6 +180,12 @@ export class ManagedCodexDeepSeekRuntime implements AgentRuntime {
   #sharedSkillRoots: string[] = [];
   #externalSkillManager: ExternalSkillManager | undefined;
   #externalSkillMutationTail: Promise<void> = Promise.resolve();
+  #externalMcpManager: ExternalMcpHostManager | undefined;
+  #externalMcpRegistry: ExternalMcpRegistry = {
+    version: EXTERNAL_MCP_REGISTRY_VERSION,
+    packages: [],
+  };
+  #externalMcpMutationTail: Promise<void> = Promise.resolve();
   #stopped = false;
 
   constructor(
@@ -253,6 +282,19 @@ export class ManagedCodexDeepSeekRuntime implements AgentRuntime {
     return await runtime.listNativeExtensionFeatures(input);
   }
 
+  async listMcpServers(input: {
+    cwd: string;
+    threadId?: string | undefined;
+  }): Promise<AgentMcpServerSummary[]> {
+    const runtime = input.threadId
+      ? this.#runtimeForThread(input.threadId)
+      : (await this.#runtimeSlotForCwd(input.cwd)).runtime;
+    if (!supportsAgentExtensionDiscovery(runtime)) {
+      throw new Error("Managed Codex runtime does not expose MCP discovery");
+    }
+    return await runtime.listMcpServers(input);
+  }
+
   async listThreads(input: {
     cwd: string;
     limit?: number | undefined;
@@ -301,6 +343,12 @@ export class ManagedCodexDeepSeekRuntime implements AgentRuntime {
     this.#sharedSkillRoots = [];
     this.#externalSkillManager = undefined;
     this.#externalSkillMutationTail = Promise.resolve();
+    this.#externalMcpManager = undefined;
+    this.#externalMcpRegistry = {
+      version: EXTERNAL_MCP_REGISTRY_VERSION,
+      packages: [],
+    };
+    this.#externalMcpMutationTail = Promise.resolve();
 
     await Promise.all(
       projectSlots.map(async (slot) => {
@@ -341,6 +389,14 @@ export class ManagedCodexDeepSeekRuntime implements AgentRuntime {
     this.#sharedSkillRoots = uniqueAbsolutePaths([builtInSkillRoot, ...externalSkillRoots]);
     process.stderr.write(`agent.stack.skills.roots=${String(this.#sharedSkillRoots.length)}\n`);
     process.stderr.write(`agent.stack.skills.external=${String(externalSkillRoots.length)}\n`);
+    this.#externalMcpRegistry = await (this.dependencies.readExternalMcpRegistry?.()
+      ?? this.#externalMcpManagerForRuntime().readRegistry());
+    process.stderr.write(
+      `agent.stack.external_mcp.registry=${externalMcpRegistryFingerprint(this.#externalMcpRegistry)}\n`,
+    );
+    process.stderr.write(
+      `agent.stack.external_mcp.installed=${String(this.#externalMcpRegistry.packages.length)}\n`,
+    );
     const search = await (this.dependencies.checkSearch?.()
       ?? checkSearxng(
         this.env.SEARXNG_URL,
@@ -398,9 +454,11 @@ export class ManagedCodexDeepSeekRuntime implements AgentRuntime {
     const managedCodexHome = resolve(this.env.CODEX_MANAGED_HOME);
     const modelCatalog = renderCodexModelCatalog(this.env.DEEPSEEK_MODEL);
     let workspace = await this.#createWorkspace(
-      adoption.productionConfig,
+      renderExternalMcpOverlay(adoption.productionConfig, this.#externalMcpRegistry),
       managedCodexHome,
-      adoption.fallbackConfig,
+      adoption.fallbackConfig
+        ? renderExternalMcpOverlay(adoption.fallbackConfig, this.#externalMcpRegistry)
+        : undefined,
       modelCatalog,
     );
     process.stderr.write("agent.stack.codex_home=persistent\n");
@@ -436,12 +494,16 @@ export class ManagedCodexDeepSeekRuntime implements AgentRuntime {
       );
       await this.#clearMcpRegistryReport(true);
       try {
+        const fallbackWithExternalMcp = renderExternalMcpOverlay(
+          adoption.fallbackConfig,
+          this.#externalMcpRegistry,
+        );
         if (workspace.replaceConfig) {
-          await workspace.replaceConfig(adoption.fallbackConfig);
+          await workspace.replaceConfig(fallbackWithExternalMcp);
         } else {
           await workspace.cleanup();
           workspace = await this.#createWorkspace(
-            adoption.fallbackConfig,
+            fallbackWithExternalMcp,
             managedCodexHome,
             undefined,
             modelCatalog,
@@ -558,6 +620,9 @@ export class ManagedCodexDeepSeekRuntime implements AgentRuntime {
       externalSkillCatalog: async () => await this.#externalSkillCatalogText(),
       manageExternalSkill: async (request: ExternalSkillMutationRequest) =>
         await this.#manageExternalSkill(request),
+      externalMcpCatalog: async () => await this.#externalMcpCatalogText(),
+      manageExternalMcp: async (request: ExternalMcpMutationRequest) =>
+        await this.#manageExternalMcp(request),
       ...(permissionScope
         ? {
             permissionProfile: permissionScope.profile,
@@ -657,6 +722,114 @@ export class ManagedCodexDeepSeekRuntime implements AgentRuntime {
     }
     process.stderr.write(
       `agent.stack.skills.hot_reload=ok:${String(roots.length)}\n`,
+    );
+  }
+
+  async #externalMcpCatalogText(): Promise<string> {
+    return await (this.dependencies.externalMcpCatalog?.()
+      ?? this.#externalMcpManagerForRuntime().catalogText());
+  }
+
+  async #manageExternalMcp(
+    request: ExternalMcpMutationRequest,
+  ): Promise<ExternalMcpManagementResult> {
+    const operation = this.#externalMcpMutationTail
+      .catch(() => undefined)
+      .then(async () => await this.#manageExternalMcpOnce(request));
+    this.#externalMcpMutationTail = operation.then(
+      () => undefined,
+      () => undefined,
+    );
+    return await operation;
+  }
+
+  async #manageExternalMcpOnce(
+    request: ExternalMcpMutationRequest,
+  ): Promise<ExternalMcpManagementResult> {
+    const result = await (this.dependencies.manageExternalMcp?.(request)
+      ?? this.#externalMcpManagerForRuntime().mutate(request));
+    if (!result.changed) return result;
+    this.#externalMcpRegistry = result.registry;
+    const registry = structuredClone(result.registry);
+    setImmediate(() => {
+      void this.#applyExternalMcpRegistry(registry).catch((error) => {
+        process.stderr.write(
+          `agent.stack.external_mcp.hot_reload=error:${errorName(error)}\n`,
+        );
+      });
+    });
+    return {
+      ...result,
+      message: `${result.message}\nhot_reload=scheduled`,
+    };
+  }
+
+  #externalMcpManagerForRuntime(): ExternalMcpHostManager {
+    if (!this.#externalMcpManager) {
+      this.#externalMcpManager = new ExternalMcpHostManager(
+        process.cwd(),
+        this.env.DATA_DIR,
+        process.env,
+      );
+    }
+    return this.#externalMcpManager;
+  }
+
+  async #applyExternalMcpRegistry(
+    registry: ExternalMcpRegistry,
+  ): Promise<void> {
+    const baseConfig = this.#activeRuntimeConfig;
+    const globalWorkspace = this.#workspace;
+    const globalRuntime = this.#runtime;
+    if (!baseConfig || !globalWorkspace || !globalRuntime) {
+      throw new Error("Managed Codex runtime config is unavailable for MCP reload");
+    }
+
+    const targets: Array<{
+      workspace: ManagedWorkspace;
+      runtime: AgentRuntime;
+      scope?: ProjectRuntimeScope | undefined;
+    }> = [{ workspace: globalWorkspace, runtime: globalRuntime }];
+    for (const slot of this.#projectRuntimes.values()) {
+      targets.push({
+        workspace: slot.workspace,
+        runtime: slot.runtime,
+        ...(slot.scope ? { scope: slot.scope } : {}),
+      });
+    }
+
+    await Promise.all(targets.map(async (target) => {
+      if (!target.workspace.replaceConfig) {
+        throw new Error("Managed Codex workspace does not support config replacement");
+      }
+      const scopedBase = target.scope
+        ? scopeCodexConfigForProject(
+            baseConfig,
+            resolve(process.cwd(), this.env.DATA_DIR, "inbound", "feishu"),
+            target.scope,
+            this.#sharedSkillRoots,
+            this.#externalSkillPackagesRoot(),
+          )
+        : baseConfig;
+      await target.workspace.replaceConfig(
+        renderExternalMcpOverlay(scopedBase, registry),
+      );
+    }));
+
+    const reloads = await Promise.allSettled(targets.map(async (target) => {
+      if (!supportsAgentExtensionControl(target.runtime)) {
+        throw new Error("Codex runtime does not expose MCP config reload");
+      }
+      await target.runtime.reloadMcpServers();
+    }));
+    const failures = reloads.filter((entry) => entry.status === "rejected");
+    if (failures.length > 0) {
+      throw new Error(
+        `Unable to reload MCP config in ${String(failures.length)} runtime(s)`,
+      );
+    }
+    process.stderr.write(
+      `agent.stack.external_mcp.hot_reload=ok:${externalMcpRegistryFingerprint(registry)}\n`,
     );
   }
 
@@ -782,12 +955,15 @@ export class ManagedCodexDeepSeekRuntime implements AgentRuntime {
       throw new Error("Managed Codex project runtime prerequisites are not ready");
     }
 
-    const scopedConfig = scopeCodexConfigForProject(
-      config,
-      resolve(process.cwd(), this.env.DATA_DIR, "inbound", "feishu"),
-      scope,
-      this.#sharedSkillRoots,
-      this.#externalSkillPackagesRoot(),
+    const scopedConfig = renderExternalMcpOverlay(
+      scopeCodexConfigForProject(
+        config,
+        resolve(process.cwd(), this.env.DATA_DIR, "inbound", "feishu"),
+        scope,
+        this.#sharedSkillRoots,
+        this.#externalSkillPackagesRoot(),
+      ),
+      this.#externalMcpRegistry,
     );
     const workspace = await this.#createWorkspace(
       scopedConfig,
@@ -812,6 +988,7 @@ export class ManagedCodexDeepSeekRuntime implements AgentRuntime {
       runtime,
       workspace,
       codexHome: workspace.codexHome,
+      scope,
     };
     this.#projectRuntimes.set(scope.key, slot);
     process.stderr.write(`agent.stack.project_runtime=active:${scope.key}\n`);
@@ -1028,6 +1205,10 @@ function createCodexRuntime(
     manageExternalSkill: (
       request: ExternalSkillMutationRequest,
     ) => Promise<ExternalSkillManagementResult>;
+    externalMcpCatalog: () => Promise<string>;
+    manageExternalMcp: (
+      request: ExternalMcpMutationRequest,
+    ) => Promise<ExternalMcpManagementResult>;
     permissionProfile?: string | undefined;
     permissionProfileCwd?: string | undefined;
   },
@@ -1056,6 +1237,8 @@ function createCodexRuntime(
     protectedSkillRoots: execution.protectedSkillRoots,
     externalSkillCatalog: execution.externalSkillCatalog,
     manageExternalSkill: execution.manageExternalSkill,
+    externalMcpCatalog: execution.externalMcpCatalog,
+    manageExternalMcp: execution.manageExternalMcp,
     permissionProfile: execution.permissionProfile,
     permissionProfileCwd: execution.permissionProfileCwd,
     processEnv,
