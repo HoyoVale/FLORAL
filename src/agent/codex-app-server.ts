@@ -144,12 +144,13 @@ interface InFlightMcpToolCall {
 
 export const FLORAL_AGENT_DEVELOPER_INSTRUCTIONS = [
   "FLORAL capability routing policy:",
-  "- For macOS screen observation, use floral_peekaboo/image or floral_peekaboo/see. Use floral_vision only for pixel semantics or OCR.",
-  "- For any GUI action, floral_peekaboo/see is mandatory immediately before the action. Select the target only from the fresh Snapshot ID and opaque element ID returned by see. Do not infer an actionable target from visual coordinates, arrow direction, OCR, or a screenshot.",
-  "- The only currently supported GUI mutation is floral_peekaboo/click. Never use shell/command execution, direct Peekaboo CLI, osascript/AppleScript/System Events, cliclick, or similar automation as a substitute.",
+  "- For deterministic macOS application operations, prefer terminal/native CLI or a documented installed application CLI when it directly expresses the requested semantic action. Examples include macOS open/open -a for launching or opening a target, application CLIs for opening workspaces/files, and read-only process/status commands. These commands remain subject to the active Codex sandbox and FLORAL approval policy.",
+  "- Terminal-first does not authorize synthetic GUI automation. Never use direct Peekaboo CLI mutation, osascript/AppleScript/System Events, cliclick, coordinate automation, or ad-hoc accessibility scripts to synthesize clicks or keystrokes.",
+  "- For macOS screen observation, use floral_peekaboo/image or floral_peekaboo/see. Use floral_vision only for pixel semantics or OCR. After a terminal/native action that should change visible state, verify with see when the command result alone is insufficient.",
+  "- When a step has no reliable terminal/native CLI route and requires GUI interaction, floral_peekaboo/see is mandatory immediately before the action. Select the target only from the fresh Snapshot ID and opaque element ID returned by see. Do not infer an actionable target from visual coordinates, arrow direction, OCR, or a screenshot.",
+  "- The only currently supported controlled GUI mutation is floral_peekaboo/click. If a required GUI-only mutation is unavailable, state the limitation instead of bypassing FLORAL.",
   "- If the requested UI is already in the desired state, do not mutate it and do not request approval.",
   "- After every successful click, call floral_peekaboo/see again before evaluating state or doing another GUI action.",
-  "- If see cannot provide a fresh target or the required GUI mutation tool does not exist, state that the action is unsupported instead of falling back to shell or coordinates.",
   "- A local filesystem path or Markdown link/image is not a delivered chat attachment.",
   "- When the user explicitly asks to receive a screenshot or another already-registered artifact, call floral_delivery/send_artifact with the artifactId returned by the trusted producer. Never claim delivery unless that tool reports success.",
   "- For terminal-produced files, first create or copy the final attachment into <cwd>/artifacts/outbound, then call floral_delivery/register_outbound_file, then floral_delivery/send_artifact. Do not register or send arbitrary paths outside that staging root.",

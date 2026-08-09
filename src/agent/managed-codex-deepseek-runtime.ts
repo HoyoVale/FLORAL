@@ -44,6 +44,7 @@ import {
 import { CodexAppServerRuntime } from "./codex-app-server.js";
 import { buildCodexDeepSeekConfig } from "./codex-deepseek-config.js";
 import { projectRuntimeNamespace } from "../workspace/project-workspace.js";
+import { resolveEnabledExternalSkillRoots } from "../skills/external-skill-registry.js";
 
 interface ManagedBridge {
   start(): Promise<{ baseUrl: string }>;
@@ -99,6 +100,7 @@ export interface ManagedCodexDeepSeekDependencies {
     permissionProfile?: string | undefined;
     permissionProfileCwd?: string | undefined;
   }) => AgentRuntime) | undefined;
+  resolveExternalSkillRoots?: (() => Promise<string[]>) | undefined;
   prepareCodexConfig?: ((options: {
     legacyConfig: string;
     bridgeBaseUrl: string;
@@ -130,6 +132,7 @@ export class ManagedCodexDeepSeekRuntime implements AgentRuntime {
   #activeModelCatalog: string | undefined;
   #bridgeToken: string | undefined;
   #canonicalWorkspaceRoot: string | undefined;
+  #sharedSkillRoots: string[] = [];
   #stopped = false;
 
   constructor(
@@ -235,6 +238,7 @@ export class ManagedCodexDeepSeekRuntime implements AgentRuntime {
     this.#activeModelCatalog = undefined;
     this.#bridgeToken = undefined;
     this.#canonicalWorkspaceRoot = undefined;
+    this.#sharedSkillRoots = [];
 
     await Promise.all(
       projectSlots.map(async (slot) => {
@@ -254,6 +258,19 @@ export class ManagedCodexDeepSeekRuntime implements AgentRuntime {
     this.#canonicalWorkspaceRoot = await resolveConfiguredWorkspaceRoot(
       this.env.FLORAL_WORKSPACE_ROOT,
     );
+    const builtInSkillRoot = resolve(process.cwd(), "skills");
+    const externalSkillRoots = await (this.dependencies.resolveExternalSkillRoots?.()
+      ?? resolveEnabledExternalSkillRoots({
+        repositoryRoot: process.cwd(),
+        dataDir: this.env.DATA_DIR,
+        strict: false,
+        onWarning: (message) => {
+          process.stderr.write(`agent.stack.external_skills.warning=${message}\n`);
+        },
+      }));
+    this.#sharedSkillRoots = uniqueAbsolutePaths([builtInSkillRoot, ...externalSkillRoots]);
+    process.stderr.write(`agent.stack.skills.roots=${String(this.#sharedSkillRoots.length)}\n`);
+    process.stderr.write(`agent.stack.skills.external=${String(externalSkillRoots.length)}\n`);
     const search = await (this.dependencies.checkSearch?.()
       ?? checkSearxng(
         this.env.SEARXNG_URL,
@@ -457,7 +474,9 @@ export class ManagedCodexDeepSeekRuntime implements AgentRuntime {
     const approvalPolicy = this.options.codexTurnApprovalPolicy ?? "never";
     const sandboxMode = this.options.codexSandboxMode ?? "read-only";
     const approvalsReviewer = this.options.codexApprovalsReviewer ?? "user";
-    const skillRoots = [resolve(process.cwd(), "skills")];
+    const skillRoots = this.#sharedSkillRoots.length > 0
+      ? [...this.#sharedSkillRoots]
+      : [resolve(process.cwd(), "skills")];
     const runtimeOptions = {
       codexHome,
       bridgeToken,
@@ -602,6 +621,7 @@ export class ManagedCodexDeepSeekRuntime implements AgentRuntime {
       config,
       resolve(process.cwd(), this.env.DATA_DIR, "inbound", "feishu"),
       scope,
+      this.#sharedSkillRoots,
     );
     const workspace = await this.#createWorkspace(
       scopedConfig,
@@ -686,6 +706,7 @@ function scopeCodexConfigForProject(
   config: string,
   globalInboundRoot: string,
   scope: ProjectRuntimeScope,
+  sharedSkillRoots: readonly string[],
 ): string {
   const globalAssignment =
     `FLORAL_VISION_INBOUND_ROOT = ${JSON.stringify(globalInboundRoot)}`;
@@ -700,18 +721,25 @@ function scopeCodexConfigForProject(
     throw new Error("Project Codex config already defines the FLORAL permission profile");
   }
 
-  return `${visionScoped.trimEnd()}\n\n${renderProjectPermissionProfile(scope)}\n`;
+  return `${visionScoped.trimEnd()}\n\n${renderProjectPermissionProfile(scope, sharedSkillRoots)}\n`;
 }
 
-function renderProjectPermissionProfile(scope: ProjectRuntimeScope): string {
-  const sharedSkillRoot = resolve(process.cwd(), "skills");
+function renderProjectPermissionProfile(
+  scope: ProjectRuntimeScope,
+  sharedSkillRoots: readonly string[],
+): string {
+  const readableSkillRoots = uniqueAbsolutePaths(
+    sharedSkillRoots.length > 0
+      ? sharedSkillRoots
+      : [resolve(process.cwd(), "skills")],
+  );
   return [
     `[permissions.${FLORAL_PROJECT_PERMISSION_PROFILE}]`,
     'description = "FLORAL project-isolated filesystem profile"',
     "",
     `[permissions.${FLORAL_PROJECT_PERMISSION_PROFILE}.filesystem]`,
     '":minimal" = "read"',
-    `${JSON.stringify(sharedSkillRoot)} = "read"`,
+    ...readableSkillRoots.map((root) => `${JSON.stringify(root)} = "read"`),
     `${JSON.stringify(scope.inboundRoot)} = "read"`,
     "",
     `[permissions.${FLORAL_PROJECT_PERMISSION_PROFILE}.filesystem.":workspace_roots"]`,
@@ -720,6 +748,10 @@ function renderProjectPermissionProfile(scope: ProjectRuntimeScope): string {
     `[permissions.${FLORAL_PROJECT_PERMISSION_PROFILE}.network]`,
     "enabled = false",
   ].join("\n");
+}
+
+function uniqueAbsolutePaths(paths: readonly string[]): string[] {
+  return [...new Set(paths.map((path) => resolve(path)))];
 }
 
 export async function createPersistentCodexWorkspace(

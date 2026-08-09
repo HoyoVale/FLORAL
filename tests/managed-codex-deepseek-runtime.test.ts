@@ -53,7 +53,10 @@ async function createEmptyMcpRegistry() {
   return buildMcpRuntimeRegistry(config);
 }
 
-function setup(options: { runtimeStartError?: Error } = {}) {
+function setup(options: {
+  runtimeStartError?: Error;
+  externalSkillRoots?: string[];
+} = {}) {
   const calls: string[] = [];
   const runtime = new FakeRuntime();
   if (options.runtimeStartError) {
@@ -82,8 +85,11 @@ function setup(options: { runtimeStartError?: Error } = {}) {
         cleanup: async () => { calls.push("workspace.cleanup"); },
       };
     },
-    createRuntime: ({ codexHome, bridgeToken }) => {
+    createRuntime: ({ codexHome, bridgeToken, skillRoots }) => {
       calls.push(`${codexHome}:${bridgeToken}`);
+      if (options.externalSkillRoots) {
+        calls.push(`skillRoots=${skillRoots.join("|")}`);
+      }
       return runtime;
     },
     prepareCodexConfig: async ({ legacyConfig }) => ({
@@ -93,6 +99,7 @@ function setup(options: { runtimeStartError?: Error } = {}) {
     clearCodexShadowReport: async () => undefined,
     clearCodexCutoverReport: async () => undefined,
     clearMcpRegistryAdoptionReport: async () => undefined,
+    resolveExternalSkillRoots: async () => options.externalSkillRoots ?? [],
   });
   return { managed, runtime, calls };
 }
@@ -109,6 +116,24 @@ describe("ManagedCodexDeepSeekRuntime", () => {
       "/tmp/fake-codex:token",
     ]);
     expect(runtime.starts).toBe(1);
+    await managed.stop();
+  });
+
+  it("shares validated external Skill roots through Codex native extraRoots", async () => {
+    const externalRoot = resolve(
+      process.cwd(),
+      "data",
+      "external-skills",
+      "packages",
+      "superpowers",
+      "repository",
+      "skills",
+    );
+    const { managed, calls } = setup({ externalSkillRoots: [externalRoot] });
+    await managed.start();
+    expect(calls).toContain(
+      `skillRoots=${resolve(process.cwd(), "skills")}|${externalRoot}`,
+    );
     await managed.stop();
   });
 
@@ -187,8 +212,10 @@ describe("ManagedCodexDeepSeekRuntime", () => {
     const projectB = join(workspaceRoot, "beta");
     const managedHome = join(root, "codex-runtime");
     const dataDir = join(root, "data");
+    const externalSkillRoot = join(root, "external-skills", "superpowers", "skills");
     await mkdir(projectA, { recursive: true });
     await mkdir(projectB, { recursive: true });
+    await mkdir(externalSkillRoot, { recursive: true });
 
     const bridgeCalls: string[] = [];
     const runtimeByHome = new Map<string, FakeRuntime>();
@@ -219,6 +246,7 @@ describe("ManagedCodexDeepSeekRuntime", () => {
       clearCodexShadowReport: async () => undefined,
       clearCodexCutoverReport: async () => undefined,
       clearMcpRegistryAdoptionReport: async () => undefined,
+      resolveExternalSkillRoots: async () => [externalSkillRoot],
       createWorkspace: async (config, codexHome) => {
         workspaceConfigs.set(codexHome, config);
         return {
@@ -275,6 +303,9 @@ describe("ManagedCodexDeepSeekRuntime", () => {
       expect(workspaceConfigs.get(alphaHome)).toContain('"." = "write"');
       expect(workspaceConfigs.get(alphaHome)).toContain(
         `${JSON.stringify(resolve(process.cwd(), "skills"))} = "read"`,
+      );
+      expect(workspaceConfigs.get(alphaHome)).toContain(
+        `${JSON.stringify(externalSkillRoot)} = "read"`,
       );
       expect(workspaceConfigs.get(alphaHome)).toContain(
         `${JSON.stringify(join(dataDir, "projects", alphaKey, "inbound", "feishu"))} = "read"`,
