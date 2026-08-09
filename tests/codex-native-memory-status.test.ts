@@ -5,6 +5,7 @@ import { describe, expect, it } from "vitest";
 import {
   classifyCodexNativeMemoryLifecycle,
   parseCodexMemoriesFeatureList,
+  readCodexNativeMemoryRuntimeStatus,
   renderCodexNativeMemoryRuntimeLines,
   resolveCodexExecutableForProbe,
 } from "../src/agent/codex-native-memory-status.js";
@@ -103,6 +104,37 @@ describe("Codex native memory status", () => {
       "codex_memory_lifecycle=inactive",
       "codex_memory_rollout_summaries=0",
     ]));
+  });
+
+  it("recognizes the official memory_summary v1 header with LF and CRLF", async () => {
+    for (const content of ["v1\n# Summary\n", "v1\r\n# Summary\r\n"]) {
+      const root = await mkdtemp(join(tmpdir(), "floral-memory-summary-schema-"));
+      try {
+        const managedHome = join(root, "codex-home");
+        await mkdir(join(managedHome, "memories"), { recursive: true });
+        await writeFile(
+          join(managedHome, "memories", "memory_summary.md"),
+          content,
+          "utf8",
+        );
+
+        const status = await readCodexNativeMemoryRuntimeStatus({
+          repositoryRoot: root,
+          managedHome,
+          config: {
+            enabled: true,
+            use_memories: true,
+            generate_memories: true,
+            disable_on_external_context: false,
+          },
+        });
+
+        expect(status.memorySummary).toBe("present");
+        expect(status.memorySummarySchema).toBe("v1");
+      } finally {
+        await rm(root, { recursive: true, force: true });
+      }
+    }
   });
 
   it("falls back to the official standalone Codex path when the interactive PATH is incomplete", async () => {

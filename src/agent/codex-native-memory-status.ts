@@ -182,7 +182,7 @@ async function readMemorySummarySchema(
     const { bytesRead } = await handle.read(buffer, 0, buffer.length, 0);
     if (bytesRead === 0) return "invalid";
     const prefix = buffer.subarray(0, bytesRead).toString("utf8");
-    if (prefix === "v1" || prefix.startsWith("v1\\n") || prefix.startsWith("v1\\r\\n")) {
+    if (prefix === "v1" || prefix.startsWith("v1\n") || prefix.startsWith("v1\r\n")) {
       return "v1";
     }
     return "invalid";
