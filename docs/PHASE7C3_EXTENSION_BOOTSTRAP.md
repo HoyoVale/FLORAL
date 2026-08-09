@@ -102,10 +102,9 @@ Mutation handling returns to the dynamic tool first and schedules the reload asy
 
 `mcpServerStatus/list` is the authority for MCP readiness. FLORAL omits the optional `detail` field for pinned Codex 0.146.1 compatibility; the server default is sufficient for tool/auth inspection. Extension status commands route by Project `cwd`, and only pass a persisted `threadId` after the managed runtime has confirmed that the thread belongs to that Project runtime. This keeps post-restart `/apps` and `/mcp` probes out of the global CODEX_HOME.
 
-FLORAL does not claim an MCP capability is usable merely because it is present in registry/config. A usable runtime must report:
+FLORAL does not claim an MCP capability is usable merely because it is present in registry/config. A usable runtime must report FLORAL readiness `ready` plus a non-empty discovered tool set.
 
-- server startup status `ready`, and
-- discovered tools.
+Some Codex builds omit startup status from `mcpServerStatus/list` while still returning initialized tools. In that compatibility shape, FLORAL infers `ready` from a non-empty tool set. Explicit `starting`, `failed`, or `cancelled` states still override that inference, and startup transition notifications remain the authoritative lifecycle signal when present.
 
 Authentication/failure details are surfaced when available.
 

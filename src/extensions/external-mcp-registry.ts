@@ -47,7 +47,7 @@ export interface ExternalMcpCatalogEntry {
   supplyChain: string;
 }
 
-export const CURATED_EXTERNAL_MCP = {
+export const CURATED_EXTERNAL_MCP: Readonly<Record<ExternalMcpCatalogId, ExternalMcpCatalogEntry>> = {
   "github-readonly": {
     id: "github-readonly",
     serverId: "github",
@@ -97,7 +97,7 @@ export const CURATED_EXTERNAL_MCP = {
     authentication: "none",
     supplyChain: `npm:chrome-devtools-mcp@${CHROME_DEVTOOLS_MCP_VERSION}`,
   },
-} as const satisfies Record<ExternalMcpCatalogId, ExternalMcpCatalogEntry>;
+};
 
 export interface ExternalMcpRegistryEntry {
   id: ExternalMcpCatalogId;

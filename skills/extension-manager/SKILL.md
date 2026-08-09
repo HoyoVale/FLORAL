@@ -49,7 +49,7 @@ For install/enable/disable/remove:
 3. Wait for FLORAL's one-shot user approval. Never retry through shell or direct config edits after denial.
 4. The mutation may report `hot_reload=scheduled`; do not claim readiness yet.
 5. On a later turn or after reload completes, call `mcp_status`.
-6. Treat the capability as ready only when the server reports `status=ready` and exposes tools.
+6. Treat the capability as ready only when FLORAL reports `status=ready` and exposes tools. On Codex builds where `mcpServerStatus/list` omits startup status, FLORAL may infer `ready` from a non-empty discovered tool set; explicit starting/failed/cancelled states still take precedence.
 
 ## GitHub authentication
 
@@ -75,5 +75,5 @@ Do not fall back to AppleScript, `osascript`, `cliclick`, coordinate automation,
 Before reporting an extension bootstrap complete, show runtime evidence:
 
 - App: effective callable state when the installed-runtime API is available, or clearly label compatibility-fallback uncertainty.
-- MCP: `status=ready` plus discovered tools; include auth/failure state when present.
+- MCP: FLORAL `status=ready` plus discovered tools; readiness may be tool-inferred when the list RPC omits startup state. Include auth/failure state when present.
 - Plugin: confirmation must come from the supported Codex plugin surface or from the bundled capability appearing in subsequent Codex discovery; a feature flag alone is not installation evidence.

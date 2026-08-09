@@ -323,7 +323,6 @@ lines.on("line", (line) => {
         data: [
           {
             name: "github",
-            status: "ready",
             authStatus: "authenticated",
             tools: {
               search_repositories: { annotations: { readOnlyHint: true } },
@@ -331,7 +330,6 @@ lines.on("line", (line) => {
           },
           {
             name: "chrome-devtools",
-            status: "ready",
             authStatus: "not-required",
             tools: [
               { name: "navigate_page", annotations: { readOnlyHint: false } },

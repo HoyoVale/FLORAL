@@ -2860,12 +2860,6 @@ function parseMcpServerStatus(value: unknown): AgentMcpServerSummary | undefined
   const name = readBoundedPlainText(record.name ?? record.serverName, 160);
   if (!name) return undefined;
   const rawStatus = readBoundedPlainText(record.status, 80)?.toLowerCase();
-  const status: AgentMcpServerSummary["status"] = rawStatus === "starting"
-    || rawStatus === "ready"
-    || rawStatus === "failed"
-    || rawStatus === "cancelled"
-    ? rawStatus
-    : "unknown";
   const authStatus = readBoundedPlainText(
     record.authStatus ?? record.authenticationStatus ?? readStatusScalar(record.auth),
     240,
@@ -2875,6 +2869,16 @@ function parseMcpServerStatus(value: unknown): AgentMcpServerSummary | undefined
     500,
   );
   const tools = parseMcpToolSummaries(record.tools);
+  const status: AgentMcpServerSummary["status"] = rawStatus === "starting"
+    || rawStatus === "ready"
+    || rawStatus === "failed"
+    || rawStatus === "cancelled"
+    ? rawStatus
+    : failureReason
+      ? "failed"
+      : tools.length > 0
+        ? "ready"
+        : "unknown";
   return {
     name,
     status,

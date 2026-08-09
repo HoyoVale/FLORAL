@@ -215,7 +215,7 @@ export function formatAgentMcpServers(servers: AgentMcpServerSummary[]): string 
       ].join(" "),
     );
   });
-  lines.push("", "只有 status=ready 且工具已发现，才能作为当前 runtime 的可用 MCP 证据。 ");
+  lines.push("", "status=ready 表示 App Server 明确报告 ready，或当前 status/list 已返回非空工具集；明确 failed/cancelled/starting 状态仍优先。 ");
   return lines.join("\n").trimEnd();
 }
 

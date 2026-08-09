@@ -363,7 +363,7 @@ describe("CodexAppServerRuntime", () => {
     }
   });
 
-  it("lists MCP startup/auth/tool state through the native app-server status API", async () => {
+  it("treats discovered MCP tools as ready when status/list omits startup status", async () => {
     const runtime = createRuntime("normal");
     try {
       await runtime.start();
