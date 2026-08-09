@@ -41,6 +41,21 @@ function hasFloralSkillTools(params) {
   ]);
 }
 
+function hasFloralExtensionTools(params) {
+  const dynamicTools = params?.dynamicTools;
+  if (!Array.isArray(dynamicTools)) return false;
+  const namespace = dynamicTools.find((entry) =>
+    entry?.type === "namespace" && entry?.name === "floral_extensions"
+  );
+  if (!namespace || !Array.isArray(namespace.tools)) return false;
+  const names = namespace.tools.map((tool) => tool?.name).sort();
+  return JSON.stringify(names) === JSON.stringify([
+    "installed_apps",
+    "native_status",
+    "read_apps",
+  ]);
+}
+
 function hasFloralDeliveryTools(params) {
   const dynamicTools = params?.dynamicTools;
   if (!Array.isArray(dynamicTools)) return false;
@@ -208,6 +223,95 @@ lines.on("line", (line) => {
     return;
   }
 
+  if (message.method === "experimentalFeature/list") {
+    send({
+      id: message.id,
+      result: {
+        data: [
+          {
+            name: "apps",
+            stage: "beta",
+            displayName: "Apps",
+            description: "Connector Apps",
+            enabled: true,
+            defaultEnabled: true,
+          },
+          {
+            name: "plugins",
+            stage: "underDevelopment",
+            displayName: null,
+            description: null,
+            enabled: true,
+            defaultEnabled: false,
+          },
+        ],
+        nextCursor: null,
+      },
+    });
+    return;
+  }
+
+  if (message.method === "app/installed") {
+    send({
+      id: message.id,
+      result: {
+        apps: [
+          {
+            id: "github",
+            runtimeName: "GitHub",
+            enabled: true,
+            callable: true,
+          },
+          {
+            id: "disabled-app",
+            runtimeName: "Disabled App",
+            enabled: false,
+            callable: false,
+          },
+        ],
+      },
+    });
+    return;
+  }
+
+  if (message.method === "app/read") {
+    const ids = message.params?.appIds;
+    if (!Array.isArray(ids) || ids.length < 1 || ids.length > 100) {
+      send({ id: message.id, error: { code: -32602, message: "invalid app ids" } });
+      return;
+    }
+    const apps = ids.includes("github")
+      ? [{
+          id: "github",
+          name: "GitHub",
+          description: "Work with GitHub repositories and pull requests.",
+          iconUrl: null,
+          iconUrlDark: null,
+          distributionChannel: null,
+          installUrl: null,
+          pluginDisplayNames: ["GitHub"],
+          toolSummaries: message.params?.includeTools === true
+            ? [{
+                name: "search_repositories",
+                title: "Search repositories",
+                description: "Search GitHub repositories.",
+                isEnabled: true,
+                disabledReason: null,
+                isReadOnly: true,
+              }]
+            : [],
+        }]
+      : [];
+    send({
+      id: message.id,
+      result: {
+        apps,
+        missingAppIds: ids.filter((id) => id !== "github"),
+      },
+    });
+    return;
+  }
+
   if (scenario === "thread-management" && message.method === "thread/list") {
     if (typeof message.params?.cwd !== "string" || !isAbsolute(message.params.cwd)) {
       send({ id: message.id, error: { code: -32602, message: "thread list cwd must be absolute" } });
@@ -255,6 +359,13 @@ lines.on("line", (line) => {
     }
     if (scenario === "delivery-dynamic-tools" && !hasFloralDeliveryTools(message.params)) {
       send({ id: message.id, error: { code: -32602, message: "missing FLORAL delivery dynamic tools" } });
+      return;
+    }
+    if (
+      (scenario === "extension-dynamic-tools" || scenario === "extension-installed-apps")
+      && !hasFloralExtensionTools(message.params)
+    ) {
+      send({ id: message.id, error: { code: -32602, message: "missing FLORAL extension dynamic tools" } });
       return;
     }
     if (
@@ -683,6 +794,22 @@ lines.on("line", (line) => {
         return;
       }
 
+      if (scenario === "extension-installed-apps") {
+        send({
+          id: "dynamic_1",
+          method: "item/tool/call",
+          params: {
+            threadId: activeThreadId,
+            turnId: activeTurnId,
+            callId: "call_extensions_apps_1",
+            namespace: "floral_extensions",
+            tool: "installed_apps",
+            arguments: {},
+          },
+        });
+        return;
+      }
+
       if (scenario === "skill-control-disable") {
         send({
           id: "dynamic_1",
@@ -994,6 +1121,16 @@ lines.on("line", (line) => {
       && text.includes("artifactId=artifact-screen-fixture")
     ) {
       sendSuccess(activeThreadId, activeTurnId, "delivery send complete");
+      return;
+    }
+    if (
+      scenario === "extension-installed-apps"
+      && success === true
+      && text.includes("codex_apps.installed=2")
+      && text.includes("id=github")
+      && text.includes("callable=true")
+    ) {
+      sendSuccess(activeThreadId, activeTurnId, "extension apps complete");
       return;
     }
     if (

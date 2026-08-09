@@ -1,5 +1,8 @@
 import { isAbsolute, relative, resolve, sep } from "node:path";
 import type {
+  AgentAppReadResult,
+  AgentAppSummary,
+  AgentNativeFeatureSummary,
   AgentRuntime,
   AgentSkillSummary,
   AgentThreadSummary,
@@ -69,6 +72,43 @@ interface SkillsListResponse {
     }> | undefined;
     errors?: unknown[] | undefined;
   }>;
+}
+
+interface AppInstalledResponse {
+  apps?: Array<{
+    id?: unknown;
+    runtimeName?: unknown;
+    enabled?: unknown;
+    callable?: unknown;
+  }> | undefined;
+}
+
+interface AppReadResponse {
+  apps?: Array<{
+    id?: unknown;
+    name?: unknown;
+    description?: unknown;
+    pluginDisplayNames?: unknown;
+    toolSummaries?: unknown;
+  }> | undefined;
+  missingAppIds?: unknown;
+}
+
+interface ExperimentalFeatureListResponse {
+  data?: Array<{
+    name?: unknown;
+    stage?: unknown;
+    enabled?: unknown;
+    defaultEnabled?: unknown;
+  }> | undefined;
+  nextCursor?: unknown;
+}
+
+interface ExtensionDiscoverySnapshot {
+  features?: AgentNativeFeatureSummary[] | undefined;
+  installedApps?: AgentAppSummary[] | undefined;
+  appDetails?: AgentAppReadResult | undefined;
+  errors: string[];
 }
 
 interface TurnCompletedParams {
@@ -164,6 +204,7 @@ export const FLORAL_AGENT_DEVELOPER_INSTRUCTIONS = [
   "- When the user explicitly asks to receive a screenshot or another already-registered artifact, call floral_delivery/send_artifact with the artifactId returned by the trusted producer. Never claim delivery unless that tool reports success.",
   "- For terminal-produced files, first create or copy the final attachment into <cwd>/artifacts/outbound, then call floral_delivery/register_outbound_file, then floral_delivery/send_artifact. Do not register or send arbitrary paths outside that staging root.",
   "- Manage Skills through floral_skills and Codex-native Skill discovery. Project Skills may be created under <cwd>/.agents/skills. Never edit data/external-skills/registry.json directly or use shell/git to bypass External Skill approval.",
+  "- Discover Codex connector Apps and extension feature state through floral_extensions before claiming GitHub, Browser, Chrome, or another native extension is available. app/installed and app/read are the authoritative App metadata paths. FLORAL does not call plugin/list, plugin/read, plugin/install, plugin/uninstall, or marketplace mutation because upstream marks those Plugin RPCs under development for production clients.",
 ].join("\n");
 
 const FLORAL_DELIVERY_DYNAMIC_TOOLS = [
@@ -319,9 +360,66 @@ const FLORAL_SKILLS_DYNAMIC_TOOLS = [
   },
 ] as const;
 
+const FLORAL_EXTENSIONS_DYNAMIC_TOOLS = [
+  {
+    type: "namespace",
+    name: "floral_extensions",
+    description: "Read-only Codex-native extension discovery. Uses stable App RPCs plus experimental feature metadata; Plugin catalog/install RPCs remain blocked because upstream marks them under development for production clients.",
+    tools: [
+      {
+        type: "function",
+        name: "native_status",
+        description: "Report Codex native apps/plugins feature lifecycle state and FLORAL Plugin API maturity policy.",
+        inputSchema: {
+          type: "object",
+          properties: {},
+          additionalProperties: false,
+        },
+        deferLoading: false,
+      },
+      {
+        type: "function",
+        name: "installed_apps",
+        description: "Read the per-turn snapshot of installed Codex connector Apps for the current runtime/thread, including effective enabled and callable state.",
+        inputSchema: {
+          type: "object",
+          properties: {},
+          additionalProperties: false,
+        },
+        deferLoading: false,
+      },
+      {
+        type: "function",
+        name: "read_apps",
+        description: "Read per-turn cached metadata and display-only tool summaries for installed Codex App ids. This does not authorize or invoke App tools.",
+        inputSchema: {
+          type: "object",
+          properties: {
+            app_ids: {
+              type: "array",
+              minItems: 1,
+              maxItems: 20,
+              items: {
+                type: "string",
+                minLength: 1,
+                maxLength: 160,
+              },
+            },
+            include_tools: { type: "boolean" },
+          },
+          required: ["app_ids"],
+          additionalProperties: false,
+        },
+        deferLoading: false,
+      },
+    ],
+  },
+] as const;
+
 const FLORAL_DYNAMIC_TOOLS = [
   ...FLORAL_DELIVERY_DYNAMIC_TOOLS,
   ...FLORAL_SKILLS_DYNAMIC_TOOLS,
+  ...FLORAL_EXTENSIONS_DYNAMIC_TOOLS,
 ] as const;
 
 export class CodexAppServerRuntime implements AgentRuntime {
@@ -349,6 +447,7 @@ export class CodexAppServerRuntime implements AgentRuntime {
   readonly #artifactRegistrationHandlers = new Map<string, AgentArtifactRegistrationHandler>();
   readonly #artifactDeliveryHandlers = new Map<string, AgentArtifactDeliveryHandler>();
   readonly #threadCwds = new Map<string, string>();
+  readonly #extensionSnapshots = new Map<string, ExtensionDiscoverySnapshot>();
   readonly #approvalItemSummaries = new Map<string, string>();
   readonly #inFlightMcpToolCalls = new Map<string, InFlightMcpToolCall>();
   #skillsDirty = false;
@@ -505,6 +604,82 @@ export class CodexAppServerRuntime implements AgentRuntime {
     );
   }
 
+  async listInstalledApps(input: {
+    cwd: string;
+    threadId?: string | undefined;
+    forceRefresh?: boolean | undefined;
+  }): Promise<AgentAppSummary[]> {
+    this.#ensureStarted();
+    resolve(input.cwd);
+    const response = await this.#client.request<AppInstalledResponse>(
+      "app/installed",
+      {
+        ...(input.threadId ? { threadId: input.threadId } : {}),
+        forceRefresh: input.forceRefresh === true,
+      },
+    );
+    const apps = Array.isArray(response?.apps) ? response.apps : [];
+    return apps.flatMap((app) => {
+      const id = readBoundedPlainText(app?.id, 160);
+      if (!id || typeof app?.enabled !== "boolean" || typeof app?.callable !== "boolean") {
+        return [];
+      }
+      const runtimeName = readBoundedPlainText(app?.runtimeName, 200);
+      return [{
+        id,
+        ...(runtimeName ? { runtimeName } : {}),
+        enabled: app.enabled,
+        callable: app.callable,
+      } satisfies AgentAppSummary];
+    });
+  }
+
+  async readApps(input: {
+    cwd: string;
+    appIds: string[];
+    includeTools?: boolean | undefined;
+  }): Promise<AgentAppReadResult> {
+    this.#ensureStarted();
+    resolve(input.cwd);
+    const appIds = normalizeAppIds(input.appIds);
+    if (appIds.length === 0) {
+      throw new Error("At least one valid Codex App id is required");
+    }
+    const response = await this.#client.request<AppReadResponse>(
+      "app/read",
+      {
+        appIds,
+        includeTools: input.includeTools === true,
+      },
+    );
+    return parseAppReadResponse(response);
+  }
+
+  async listNativeExtensionFeatures(input: {
+    cwd: string;
+  }): Promise<AgentNativeFeatureSummary[]> {
+    this.#ensureStarted();
+    resolve(input.cwd);
+    const response = await this.#client.request<ExperimentalFeatureListResponse>(
+      "experimentalFeature/list",
+      { cursor: null, limit: 100 },
+    );
+    const data = Array.isArray(response?.data) ? response.data : [];
+    return data.flatMap((feature) => {
+      const name = readBoundedPlainText(feature?.name, 120);
+      if (name !== "apps" && name !== "plugins") return [];
+      if (typeof feature?.enabled !== "boolean" || typeof feature?.defaultEnabled !== "boolean") {
+        return [];
+      }
+      return [{
+        name,
+        stage: normalizeFeatureStage(feature?.stage),
+        enabled: feature.enabled,
+        defaultEnabled: feature.defaultEnabled,
+      } satisfies AgentNativeFeatureSummary];
+    });
+  }
+
   async listThreads(input: {
     cwd: string;
     limit?: number | undefined;
@@ -553,6 +728,7 @@ export class CodexAppServerRuntime implements AgentRuntime {
     this.#artifactRegistrationHandlers.delete(normalized);
     this.#artifactDeliveryHandlers.delete(normalized);
     this.#threadCwds.delete(normalized);
+    this.#extensionSnapshots.delete(normalized);
     this.#deleteApprovalItemSummaries(normalized);
     this.#deleteInFlightMcpToolCalls(normalized);
   }
@@ -729,6 +905,7 @@ export class CodexAppServerRuntime implements AgentRuntime {
     this.#client.on("exit", exitListener);
 
     try {
+      await this.#refreshExtensionSnapshot(threadId, cwd);
       const turnInput: Array<Record<string, unknown>> = [
         { type: "text", text: request.text },
       ];
@@ -842,6 +1019,7 @@ export class CodexAppServerRuntime implements AgentRuntime {
       this.#artifactRegistrationHandlers.delete(threadId);
       this.#artifactDeliveryHandlers.delete(threadId);
       this.#threadCwds.delete(threadId);
+      this.#extensionSnapshots.delete(threadId);
       this.#deleteApprovalItemSummaries(threadId);
       this.#deleteInFlightMcpToolCalls(threadId);
     }
@@ -870,6 +1048,7 @@ export class CodexAppServerRuntime implements AgentRuntime {
     this.#artifactRegistrationHandlers.clear();
     this.#artifactDeliveryHandlers.clear();
     this.#threadCwds.clear();
+    this.#extensionSnapshots.clear();
     this.#approvalItemSummaries.clear();
     this.#inFlightMcpToolCalls.clear();
     await this.#client.stop();
@@ -950,6 +1129,10 @@ export class CodexAppServerRuntime implements AgentRuntime {
       }
       if (namespace === "floral_skills") {
         await this.#handleSkillDynamicToolCall(request);
+        return;
+      }
+      if (namespace === "floral_extensions") {
+        await this.#handleExtensionDynamicToolCall(request);
         return;
       }
       this.#respondSafely(
@@ -1429,6 +1612,174 @@ export class CodexAppServerRuntime implements AgentRuntime {
       dynamicToolResponse(
         false,
         "skill_management=denied\nreason=unsupported-tool",
+      ),
+    );
+  }
+
+  async #refreshExtensionSnapshot(
+    threadId: string,
+    cwd: string,
+  ): Promise<void> {
+    const snapshot: ExtensionDiscoverySnapshot = { errors: [] };
+    const [featureResult, installedResult] = await Promise.allSettled([
+      this.listNativeExtensionFeatures({ cwd }),
+      this.listInstalledApps({ cwd, threadId, forceRefresh: false }),
+    ]);
+
+    if (featureResult.status === "fulfilled") {
+      snapshot.features = featureResult.value;
+    } else {
+      snapshot.errors.push("experimentalFeature/list");
+    }
+
+    if (installedResult.status === "fulfilled") {
+      snapshot.installedApps = installedResult.value;
+      const appIds = installedResult.value.map((app) => app.id).slice(0, 100);
+      if (appIds.length > 0) {
+        try {
+          snapshot.appDetails = await this.readApps({
+            cwd,
+            appIds,
+            includeTools: true,
+          });
+        } catch {
+          snapshot.errors.push("app/read");
+        }
+      } else {
+        snapshot.appDetails = { apps: [], missingAppIds: [] };
+      }
+    } else {
+      snapshot.errors.push("app/installed");
+    }
+
+    this.#extensionSnapshots.set(threadId, snapshot);
+    if (snapshot.errors.length > 0) {
+      process.stderr.write(
+        `agent.stack.extensions.snapshot=partial:${snapshot.errors.join(",")}\n`,
+      );
+    } else {
+      process.stderr.write("agent.stack.extensions.snapshot=ok\n");
+    }
+  }
+
+  async #handleExtensionDynamicToolCall(
+    request: CodexServerRequest,
+  ): Promise<void> {
+    const params = asPlainRecord(request.params);
+    const threadId = readString(params?.threadId);
+    const turnId = readString(params?.turnId);
+    const tool = readString(params?.tool);
+    const activeTurnId = threadId ? this.#activeTurns.get(threadId) : undefined;
+    const cwd = threadId ? this.#threadCwds.get(threadId) : undefined;
+    if (!threadId || !turnId || activeTurnId !== turnId || !tool || !cwd) {
+      this.#respondSafely(
+        request.id,
+        dynamicToolResponse(
+          false,
+          "extension_discovery=denied\nreason=invalid-context",
+        ),
+      );
+      return;
+    }
+
+    const argumentsValue = asPlainRecord(params?.arguments);
+    if (!argumentsValue) {
+      this.#respondSafely(
+        request.id,
+        dynamicToolResponse(
+          false,
+          "extension_discovery=denied\nreason=invalid-arguments",
+        ),
+      );
+      return;
+    }
+
+    try {
+      const snapshot = this.#extensionSnapshots.get(threadId);
+      if (!snapshot) {
+        throw new Error("extension snapshot unavailable");
+      }
+
+      if (tool === "native_status") {
+        if (!snapshot.features) {
+          throw new Error("native feature snapshot unavailable");
+        }
+        this.#respondSafely(
+          request.id,
+          dynamicToolResponse(
+            true,
+            formatNativeExtensionStatus(snapshot.features),
+          ),
+        );
+        return;
+      }
+
+      if (tool === "installed_apps") {
+        if (!snapshot.installedApps) {
+          throw new Error("installed App snapshot unavailable");
+        }
+        this.#respondSafely(
+          request.id,
+          dynamicToolResponse(
+            true,
+            formatInstalledAppsForTool(snapshot.installedApps),
+          ),
+        );
+        return;
+      }
+
+      if (tool === "read_apps") {
+        const appIds = readAppIdArray(argumentsValue.app_ids);
+        const includeTools = argumentsValue.include_tools;
+        if (
+          !appIds
+          || (includeTools !== undefined && typeof includeTools !== "boolean")
+          || !snapshot.appDetails
+        ) {
+          throw new Error("invalid app read arguments or snapshot unavailable");
+        }
+        const byId = new Map(
+          snapshot.appDetails.apps.map((app) => [app.id, app] as const),
+        );
+        const apps = appIds.flatMap((id) => {
+          const app = byId.get(id);
+          if (!app) return [];
+          if (includeTools === false) {
+            return [{ ...app, tools: [] }];
+          }
+          return [app];
+        });
+        const missingAppIds = appIds.filter((id) => !byId.has(id));
+        this.#respondSafely(
+          request.id,
+          dynamicToolResponse(
+            true,
+            formatAppReadForTool({ apps, missingAppIds }),
+          ),
+        );
+        return;
+      }
+    } catch (error) {
+      process.stderr.write(
+        `agent.stack.extensions.read=error:${safeDynamicToolToken(
+          error instanceof Error ? error.name : "Error",
+        )}\n`,
+      );
+      this.#respondSafely(
+        request.id,
+        dynamicToolResponse(
+          false,
+          "extension_discovery=unavailable\nreason=app-server-version-or-runtime-state",
+        ),
+      );
+      return;
+    }
+
+    this.#respondSafely(
+      request.id,
+      dynamicToolResponse(
+        false,
+        "extension_discovery=denied\nreason=unsupported-tool",
       ),
     );
   }
@@ -2156,6 +2507,172 @@ function boundedDynamicToolText(value: string): string {
   return normalized.length <= 12_000
     ? normalized
     : `${normalized.slice(0, 11_980)}\ntruncated=true`;
+}
+
+function normalizeFeatureStage(
+  value: unknown,
+): AgentNativeFeatureSummary["stage"] {
+  return value === "beta"
+    || value === "underDevelopment"
+    || value === "stable"
+    || value === "deprecated"
+    || value === "removed"
+    ? value
+    : "unknown";
+}
+
+function readBoundedPlainText(
+  value: unknown,
+  maxLength: number,
+): string | undefined {
+  if (typeof value !== "string") return undefined;
+  const normalized = value
+    .replace(/[\u0000-\u001F\u007F]+/gu, " ")
+    .replace(/\s+/gu, " ")
+    .trim();
+  if (!normalized) return undefined;
+  return Array.from(normalized).slice(0, maxLength).join("");
+}
+
+function normalizeAppIds(values: readonly string[]): string[] {
+  const output: string[] = [];
+  const seen = new Set<string>();
+  for (const value of values.slice(0, 100)) {
+    const id = readBoundedPlainText(value, 160);
+    if (!id || seen.has(id)) continue;
+    seen.add(id);
+    output.push(id);
+  }
+  return output;
+}
+
+function readAppIdArray(value: unknown): string[] | undefined {
+  if (!Array.isArray(value) || value.length < 1 || value.length > 20) {
+    return undefined;
+  }
+  if (!value.every((entry) => typeof entry === "string")) return undefined;
+  const normalized = normalizeAppIds(value as string[]);
+  return normalized.length > 0 ? normalized : undefined;
+}
+
+function parseAppReadResponse(response: AppReadResponse): AgentAppReadResult {
+  const apps = Array.isArray(response?.apps) ? response.apps : [];
+  const outputApps = apps.flatMap((app) => {
+    const id = readBoundedPlainText(app?.id, 160);
+    const name = readBoundedPlainText(app?.name, 200);
+    if (!id || !name) return [];
+    const description = readBoundedPlainText(app?.description, 1_000);
+    const pluginDisplayNames = Array.isArray(app?.pluginDisplayNames)
+      ? app.pluginDisplayNames.flatMap((value) => {
+          const text = readBoundedPlainText(value, 200);
+          return text ? [text] : [];
+        }).slice(0, 50)
+      : [];
+    const toolSummaries = Array.isArray(app?.toolSummaries)
+      ? app.toolSummaries
+      : [];
+    const tools: AgentAppReadResult["apps"][number]["tools"] = toolSummaries.flatMap((value) => {
+      const tool = asPlainRecord(value);
+      const toolName = readBoundedPlainText(tool?.name, 200);
+      if (
+        !toolName
+        || typeof tool?.isEnabled !== "boolean"
+        || typeof tool?.isReadOnly !== "boolean"
+      ) {
+        return [];
+      }
+      const title = readBoundedPlainText(tool?.title, 240);
+      const toolDescription = readBoundedPlainText(tool?.description, 1_000);
+      const disabledReason = readBoundedPlainText(tool?.disabledReason, 500);
+      return [{
+        name: toolName,
+        ...(title ? { title } : {}),
+        ...(toolDescription ? { description: toolDescription } : {}),
+        enabled: tool.isEnabled,
+        readOnly: tool.isReadOnly,
+        ...(disabledReason ? { disabledReason } : {}),
+      }];
+    }).slice(0, 200);
+    return [{
+      id,
+      name,
+      ...(description ? { description } : {}),
+      pluginDisplayNames,
+      tools,
+    }];
+  });
+  const missingAppIds = Array.isArray(response?.missingAppIds)
+    ? response.missingAppIds.flatMap((value) => {
+        const id = readBoundedPlainText(value, 160);
+        return id ? [id] : [];
+      }).slice(0, 100)
+    : [];
+  return { apps: outputApps, missingAppIds };
+}
+
+function formatNativeExtensionStatus(
+  features: AgentNativeFeatureSummary[],
+): string {
+  const byName = new Map(features.map((feature) => [feature.name, feature]));
+  const format = (name: "apps" | "plugins"): string => {
+    const feature = byName.get(name);
+    return feature
+      ? `${name}.stage=${feature.stage} ${name}.enabled=${String(feature.enabled)} ${name}.default_enabled=${String(feature.defaultEnabled)}`
+      : `${name}.stage=unknown ${name}.enabled=unknown ${name}.default_enabled=unknown`;
+  };
+  return [
+    "codex_extensions=read-only",
+    format("apps"),
+    format("plugins"),
+    "apps.discovery=app/installed+app/read",
+    "plugins.catalog_rpc=blocked-by-floral",
+    "plugins.catalog_reason=upstream-under-development-for-production-clients",
+    "plugins.install_rpc=blocked-by-floral",
+    "browser.availability=not-inferred-from-plugin-feature",
+  ].join("\n");
+}
+
+function formatInstalledAppsForTool(apps: AgentAppSummary[]): string {
+  const lines = [
+    `codex_apps.installed=${String(apps.length)}`,
+    `codex_apps.callable=${String(apps.filter((app) => app.callable).length)}`,
+  ];
+  for (const app of apps.slice(0, 100)) {
+    lines.push([
+      `id=${safeDynamicToolToken(app.id)}`,
+      `name=${JSON.stringify(app.runtimeName ?? app.id)}`,
+      `enabled=${String(app.enabled)}`,
+      `callable=${String(app.callable)}`,
+    ].join(" "));
+  }
+  return lines.join("\n");
+}
+
+function formatAppReadForTool(result: AgentAppReadResult): string {
+  const lines = [
+    `codex_apps.read=${String(result.apps.length)}`,
+    `codex_apps.missing=${String(result.missingAppIds.length)}`,
+  ];
+  for (const app of result.apps) {
+    lines.push(
+      `app=${safeDynamicToolToken(app.id)} name=${JSON.stringify(app.name)} plugins=${JSON.stringify(app.pluginDisplayNames)}`,
+    );
+    for (const tool of app.tools.slice(0, 100)) {
+      lines.push([
+        `tool=${safeDynamicToolToken(tool.name)}`,
+        `enabled=${String(tool.enabled)}`,
+        `read_only=${String(tool.readOnly)}`,
+        ...(tool.title ? [`title=${JSON.stringify(tool.title)}`] : []),
+        ...(tool.disabledReason
+          ? [`disabled_reason=${JSON.stringify(tool.disabledReason)}`]
+          : []),
+      ].join(" "));
+    }
+  }
+  if (result.missingAppIds.length > 0) {
+    lines.push(`missing_ids=${JSON.stringify(result.missingAppIds)}`);
+  }
+  return boundedDynamicToolText(lines.join("\n"));
 }
 
 function dynamicToolResponse(

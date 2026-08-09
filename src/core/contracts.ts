@@ -128,6 +128,67 @@ export function supportsAgentSkillControl(
     && typeof candidate.setSkillRoots === "function";
 }
 
+export interface AgentAppSummary {
+  id: string;
+  runtimeName?: string | undefined;
+  enabled: boolean;
+  callable: boolean;
+}
+
+export interface AgentAppToolSummary {
+  name: string;
+  title?: string | undefined;
+  description?: string | undefined;
+  enabled: boolean;
+  readOnly: boolean;
+  disabledReason?: string | undefined;
+}
+
+export interface AgentAppDetail {
+  id: string;
+  name: string;
+  description?: string | undefined;
+  pluginDisplayNames: string[];
+  tools: AgentAppToolSummary[];
+}
+
+export interface AgentAppReadResult {
+  apps: AgentAppDetail[];
+  missingAppIds: string[];
+}
+
+export interface AgentNativeFeatureSummary {
+  name: string;
+  stage: "beta" | "underDevelopment" | "stable" | "deprecated" | "removed" | "unknown";
+  enabled: boolean;
+  defaultEnabled: boolean;
+}
+
+export interface AgentExtensionDiscoveryRuntime {
+  listInstalledApps(input: {
+    cwd: string;
+    threadId?: string | undefined;
+    forceRefresh?: boolean | undefined;
+  }): Promise<AgentAppSummary[]>;
+  readApps(input: {
+    cwd: string;
+    appIds: string[];
+    includeTools?: boolean | undefined;
+  }): Promise<AgentAppReadResult>;
+  listNativeExtensionFeatures(input: {
+    cwd: string;
+  }): Promise<AgentNativeFeatureSummary[]>;
+}
+
+export function supportsAgentExtensionDiscovery(
+  runtime: AgentRuntime,
+): runtime is AgentRuntime & AgentExtensionDiscoveryRuntime {
+  const candidate = runtime as Partial<AgentExtensionDiscoveryRuntime>;
+  return typeof candidate.listInstalledApps === "function"
+    && typeof candidate.readApps === "function"
+    && typeof candidate.listNativeExtensionFeatures === "function";
+}
+
 export interface AgentProjectRuntimeStorage {
   resolveRuntimeHome(input: { cwd: string }): Promise<string>;
 }

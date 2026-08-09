@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type {
+  AgentExtensionDiscoveryRuntime,
   AgentRuntime,
   AgentSkillRuntime,
   ChatTransport,
@@ -108,6 +109,39 @@ class SkillAgent extends TestAgent implements AgentSkillRuntime {
         path: "/tmp/skills/attachment-analysis/SKILL.md",
         scope: "user",
         enabled: true,
+      },
+    ];
+  }
+}
+
+class ExtensionAgent extends TestAgent implements AgentExtensionDiscoveryRuntime {
+  async listInstalledApps(): Promise<import("../src/core/contracts.js").AgentAppSummary[]> {
+    return [
+      { id: "github", runtimeName: "GitHub", enabled: true, callable: true },
+      { id: "disabled-app", runtimeName: "Disabled App", enabled: false, callable: false },
+    ];
+  }
+
+  async readApps(): Promise<import("../src/core/contracts.js").AgentAppReadResult> {
+    return {
+      apps: [{
+        id: "github",
+        name: "GitHub",
+        pluginDisplayNames: ["GitHub"],
+        tools: [],
+      }],
+      missingAppIds: [],
+    };
+  }
+
+  async listNativeExtensionFeatures(): Promise<import("../src/core/contracts.js").AgentNativeFeatureSummary[]> {
+    return [
+      { name: "apps", stage: "beta", enabled: true, defaultEnabled: true },
+      {
+        name: "plugins",
+        stage: "underDevelopment",
+        enabled: true,
+        defaultEnabled: false,
       },
     ];
   }
@@ -776,6 +810,56 @@ describe("GatewayService identity and commands", () => {
     await gateway.stop();
   });
 
+  it("lists installed Codex Apps through /apps without starting an agent turn", async () => {
+    const transport = new TestTransport();
+    const agent = new ExtensionAgent();
+    const gateway = new GatewayService(
+      transport,
+      agent,
+      new MemoryThreadStore(),
+      { cwd: ".", trustMockOwner: true },
+    );
+    await gateway.start();
+
+    await transport.receive(incoming({
+      id: "apps-1",
+      transport: "mock",
+      text: "/apps",
+    }));
+
+    const reply = transport.sent.at(-1)?.text ?? "";
+    expect(reply).toContain("Codex Apps");
+    expect(reply).toContain("GitHub");
+    expect(reply).toContain("callable=true");
+    expect(agent.requests).toHaveLength(0);
+    await gateway.stop();
+  });
+
+  it("reports native Plugin feature maturity through /plugins without calling a Plugin catalog", async () => {
+    const transport = new TestTransport();
+    const agent = new ExtensionAgent();
+    const gateway = new GatewayService(
+      transport,
+      agent,
+      new MemoryThreadStore(),
+      { cwd: ".", trustMockOwner: true },
+    );
+    await gateway.start();
+
+    await transport.receive(incoming({
+      id: "plugins-1",
+      transport: "mock",
+      text: "/plugins",
+    }));
+
+    const reply = transport.sent.at(-1)?.text ?? "";
+    expect(reply).toContain("Codex Native Extensions");
+    expect(reply).toContain("plugins: stage=underDevelopment enabled=true");
+    expect(reply).toContain("plugin/list");
+    expect(agent.requests).toHaveLength(0);
+    await gateway.stop();
+  });
+
   it("provides compact QQ-style help without running the agent", async () => {
     const transport = new TestTransport();
     const agent = new TestAgent();
@@ -797,6 +881,8 @@ describe("GatewayService identity and commands", () => {
     expect(help).toContain("直接发送消息即可开始对话");
     expect(help).toContain("/status   查看运行状态");
     expect(help).toContain("/skills   查看当前 Codex Skill");
+    expect(help).toContain("/apps     查看当前 Codex 已安装/可调用 App");
+    expect(help).toContain("/plugins  查看 Codex Plugin 功能状态");
     expect(help).not.toContain("/approve");
     expect(agent.requests).toHaveLength(0);
     await gateway.stop();

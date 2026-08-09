@@ -16,7 +16,13 @@ import {
 import { resolveConfigurationAuthority } from "../src/config/federation/config-authority.js";
 import { buildMcpRuntimeRegistry } from "../src/config/mcp/mcp-runtime-registry.js";
 import { loadEnv } from "../src/config/env.js";
-import type { AgentRuntime, AgentSkillSummary } from "../src/core/contracts.js";
+import type {
+  AgentAppReadResult,
+  AgentAppSummary,
+  AgentNativeFeatureSummary,
+  AgentRuntime,
+  AgentSkillSummary,
+} from "../src/core/contracts.js";
 import type { AgentRunRequest, AgentRunResult } from "../src/core/types.js";
 import { projectRuntimeNamespace } from "../src/workspace/project-workspace.js";
 
@@ -42,6 +48,28 @@ class FakeRuntime implements AgentRuntime {
   }
   async setSkillRoots(roots: string[]): Promise<void> {
     this.skillRootUpdates.push([...roots]);
+  }
+  async listInstalledApps(): Promise<AgentAppSummary[]> {
+    return [{ id: "github", runtimeName: "GitHub", enabled: true, callable: true }];
+  }
+  async readApps(): Promise<AgentAppReadResult> {
+    return {
+      apps: [{
+        id: "github",
+        name: "GitHub",
+        pluginDisplayNames: ["GitHub"],
+        tools: [],
+      }],
+      missingAppIds: [],
+    };
+  }
+  async listNativeExtensionFeatures(): Promise<AgentNativeFeatureSummary[]> {
+    return [{
+      name: "plugins",
+      stage: "underDevelopment",
+      enabled: true,
+      defaultEnabled: false,
+    }];
   }
   async stop(): Promise<void> { this.stops += 1; }
 }
@@ -263,6 +291,28 @@ describe("ManagedCodexDeepSeekRuntime", () => {
     await managed.start();
     await expect(managed.listSkills({ cwd: process.cwd() })).resolves.toEqual([
       expect.objectContaining({ name: "system-status", enabled: true }),
+    ]);
+    await managed.stop();
+  });
+
+  it("delegates Codex native App and extension feature discovery", async () => {
+    const { managed } = setup();
+    await managed.start();
+    await expect(managed.listInstalledApps({ cwd: process.cwd() })).resolves.toEqual([
+      expect.objectContaining({ id: "github", callable: true }),
+    ]);
+    await expect(managed.readApps({
+      cwd: process.cwd(),
+      appIds: ["github"],
+      includeTools: true,
+    })).resolves.toEqual({
+      apps: [expect.objectContaining({ id: "github" })],
+      missingAppIds: [],
+    });
+    await expect(managed.listNativeExtensionFeatures({
+      cwd: process.cwd(),
+    })).resolves.toEqual([
+      expect.objectContaining({ name: "plugins", stage: "underDevelopment" }),
     ]);
     await managed.stop();
   });

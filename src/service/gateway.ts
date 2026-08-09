@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import { realpath } from "node:fs/promises";
 import { isAbsolute, relative, resolve, sep } from "node:path";
 import {
+  supportsAgentExtensionDiscovery,
   supportsAgentSkills,
   supportsAgentThreadManagement,
   supportsConversationActivity,
@@ -39,8 +40,10 @@ import type {
   ArtifactEgressRunBudget,
 } from "../policy/artifact-egress-policy.js";
 import {
+  formatAgentApps,
   formatAgentSkills,
   formatGatewayStatus,
+  formatNativePluginStatus,
   formatNativeMemoryDiagnostics,
   formatNativeMemoryStatus,
   gatewayHelpText,
@@ -448,6 +451,99 @@ export class GatewayService {
           await this.#send(
             message.identity.conversationId,
             "Codex Skill 列表读取失败，请检查服务日志。",
+          );
+        }
+        return;
+      }
+
+      case "apps": {
+        const projectContext = await this.#resolveSelectedProjectContext(
+          resolved.conversationId,
+        );
+        const cwd = projectContext?.project.path ?? this.options.cwd;
+        if (!supportsAgentExtensionDiscovery(this.agent)) {
+          await this.store.appendAudit({
+            userId: resolved.userId,
+            conversationId: resolved.conversationId,
+            eventType: "command.apps_unavailable",
+          });
+          await this.#send(
+            message.identity.conversationId,
+            "当前 Agent Runtime 不支持 Codex App 发现。",
+          );
+          return;
+        }
+        try {
+          const apps = await this.agent.listInstalledApps({
+            cwd,
+            ...(projectContext?.threadId ? { threadId: projectContext.threadId } : {}),
+            forceRefresh: false,
+          });
+          await this.store.appendAudit({
+            userId: resolved.userId,
+            conversationId: resolved.conversationId,
+            eventType: "command.apps",
+            payload: {
+              count: apps.length,
+              callableCount: apps.filter((app) => app.callable).length,
+            },
+          });
+          await this.#send(
+            message.identity.conversationId,
+            formatAgentApps(apps),
+          );
+        } catch (error) {
+          await this.store.appendAudit({
+            userId: resolved.userId,
+            conversationId: resolved.conversationId,
+            eventType: "command.apps_failed",
+            payload: { errorType: error instanceof Error ? error.name : "Error" },
+          });
+          await this.#send(
+            message.identity.conversationId,
+            "Codex App 状态读取失败；当前 Codex App Server 版本可能不支持该接口，请检查服务日志。",
+          );
+        }
+        return;
+      }
+
+      case "plugins": {
+        const projectContext = await this.#resolveSelectedProjectContext(
+          resolved.conversationId,
+        );
+        const cwd = projectContext?.project.path ?? this.options.cwd;
+        if (!supportsAgentExtensionDiscovery(this.agent)) {
+          await this.#send(
+            message.identity.conversationId,
+            "当前 Agent Runtime 不支持 Codex Extension 状态发现。",
+          );
+          return;
+        }
+        try {
+          const features = await this.agent.listNativeExtensionFeatures({ cwd });
+          await this.store.appendAudit({
+            userId: resolved.userId,
+            conversationId: resolved.conversationId,
+            eventType: "command.plugins",
+            payload: {
+              featureCount: features.length,
+              pluginFeatureObserved: features.some((feature) => feature.name === "plugins"),
+            },
+          });
+          await this.#send(
+            message.identity.conversationId,
+            formatNativePluginStatus(features),
+          );
+        } catch (error) {
+          await this.store.appendAudit({
+            userId: resolved.userId,
+            conversationId: resolved.conversationId,
+            eventType: "command.plugins_failed",
+            payload: { errorType: error instanceof Error ? error.name : "Error" },
+          });
+          await this.#send(
+            message.identity.conversationId,
+            "Codex Extension 功能状态读取失败；不会回退调用上游仍处于 under-development 的 Plugin catalog RPC。",
           );
         }
         return;

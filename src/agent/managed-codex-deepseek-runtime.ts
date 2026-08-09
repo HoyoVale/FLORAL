@@ -20,9 +20,13 @@ import {
 } from "../config/adoption/mcp-registry-adoption.js";
 import type { AppEnv } from "../config/env.js";
 import {
+  supportsAgentExtensionDiscovery,
   supportsAgentSkillControl,
   supportsAgentSkills,
   supportsAgentThreadManagement,
+  type AgentAppReadResult,
+  type AgentAppSummary,
+  type AgentNativeFeatureSummary,
   type AgentRuntime,
   type AgentSkillSummary,
   type AgentThreadSummary,
@@ -211,6 +215,42 @@ export class ManagedCodexDeepSeekRuntime implements AgentRuntime {
       throw new Error("Managed Codex runtime does not expose skill discovery");
     }
     return await runtime.listSkills(input);
+  }
+
+  async listInstalledApps(input: {
+    cwd: string;
+    threadId?: string | undefined;
+    forceRefresh?: boolean | undefined;
+  }): Promise<AgentAppSummary[]> {
+    const runtime = input.threadId
+      ? this.#runtimeForThread(input.threadId)
+      : (await this.#runtimeSlotForCwd(input.cwd)).runtime;
+    if (!supportsAgentExtensionDiscovery(runtime)) {
+      throw new Error("Managed Codex runtime does not expose App discovery");
+    }
+    return await runtime.listInstalledApps(input);
+  }
+
+  async readApps(input: {
+    cwd: string;
+    appIds: string[];
+    includeTools?: boolean | undefined;
+  }): Promise<AgentAppReadResult> {
+    const runtime = (await this.#runtimeSlotForCwd(input.cwd)).runtime;
+    if (!supportsAgentExtensionDiscovery(runtime)) {
+      throw new Error("Managed Codex runtime does not expose App discovery");
+    }
+    return await runtime.readApps(input);
+  }
+
+  async listNativeExtensionFeatures(input: {
+    cwd: string;
+  }): Promise<AgentNativeFeatureSummary[]> {
+    const runtime = (await this.#runtimeSlotForCwd(input.cwd)).runtime;
+    if (!supportsAgentExtensionDiscovery(runtime)) {
+      throw new Error("Managed Codex runtime does not expose extension feature discovery");
+    }
+    return await runtime.listNativeExtensionFeatures(input);
   }
 
   async listThreads(input: {

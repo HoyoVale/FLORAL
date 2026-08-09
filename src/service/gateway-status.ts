@@ -1,4 +1,8 @@
-import type { AgentSkillSummary } from "../core/contracts.js";
+import type {
+  AgentAppSummary,
+  AgentNativeFeatureSummary,
+  AgentSkillSummary,
+} from "../core/contracts.js";
 
 export interface GatewayStatusSnapshot {
   transport: string;
@@ -158,6 +162,47 @@ export function formatAgentSkills(skills: AgentSkillSummary[]): string {
   return lines.join("\n").trimEnd();
 }
 
+export function formatAgentApps(apps: AgentAppSummary[]): string {
+  const lines = [
+    "Codex Apps",
+    `已安装：${String(apps.length)}；可调用：${String(apps.filter((app) => app.callable).length)}`,
+  ];
+  if (apps.length === 0) {
+    lines.push("", "当前 Codex runtime 没有报告已安装 App。 ");
+    return lines.join("\n").trimEnd();
+  }
+  lines.push("");
+  apps.slice(0, 100).forEach((app, index) => {
+    lines.push(
+      `${String(index + 1)}. ${app.runtimeName ?? app.id}`,
+      `   id=${app.id} enabled=${String(app.enabled)} callable=${String(app.callable)}`,
+    );
+  });
+  lines.push("", "callable=true 只表示当前配置和策略允许至少一个模型可见工具；是否适合当前任务仍需读取 App 工具摘要。 ");
+  return lines.join("\n").trimEnd();
+}
+
+export function formatNativePluginStatus(
+  features: AgentNativeFeatureSummary[],
+): string {
+  const byName = new Map(features.map((feature) => [feature.name, feature]));
+  const plugins = byName.get("plugins");
+  const apps = byName.get("apps");
+  const line = (name: string, feature: AgentNativeFeatureSummary | undefined) =>
+    feature
+      ? `${name}: stage=${feature.stage} enabled=${String(feature.enabled)} default=${String(feature.defaultEnabled)}`
+      : `${name}: stage=unknown enabled=unknown default=unknown`;
+  return [
+    "Codex Native Extensions",
+    line("plugins", plugins),
+    line("apps", apps),
+    "",
+    "FLORAL 当前只使用生产文档已开放的 App 只读接口（app/installed、app/read）。",
+    "Codex 的 plugin/list、plugin/read、plugin/install、plugin/uninstall 仍被上游标记为 under development；FLORAL 不在生产 Agent 中调用这些接口。",
+    "因此这里报告的是 Plugin 功能开关/成熟度，不把它误报成实际已安装 Plugin 清单。",
+  ].join("\n");
+}
+
 export function gatewayHelpText(): string {
   return [
     "FLORAL",
@@ -167,6 +212,8 @@ export function gatewayHelpText(): string {
     "/new      开始新会话",
     "/status   查看运行状态",
     "/skills   查看当前 Codex Skill",
+    "/apps     查看当前 Codex 已安装/可调用 App",
+    "/plugins  查看 Codex Plugin 功能状态与 FLORAL 接入成熟度",
     "/memory   查看 Codex Native Memory 生命周期",
     "/memory diagnose 只读诊断 Native Memory Phase 2（owner）",
     "/projects 列出 Workspace Root 下的项目",

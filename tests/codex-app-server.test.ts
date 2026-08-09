@@ -268,6 +268,67 @@ describe("CodexAppServerRuntime", () => {
     }
   });
 
+  it("discovers Codex Apps and native extension feature state without Plugin catalog RPCs", async () => {
+    const runtime = createRuntime("normal");
+    try {
+      await runtime.start();
+      await expect(runtime.listInstalledApps({
+        cwd: process.cwd(),
+        forceRefresh: false,
+      })).resolves.toEqual([
+        { id: "github", runtimeName: "GitHub", enabled: true, callable: true },
+        { id: "disabled-app", runtimeName: "Disabled App", enabled: false, callable: false },
+      ]);
+      await expect(runtime.readApps({
+        cwd: process.cwd(),
+        appIds: ["github", "missing"],
+        includeTools: true,
+      })).resolves.toEqual({
+        apps: [{
+          id: "github",
+          name: "GitHub",
+          description: "Work with GitHub repositories and pull requests.",
+          pluginDisplayNames: ["GitHub"],
+          tools: [{
+            name: "search_repositories",
+            title: "Search repositories",
+            description: "Search GitHub repositories.",
+            enabled: true,
+            readOnly: true,
+          }],
+        }],
+        missingAppIds: ["missing"],
+      });
+      await expect(runtime.listNativeExtensionFeatures({
+        cwd: process.cwd(),
+      })).resolves.toEqual([
+        { name: "apps", stage: "beta", enabled: true, defaultEnabled: true },
+        {
+          name: "plugins",
+          stage: "underDevelopment",
+          enabled: true,
+          defaultEnabled: false,
+        },
+      ]);
+    } finally {
+      await runtime.stop();
+    }
+  });
+
+  it("exposes read-only FLORAL extension discovery as client-hosted dynamic tools", async () => {
+    const runtime = createRuntime("extension-installed-apps");
+    try {
+      await runtime.start();
+      const result = await runtime.run({
+        text: "Check installed Codex Apps.",
+        cwd: process.cwd(),
+      });
+      expect(result.finalText).toBe("extension apps complete");
+    } finally {
+      await runtime.stop();
+    }
+  });
+
   it("resumes an existing thread before starting a turn", async () => {
     const runtime = createRuntime("resume");
     try {
