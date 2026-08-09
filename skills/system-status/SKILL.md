@@ -1,6 +1,6 @@
 ---
 name: system-status
-description: Collect a read-only health summary of the Mac Agent host.
+description: Collect a read-only health summary of the Mac Agent host. Use when the user asks about Mac health, uptime, load, disk space, memory pressure, gateway/service status, or installed Codex/Peekaboo versions.
 ---
 
 # System status

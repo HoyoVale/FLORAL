@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type {
   AgentRuntime,
+  AgentSkillRuntime,
   ChatTransport,
   ConversationActivityState,
   ConversationActivityTransport,
@@ -90,6 +91,27 @@ class TestAgent implements AgentRuntime {
 }
 
 
+
+class SkillAgent extends TestAgent implements AgentSkillRuntime {
+  async listSkills(): Promise<import("../src/core/contracts.js").AgentSkillSummary[]> {
+    return [
+      {
+        name: "system-status",
+        description: "Collect a read-only health summary of the Mac Agent host.",
+        path: "/tmp/skills/system-status/SKILL.md",
+        scope: "user",
+        enabled: true,
+      },
+      {
+        name: "attachment-analysis",
+        description: "Analyze user-provided FLORAL attachments safely.",
+        path: "/tmp/skills/attachment-analysis/SKILL.md",
+        scope: "user",
+        enabled: true,
+      },
+    ];
+  }
+}
 
 class ApprovalAgent implements AgentRuntime {
   readonly name = "approval-agent";
@@ -729,6 +751,31 @@ describe("GatewayService identity and commands", () => {
     await gateway.stop();
   });
 
+  it("lists Codex skills through /skills without starting an agent turn", async () => {
+    const transport = new TestTransport();
+    const agent = new SkillAgent();
+    const gateway = new GatewayService(
+      transport,
+      agent,
+      new MemoryThreadStore(),
+      { cwd: ".", trustMockOwner: true },
+    );
+    await gateway.start();
+
+    await transport.receive(incoming({
+      id: "skills-1",
+      transport: "mock",
+      text: "/skills",
+    }));
+
+    const reply = transport.sent.at(-1)?.text ?? "";
+    expect(reply).toContain("Codex Skills");
+    expect(reply).toContain("$system-status");
+    expect(reply).toContain("$attachment-analysis");
+    expect(agent.requests).toHaveLength(0);
+    await gateway.stop();
+  });
+
   it("provides compact QQ-style help without running the agent", async () => {
     const transport = new TestTransport();
     const agent = new TestAgent();
@@ -749,6 +796,7 @@ describe("GatewayService identity and commands", () => {
     const help = transport.sent.at(-1)?.text ?? "";
     expect(help).toContain("直接发送消息即可开始对话");
     expect(help).toContain("/status   查看运行状态");
+    expect(help).toContain("/skills   查看当前 Codex Skill");
     expect(help).not.toContain("/approve");
     expect(agent.requests).toHaveLength(0);
     await gateway.stop();

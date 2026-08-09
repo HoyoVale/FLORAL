@@ -15,7 +15,7 @@ import {
 import { resolveConfigurationAuthority } from "../src/config/federation/config-authority.js";
 import { buildMcpRuntimeRegistry } from "../src/config/mcp/mcp-runtime-registry.js";
 import { loadEnv } from "../src/config/env.js";
-import type { AgentRuntime } from "../src/core/contracts.js";
+import type { AgentRuntime, AgentSkillSummary } from "../src/core/contracts.js";
 import type { AgentRunRequest, AgentRunResult } from "../src/core/types.js";
 
 class FakeRuntime implements AgentRuntime {
@@ -28,6 +28,15 @@ class FakeRuntime implements AgentRuntime {
     return { threadId: request.threadId ?? "thread-1", finalText: "ok" };
   }
   async interrupt(): Promise<void> { this.interrupts += 1; }
+  async listSkills(): Promise<AgentSkillSummary[]> {
+    return [{
+      name: "system-status",
+      description: "Collect status",
+      path: "/tmp/skills/system-status/SKILL.md",
+      scope: "user",
+      enabled: true,
+    }];
+  }
   async stop(): Promise<void> { this.stops += 1; }
 }
 
@@ -146,6 +155,15 @@ describe("ManagedCodexDeepSeekRuntime", () => {
       sandboxMode: "workspace-write",
       approvalsReviewer: "user",
     });
+    await managed.stop();
+  });
+
+  it("delegates skill discovery to the owned Codex runtime", async () => {
+    const { managed } = setup();
+    await managed.start();
+    await expect(managed.listSkills({ cwd: process.cwd() })).resolves.toEqual([
+      expect.objectContaining({ name: "system-status", enabled: true }),
+    ]);
     await managed.stop();
   });
 

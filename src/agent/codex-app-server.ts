@@ -1,6 +1,7 @@
 import { resolve } from "node:path";
 import type {
   AgentRuntime,
+  AgentSkillSummary,
   AgentThreadSummary,
 } from "../core/contracts.js";
 import type {
@@ -42,6 +43,20 @@ interface ThreadListResponse {
 
 interface TurnResponse {
   turn: { id: string; status?: string };
+}
+
+interface SkillsListResponse {
+  data?: Array<{
+    cwd?: unknown;
+    skills?: Array<{
+      name?: unknown;
+      description?: unknown;
+      path?: unknown;
+      scope?: unknown;
+      enabled?: unknown;
+    }> | undefined;
+    errors?: unknown[] | undefined;
+  }>;
 }
 
 interface TurnCompletedParams {
@@ -100,6 +115,7 @@ export interface CodexAppServerOptions {
   developerInstructions?: string | undefined;
   processCwd?: string | undefined;
   processEnv?: NodeJS.ProcessEnv | undefined;
+  skillRoots?: string[] | undefined;
 }
 
 interface TurnTerminalState {
@@ -203,6 +219,7 @@ export class CodexAppServerRuntime implements AgentRuntime {
   readonly #sandboxMode: "read-only" | "workspace-write";
   readonly #approvalsReviewer: "user" | "auto_review";
   readonly #developerInstructions: string;
+  readonly #skillRoots: string[];
   readonly #loadedThreads = new Set<string>();
   readonly #activeTurns = new Map<string, string>();
   readonly #eventHandlers = new Map<string, (event: AgentEvent) => void>();
@@ -228,6 +245,12 @@ export class CodexAppServerRuntime implements AgentRuntime {
     this.#approvalsReviewer = options.approvalsReviewer ?? "user";
     this.#developerInstructions = options.developerInstructions?.trim()
       || FLORAL_AGENT_DEVELOPER_INSTRUCTIONS;
+    this.#skillRoots = [...new Set(
+      (options.skillRoots ?? [])
+        .map((root) => root.trim())
+        .filter(Boolean)
+        .map((root) => resolve(root)),
+    )];
     this.#client.on("serverRequest", (request: CodexServerRequest) => {
       void this.#handleServerRequest(request).catch(() => {
         this.#respondSafely(request.id, undefined, {
@@ -251,11 +274,58 @@ export class CodexAppServerRuntime implements AgentRuntime {
         },
         { experimentalApi: true },
       );
+      if (this.#skillRoots.length > 0) {
+        await this.#client.request("skills/extraRoots/set", {
+          extraRoots: this.#skillRoots,
+        });
+        process.stderr.write(
+          `agent.stack.skills.roots=${String(this.#skillRoots.length)}\n`,
+        );
+      }
       this.#started = true;
     } catch (error) {
       await this.#client.stop();
       throw error;
     }
+  }
+
+  async listSkills(input: {
+    cwd: string;
+    forceReload?: boolean | undefined;
+  }): Promise<AgentSkillSummary[]> {
+    this.#ensureStarted();
+    const cwd = resolve(input.cwd);
+    const response = await this.#client.request<SkillsListResponse>(
+      "skills/list",
+      {
+        cwds: [cwd],
+        forceReload: input.forceReload === true,
+      },
+    );
+    const entry = Array.isArray(response?.data)
+      ? response.data.find((candidate) =>
+          typeof candidate?.cwd === "string" && resolve(candidate.cwd) === cwd
+        ) ?? response.data[0]
+      : undefined;
+    const skills = Array.isArray(entry?.skills) ? entry.skills : [];
+    const output: AgentSkillSummary[] = [];
+    for (const skill of skills) {
+      const name = typeof skill?.name === "string" ? skill.name.trim() : "";
+      const description = typeof skill?.description === "string"
+        ? skill.description.trim()
+        : "";
+      const path = typeof skill?.path === "string" ? skill.path.trim() : "";
+      const scope = normalizeSkillScope(skill?.scope);
+      if (!name || !description || !path || !scope) continue;
+      output.push({
+        name,
+        description,
+        path: resolve(path),
+        scope,
+        enabled: skill?.enabled === true,
+      });
+    }
+    return output;
   }
 
   async listThreads(input: {
@@ -473,9 +543,31 @@ export class CodexAppServerRuntime implements AgentRuntime {
     this.#client.on("exit", exitListener);
 
     try {
+      const turnInput: Array<Record<string, unknown>> = [
+        { type: "text", text: request.text },
+      ];
+      const explicitSkillNames = extractExplicitSkillNames(request.text);
+      if (explicitSkillNames.length > 0) {
+        const availableSkills = await this.listSkills({ cwd });
+        const byName = new Map(
+          availableSkills
+            .filter((skill) => skill.enabled)
+            .map((skill) => [skill.name, skill] as const),
+        );
+        for (const name of explicitSkillNames) {
+          const skill = byName.get(name);
+          if (!skill) continue;
+          turnInput.push({
+            type: "skill",
+            name: skill.name,
+            path: skill.path,
+          });
+        }
+      }
+
       const turnParams: Record<string, unknown> = {
         threadId,
-        input: [{ type: "text", text: request.text }],
+        input: turnInput,
         cwd,
         approvalPolicy: toAppServerApprovalPolicy(
           request.approvalPolicy ?? this.#approvalPolicy,
@@ -1313,6 +1405,25 @@ function readMcpToolEvent(
       ...(item.error !== undefined ? { error: item.error } : {}),
     },
   };
+}
+
+function normalizeSkillScope(value: unknown): AgentSkillSummary["scope"] | undefined {
+  return value === "user" || value === "repo" || value === "system" || value === "admin"
+    ? value
+    : undefined;
+}
+
+function extractExplicitSkillNames(text: string): string[] {
+  const names: string[] = [];
+  const seen = new Set<string>();
+  const pattern = /(?:^|\s)\$([a-z0-9][a-z0-9-]{0,63})(?=\s|$|[.,!?;:])/giu;
+  for (const match of text.matchAll(pattern)) {
+    const name = match[1]?.toLowerCase();
+    if (!name || seen.has(name)) continue;
+    seen.add(name);
+    names.push(name);
+  }
+  return names;
 }
 
 function matchesTurn(

@@ -90,6 +90,29 @@ export interface AgentThreadSummary {
   updatedAt?: number | undefined;
 }
 
+export type AgentSkillScope = "user" | "repo" | "system" | "admin";
+
+export interface AgentSkillSummary {
+  name: string;
+  description: string;
+  path: string;
+  scope: AgentSkillScope;
+  enabled: boolean;
+}
+
+export interface AgentSkillRuntime {
+  listSkills(input: {
+    cwd: string;
+    forceReload?: boolean | undefined;
+  }): Promise<AgentSkillSummary[]>;
+}
+
+export function supportsAgentSkills(
+  runtime: AgentRuntime,
+): runtime is AgentRuntime & AgentSkillRuntime {
+  return typeof (runtime as Partial<AgentSkillRuntime>).listSkills === "function";
+}
+
 export interface AgentThreadManagementRuntime {
   listThreads(input: {
     cwd: string;

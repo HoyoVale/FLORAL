@@ -13,6 +13,7 @@ function createRuntime(
     approvalPolicy?: "never" | "on-request" | "untrusted";
     sandboxMode?: "read-only" | "workspace-write";
     approvalsReviewer?: "user" | "auto_review";
+    skillRoots?: string[];
   } = {},
 ): CodexAppServerRuntime {
   return new CodexAppServerRuntime({
@@ -38,6 +39,45 @@ describe("CodexAppServerRuntime", () => {
       expect(result).toEqual({ threadId: "thr_new", finalText: "authoritative final" });
       expect(events.some((event) => event.type === "assistant.delta")).toBe(true);
       expect(events.at(-1)?.type).toBe("run.completed");
+    } finally {
+      await runtime.stop();
+    }
+  });
+
+  it("registers FLORAL skill roots and lists Codex-discovered skills", async () => {
+    const skillRoot = new URL("../skills/", import.meta.url);
+    const runtime = createRuntime("normal", 5_000, {
+      skillRoots: [fileURLToPath(skillRoot)],
+    });
+    try {
+      await runtime.start();
+      const skills = await runtime.listSkills({
+        cwd: process.cwd(),
+        forceReload: true,
+      });
+      expect(skills.map((skill) => skill.name)).toEqual([
+        "system-status",
+        "attachment-analysis",
+      ]);
+      expect(skills.every((skill) => skill.enabled)).toBe(true);
+      expect(skills[0]?.path).toMatch(/system-status[\\/]SKILL\.md$/u);
+    } finally {
+      await runtime.stop();
+    }
+  });
+
+  it("adds the official skill input item for an explicit $skill-name invocation", async () => {
+    const skillRoot = new URL("../skills/", import.meta.url);
+    const runtime = createRuntime("skills-explicit", 5_000, {
+      skillRoots: [fileURLToPath(skillRoot)],
+    });
+    try {
+      await runtime.start();
+      const result = await runtime.run({
+        text: "$system-status check the host",
+        cwd: process.cwd(),
+      });
+      expect(result.finalText).toBe("authoritative final");
     } finally {
       await runtime.stop();
     }

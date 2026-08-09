@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import { realpath } from "node:fs/promises";
 import { isAbsolute, relative, resolve, sep } from "node:path";
 import {
+  supportsAgentSkills,
   supportsAgentThreadManagement,
   supportsConversationActivity,
   supportsInteractiveApproval,
@@ -36,6 +37,7 @@ import type {
   ArtifactEgressRunBudget,
 } from "../policy/artifact-egress-policy.js";
 import {
+  formatAgentSkills,
   formatGatewayStatus,
   formatNativeMemoryDiagnostics,
   formatNativeMemoryStatus,
@@ -393,6 +395,56 @@ export class GatewayService {
         });
         await this.#send(message.identity.conversationId, gatewayHelpText());
         return;
+
+      case "skills": {
+        const projectContext = await this.#resolveSelectedProjectContext(
+          resolved.conversationId,
+        );
+        const cwd = projectContext?.project.path ?? this.options.cwd;
+        if (!supportsAgentSkills(this.agent)) {
+          await this.store.appendAudit({
+            userId: resolved.userId,
+            conversationId: resolved.conversationId,
+            eventType: "command.skills_unavailable",
+          });
+          await this.#send(
+            message.identity.conversationId,
+            "当前 Agent Runtime 不支持 Codex Skill 发现。",
+          );
+          return;
+        }
+        try {
+          const skills = await this.agent.listSkills({
+            cwd,
+            forceReload: true,
+          });
+          await this.store.appendAudit({
+            userId: resolved.userId,
+            conversationId: resolved.conversationId,
+            eventType: "command.skills",
+            payload: {
+              count: skills.length,
+              enabledCount: skills.filter((skill) => skill.enabled).length,
+            },
+          });
+          await this.#send(
+            message.identity.conversationId,
+            formatAgentSkills(skills),
+          );
+        } catch (error) {
+          await this.store.appendAudit({
+            userId: resolved.userId,
+            conversationId: resolved.conversationId,
+            eventType: "command.skills_failed",
+            payload: { errorType: error instanceof Error ? error.name : "Error" },
+          });
+          await this.#send(
+            message.identity.conversationId,
+            "Codex Skill 列表读取失败，请检查服务日志。",
+          );
+        }
+        return;
+      }
 
       case "native-memory-status": {
         await this.store.appendAudit({

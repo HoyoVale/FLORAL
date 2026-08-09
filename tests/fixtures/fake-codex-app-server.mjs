@@ -8,6 +8,7 @@ let resumed = false;
 let activeThreadId = "thr_new";
 let activeTurnId = "turn_1";
 let waitingForApproval = false;
+let extraSkillRoots = [];
 
 function send(message) {
   process.stdout.write(`${JSON.stringify(message)}\n`);
@@ -82,6 +83,49 @@ lines.on("line", (line) => {
 
   if (!initialized) {
     send({ id: message.id, error: { code: -32002, message: "Not initialized" } });
+    return;
+  }
+
+  if (message.method === "skills/extraRoots/set") {
+    const roots = message.params?.extraRoots;
+    if (
+      !Array.isArray(roots)
+      || roots.some((root) => typeof root !== "string" || !isAbsolute(root))
+    ) {
+      send({ id: message.id, error: { code: -32602, message: "skill roots must be absolute" } });
+      return;
+    }
+    extraSkillRoots = roots;
+    send({ id: message.id, result: {} });
+    return;
+  }
+
+  if (message.method === "skills/list") {
+    const cwd = Array.isArray(message.params?.cwds) ? message.params.cwds[0] : undefined;
+    if (typeof cwd !== "string" || !isAbsolute(cwd)) {
+      send({ id: message.id, error: { code: -32602, message: "skills cwd must be absolute" } });
+      return;
+    }
+    const root = extraSkillRoots[0];
+    const skills = typeof root === "string"
+      ? [
+          {
+            name: "system-status",
+            description: "Collect a read-only health summary of the Mac Agent host.",
+            path: `${root}/system-status/SKILL.md`,
+            scope: "user",
+            enabled: true,
+          },
+          {
+            name: "attachment-analysis",
+            description: "Analyze user-provided FLORAL attachments safely.",
+            path: `${root}/attachment-analysis/SKILL.md`,
+            scope: "user",
+            enabled: true,
+          },
+        ]
+      : [];
+    send({ id: message.id, result: { data: [{ cwd, skills, errors: [] }] } });
     return;
   }
 
@@ -249,6 +293,23 @@ lines.on("line", (line) => {
     if (scenario === "resume" && !resumed) {
       send({ id: message.id, error: { code: -32602, message: "thread was not resumed" } });
       return;
+    }
+
+    if (scenario === "skills-explicit") {
+      const input = message.params?.input;
+      const skill = Array.isArray(input)
+        ? input.find((item) => item?.type === "skill" && item?.name === "system-status")
+        : undefined;
+      const normalizedSkillPath = typeof skill?.path === "string"
+        ? skill.path.replace(/\\/gu, "/")
+        : "";
+      if (
+        !skill
+        || !normalizedSkillPath.endsWith("/system-status/SKILL.md")
+      ) {
+        send({ id: message.id, error: { code: -32602, message: "missing explicit skill input item" } });
+        return;
+      }
     }
 
     activeThreadId = message.params.threadId;

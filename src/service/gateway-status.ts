@@ -1,3 +1,5 @@
+import type { AgentSkillSummary } from "../core/contracts.js";
+
 export interface GatewayStatusSnapshot {
   transport: string;
   agent: string;
@@ -132,6 +134,30 @@ export function formatNativeMemoryDiagnostics(runtimeLines: string[]): string {
   ].join("\n");
 }
 
+export function formatAgentSkills(skills: AgentSkillSummary[]): string {
+  if (skills.length === 0) {
+    return [
+      "Codex Skills",
+      "当前工作目录没有发现可用 Skill。",
+    ].join("\n");
+  }
+
+  const enabled = skills.filter((skill) => skill.enabled);
+  const disabled = skills.filter((skill) => !skill.enabled);
+  const lines = ["Codex Skills", ""];
+  enabled.forEach((skill, index) => {
+    lines.push(
+      `${String(index + 1)}. $${skill.name} [${skill.scope}]`,
+      `   ${skill.description}`,
+    );
+  });
+  if (disabled.length > 0) {
+    lines.push("", `已禁用：${disabled.map((skill) => `$${skill.name}`).join(", ")}`);
+  }
+  lines.push("", "可直接描述任务让 Codex 自动选择 Skill，也可以显式使用 $skill-name。 ");
+  return lines.join("\n").trimEnd();
+}
+
 export function gatewayHelpText(): string {
   return [
     "FLORAL",
@@ -140,6 +166,7 @@ export function gatewayHelpText(): string {
     "",
     "/new      开始新会话",
     "/status   查看运行状态",
+    "/skills   查看当前 Codex Skill",
     "/memory   查看 Codex Native Memory 生命周期",
     "/memory diagnose 只读诊断 Native Memory Phase 2（owner）",
     "/projects 列出 Workspace Root 下的项目",

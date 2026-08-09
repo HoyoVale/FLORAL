@@ -20,8 +20,10 @@ import {
 } from "../config/adoption/mcp-registry-adoption.js";
 import type { AppEnv } from "../config/env.js";
 import {
+  supportsAgentSkills,
   supportsAgentThreadManagement,
   type AgentRuntime,
+  type AgentSkillSummary,
   type AgentThreadSummary,
 } from "../core/contracts.js";
 import type {
@@ -76,6 +78,7 @@ export interface ManagedCodexDeepSeekDependencies {
     approvalPolicy: "never" | "on-request" | "untrusted";
     sandboxMode: "read-only" | "workspace-write";
     approvalsReviewer: "user";
+    skillRoots: string[];
   }) => AgentRuntime) | undefined;
   prepareCodexConfig?: ((options: {
     legacyConfig: string;
@@ -140,6 +143,17 @@ export class ManagedCodexDeepSeekRuntime implements AgentRuntime {
   async interrupt(threadId: string, turnId?: string): Promise<void> {
     const runtime = this.#requireRuntime();
     await runtime.interrupt(threadId, turnId);
+  }
+
+  async listSkills(input: {
+    cwd: string;
+    forceReload?: boolean | undefined;
+  }): Promise<AgentSkillSummary[]> {
+    const runtime = this.#requireRuntime();
+    if (!supportsAgentSkills(runtime)) {
+      throw new Error("Managed Codex runtime does not expose skill discovery");
+    }
+    return await runtime.listSkills(input);
   }
 
   async listThreads(input: {
@@ -371,16 +385,19 @@ export class ManagedCodexDeepSeekRuntime implements AgentRuntime {
     const approvalPolicy = this.options.codexTurnApprovalPolicy ?? "never";
     const sandboxMode = this.options.codexSandboxMode ?? "read-only";
     const approvalsReviewer = this.options.codexApprovalsReviewer ?? "user";
+    const skillRoots = [resolve(process.cwd(), "skills")];
     return this.dependencies.createRuntime?.({
       codexHome,
       bridgeToken,
       approvalPolicy,
       sandboxMode,
       approvalsReviewer,
+      skillRoots,
     }) ?? createCodexRuntime(this.env, codexHome, bridgeToken, {
       approvalPolicy,
       sandboxMode,
       approvalsReviewer,
+      skillRoots,
     });
   }
 
@@ -573,6 +590,7 @@ function createCodexRuntime(
     approvalPolicy: "never" | "on-request" | "untrusted";
     sandboxMode: "read-only" | "workspace-write";
     approvalsReviewer: "user";
+    skillRoots: string[];
   },
 ): AgentRuntime {
   const processEnv: NodeJS.ProcessEnv = {
@@ -595,6 +613,7 @@ function createCodexRuntime(
     sandboxMode: execution.sandboxMode,
     approvalsReviewer: execution.approvalsReviewer,
     processCwd: env.CODEX_CWD,
+    skillRoots: execution.skillRoots,
     processEnv,
   });
 }
