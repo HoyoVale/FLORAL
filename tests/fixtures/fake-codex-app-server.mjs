@@ -139,6 +139,13 @@ lines.on("line", (line) => {
             scope: "user",
             enabled: true,
           },
+          {
+            name: "macos-ui-operation",
+            description: "Observe and safely operate the macOS GUI through FLORAL-owned Peekaboo.",
+            path: `${root}/macos-ui-operation/SKILL.md`,
+            scope: "user",
+            enabled: true,
+          },
         ]
       : [];
     send({ id: message.id, result: { data: [{ cwd, skills, errors: [] }] } });
@@ -334,16 +341,19 @@ lines.on("line", (line) => {
 
     if (scenario === "skills-explicit") {
       const input = message.params?.input;
+      const text = Array.isArray(input)
+        ? input.find((item) => item?.type === "text")?.text
+        : undefined;
+      const requestedSkill = typeof text === "string" && text.includes("$macos-ui-operation")
+        ? "macos-ui-operation"
+        : "system-status";
       const skill = Array.isArray(input)
-        ? input.find((item) => item?.type === "skill" && item?.name === "system-status")
+        ? input.find((item) => item?.type === "skill" && item?.name === requestedSkill)
         : undefined;
       const normalizedSkillPath = typeof skill?.path === "string"
         ? skill.path.replace(/\\/gu, "/")
         : "";
-      if (
-        !skill
-        || !normalizedSkillPath.endsWith("/system-status/SKILL.md")
-      ) {
+      if (!skill || !normalizedSkillPath.endsWith(`/${requestedSkill}/SKILL.md`)) {
         send({ id: message.id, error: { code: -32602, message: "missing explicit skill input item" } });
         return;
       }
