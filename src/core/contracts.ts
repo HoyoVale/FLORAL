@@ -55,7 +55,10 @@ export function supportsInteractiveApproval(
 }
 
 export interface InboundAttachmentMaterializer {
-  materializeInboundAttachments(message: IncomingMessage): Promise<IncomingMessage>;
+  materializeInboundAttachments(
+    message: IncomingMessage,
+    options?: { projectNamespace?: string | undefined },
+  ): Promise<IncomingMessage>;
 }
 
 export function supportsInboundAttachmentMaterializer(
@@ -111,6 +114,17 @@ export function supportsAgentSkills(
   runtime: AgentRuntime,
 ): runtime is AgentRuntime & AgentSkillRuntime {
   return typeof (runtime as Partial<AgentSkillRuntime>).listSkills === "function";
+}
+
+export interface AgentProjectRuntimeStorage {
+  resolveRuntimeHome(input: { cwd: string }): Promise<string>;
+}
+
+export function supportsAgentProjectRuntimeStorage(
+  runtime: AgentRuntime,
+): runtime is AgentRuntime & AgentProjectRuntimeStorage {
+  return typeof (runtime as Partial<AgentProjectRuntimeStorage>)
+    .resolveRuntimeHome === "function";
 }
 
 export interface AgentThreadManagementRuntime {

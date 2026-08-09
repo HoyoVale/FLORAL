@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { lstat, mkdir, readdir, realpath, rm } from "node:fs/promises";
 import { dirname, relative, resolve, sep } from "node:path";
 import { bootstrapProjectContext } from "./project-context.js";
@@ -5,6 +6,18 @@ import { bootstrapProjectContext } from "./project-context.js";
 export interface WorkspaceProject {
   name: string;
   path: string;
+}
+
+/**
+ * Stable, non-secret storage namespace for project-owned FLORAL/Codex state.
+ * The canonical project path is hashed so arbitrary project names never become
+ * managed runtime directory names.
+ */
+export function projectRuntimeNamespace(projectPath: string): string {
+  return createHash("sha256")
+    .update(resolve(projectPath), "utf8")
+    .digest("hex")
+    .slice(0, 24);
 }
 
 export class ProjectWorkspaceRoot {

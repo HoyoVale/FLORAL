@@ -21,7 +21,11 @@ import {
   buildFeishuRuntimeOptionsContract,
   resolveFeishuRuntimeCredentials,
 } from "./config/feishu/feishu-runtime-options.js";
-import type { AgentRuntime, ChatTransport } from "./core/contracts.js";
+import {
+  supportsAgentProjectRuntimeStorage,
+  type AgentRuntime,
+  type ChatTransport,
+} from "./core/contracts.js";
 import { acquireProcessLock } from "./runtime/process-lock.js";
 import { createServiceStateWriter } from "./runtime/service-state.js";
 import { readDeepSeekCostGuardSnapshot } from "./runtime/cost/deepseek-cost-guard.js";
@@ -108,6 +112,13 @@ const artifactEgressPolicy = new ArtifactEgressPolicy({
 });
 await artifactEgressPolicy.initialize();
 
+const runtimeManagedHomeForCwd = async (cwd: string): Promise<string> => {
+  if (supportsAgentProjectRuntimeStorage(agent)) {
+    return await agent.resolveRuntimeHome({ cwd });
+  }
+  return resolve(repositoryRoot, authority.effective.codex.managed_home);
+};
+
 const gateway = new GatewayService(
   transport,
   agent,
@@ -146,7 +157,8 @@ const gateway = new GatewayService(
     artifactEgress: {
       policy: artifactEgressPolicy,
     },
-    runtimeStatusLines: async () => {
+    runtimeStatusLines: async (cwd) => {
+      const managedHome = await runtimeManagedHomeForCwd(cwd);
       const [snapshot, nativeMemory] = await Promise.all([
         readDeepSeekCostGuardSnapshot(
           repositoryRoot,
@@ -154,7 +166,7 @@ const gateway = new GatewayService(
         ),
         readCodexNativeMemoryRuntimeStatus({
           repositoryRoot,
-          managedHome: authority.effective.codex.managed_home,
+          managedHome,
           config: authority.effective.codex.memories,
         }),
       ]);
@@ -166,13 +178,13 @@ const gateway = new GatewayService(
         `requests_hour=${String(snapshot.requests.hour)}/${String(authority.effective.runtime.cost_guard.max_requests_per_hour)}`,
       ];
     },
-    nativeMemoryDiagnosticLines: async () => {
+    nativeMemoryDiagnosticLines: async (cwd) => {
+      const managedHome = await runtimeManagedHomeForCwd(cwd);
       const nativeMemory = await readCodexNativeMemoryRuntimeStatus({
         repositoryRoot,
-        managedHome: authority.effective.codex.managed_home,
+        managedHome,
         config: authority.effective.codex.memories,
       });
-      const managedHome = resolve(repositoryRoot, authority.effective.codex.managed_home);
       const diagnostics = await readCodexNativeMemoryPhase2Diagnostics({
         managedHome,
         runtime: nativeMemory,
@@ -209,6 +221,7 @@ function createChatTransport(
     textChunkBytes: contract.delivery.textChunkBytes,
     maxReplyChunks: contract.delivery.maxReplyChunks,
     inboundRoot: resolve(repositoryRoot, env.DATA_DIR, "inbound", "feishu"),
+    projectInboundRoot: resolve(repositoryRoot, env.DATA_DIR, "projects"),
     inboundMaxFileBytes: 30 * 1024 * 1024,
     inboundMaxAttachments: 8,
     inboundTimeoutMs: 120_000,

@@ -5,6 +5,7 @@ import { describe, expect, it } from "vitest";
 import {
   ProjectWorkspaceRoot,
   normalizeProjectName,
+  projectRuntimeNamespace,
 } from "../src/workspace/project-workspace.js";
 
 describe("ProjectWorkspaceRoot", () => {
@@ -50,6 +51,15 @@ describe("ProjectWorkspaceRoot", () => {
     } finally {
       await rm(root, { recursive: true, force: true });
     }
+  });
+
+  it("derives a stable opaque runtime namespace from the project path", () => {
+    const first = projectRuntimeNamespace("/tmp/example/project-a");
+    const same = projectRuntimeNamespace("/tmp/example/project-a");
+    const other = projectRuntimeNamespace("/tmp/example/project-b");
+    expect(first).toMatch(/^[a-f0-9]{24}$/u);
+    expect(same).toBe(first);
+    expect(other).not.toBe(first);
   });
 
   it("rejects hidden, relative, and separator-bearing project names", () => {

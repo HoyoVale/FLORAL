@@ -1,6 +1,6 @@
 import { randomBytes } from "node:crypto";
-import { chmod, mkdir, open, rename, rm } from "node:fs/promises";
-import { dirname, join, resolve } from "node:path";
+import { chmod, mkdir, open, realpath, rename, rm } from "node:fs/promises";
+import { dirname, join, relative, resolve, sep } from "node:path";
 import {
   createCodexCutoverReport,
   removeCodexCutoverReport,
@@ -43,6 +43,7 @@ import {
 } from "../config/codex/codex-model-catalog.js";
 import { CodexAppServerRuntime } from "./codex-app-server.js";
 import { buildCodexDeepSeekConfig } from "./codex-deepseek-config.js";
+import { projectRuntimeNamespace } from "../workspace/project-workspace.js";
 
 interface ManagedBridge {
   start(): Promise<{ baseUrl: string }>;
@@ -58,6 +59,20 @@ export interface ManagedWorkspace {
 interface SearchEndpoint {
   endpoint: string;
   resultCount: number;
+}
+
+interface ManagedRuntimeSlot {
+  key: string;
+  runtime: AgentRuntime;
+  workspace: ManagedWorkspace;
+  codexHome: string;
+}
+
+interface ProjectRuntimeScope {
+  key: string;
+  projectPath: string;
+  codexHome: string;
+  inboundRoot: string;
 }
 
 export interface ManagedCodexDeepSeekDependencies {
@@ -102,8 +117,15 @@ export class ManagedCodexDeepSeekRuntime implements AgentRuntime {
   #runtime: AgentRuntime | undefined;
   #bridge: ManagedBridge | undefined;
   #workspace: ManagedWorkspace | undefined;
+  readonly #projectRuntimes = new Map<string, ManagedRuntimeSlot>();
+  readonly #projectRuntimeStarting = new Map<string, Promise<ManagedRuntimeSlot>>();
+  readonly #threadRuntimeKeys = new Map<string, string>();
   readonly #providerActivityGate = new ProviderActivityGate();
   #starting: Promise<void> | undefined;
+  #activeRuntimeConfig: string | undefined;
+  #activeModelCatalog: string | undefined;
+  #bridgeToken: string | undefined;
+  #canonicalWorkspaceRoot: string | undefined;
   #stopped = false;
 
   constructor(
@@ -131,17 +153,25 @@ export class ManagedCodexDeepSeekRuntime implements AgentRuntime {
     request: AgentRunRequest,
     onEvent?: (event: AgentEvent) => void,
   ): Promise<AgentRunResult> {
-    const runtime = this.#requireRuntime();
+    const slot = await this.#runtimeSlotForCwd(request.cwd);
+    if (request.threadId) this.#threadRuntimeKeys.set(request.threadId, slot.key);
     const releaseProviderActivity = this.#providerActivityGate.enterAgentRun();
     try {
-      return await runtime.run(request, onEvent);
+      const result = await slot.runtime.run(request, (event) => {
+        if (event.type === "run.started") {
+          this.#threadRuntimeKeys.set(event.threadId, slot.key);
+        }
+        onEvent?.(event);
+      });
+      this.#threadRuntimeKeys.set(result.threadId, slot.key);
+      return result;
     } finally {
       releaseProviderActivity();
     }
   }
 
   async interrupt(threadId: string, turnId?: string): Promise<void> {
-    const runtime = this.#requireRuntime();
+    const runtime = this.#runtimeForThread(threadId);
     await runtime.interrupt(threadId, turnId);
   }
 
@@ -149,7 +179,7 @@ export class ManagedCodexDeepSeekRuntime implements AgentRuntime {
     cwd: string;
     forceReload?: boolean | undefined;
   }): Promise<AgentSkillSummary[]> {
-    const runtime = this.#requireRuntime();
+    const runtime = (await this.#runtimeSlotForCwd(input.cwd)).runtime;
     if (!supportsAgentSkills(runtime)) {
       throw new Error("Managed Codex runtime does not expose skill discovery");
     }
@@ -160,19 +190,28 @@ export class ManagedCodexDeepSeekRuntime implements AgentRuntime {
     cwd: string;
     limit?: number | undefined;
   }): Promise<AgentThreadSummary[]> {
-    const runtime = this.#requireRuntime();
+    const slot = await this.#runtimeSlotForCwd(input.cwd);
+    const runtime = slot.runtime;
     if (!supportsAgentThreadManagement(runtime)) {
       throw new Error("Managed Codex runtime does not expose thread management");
     }
-    return await runtime.listThreads(input);
+    const threads = await runtime.listThreads(input);
+    for (const thread of threads) this.#threadRuntimeKeys.set(thread.id, slot.key);
+    return threads;
   }
 
   async archiveThread(threadId: string): Promise<void> {
-    const runtime = this.#requireRuntime();
+    const runtime = this.#runtimeForThread(threadId);
     if (!supportsAgentThreadManagement(runtime)) {
       throw new Error("Managed Codex runtime does not expose thread management");
     }
     await runtime.archiveThread(threadId);
+    this.#threadRuntimeKeys.delete(threadId);
+  }
+
+  async resolveRuntimeHome(input: { cwd: string }): Promise<string> {
+    const scope = await this.#projectRuntimeScope(input.cwd);
+    return scope?.codexHome ?? resolve(this.env.CODEX_MANAGED_HOME);
   }
 
   async stop(): Promise<void> {
@@ -181,10 +220,24 @@ export class ManagedCodexDeepSeekRuntime implements AgentRuntime {
     const runtime = this.#runtime;
     const bridge = this.#bridge;
     const workspace = this.#workspace;
+    const projectSlots = [...this.#projectRuntimes.values()];
     this.#runtime = undefined;
     this.#bridge = undefined;
     this.#workspace = undefined;
+    this.#projectRuntimes.clear();
+    this.#projectRuntimeStarting.clear();
+    this.#threadRuntimeKeys.clear();
+    this.#activeRuntimeConfig = undefined;
+    this.#activeModelCatalog = undefined;
+    this.#bridgeToken = undefined;
+    this.#canonicalWorkspaceRoot = undefined;
 
+    await Promise.all(
+      projectSlots.map(async (slot) => {
+        await slot.runtime.stop().catch(() => undefined);
+        await slot.workspace.cleanup().catch(() => undefined);
+      }),
+    );
     await runtime?.stop().catch(() => undefined);
     await bridge?.stop().catch(() => undefined);
     await workspace?.cleanup().catch(() => undefined);
@@ -193,6 +246,10 @@ export class ManagedCodexDeepSeekRuntime implements AgentRuntime {
   async #startOnce(): Promise<void> {
     const token = this.dependencies.createToken?.()
       ?? randomBytes(32).toString("hex");
+    this.#bridgeToken = token;
+    this.#canonicalWorkspaceRoot = await resolveConfiguredWorkspaceRoot(
+      this.env.FLORAL_WORKSPACE_ROOT,
+    );
     const search = await (this.dependencies.checkSearch?.()
       ?? checkSearxng(
         this.env.SEARXNG_URL,
@@ -272,6 +329,8 @@ export class ManagedCodexDeepSeekRuntime implements AgentRuntime {
       }
       this.#workspace = workspace;
       this.#runtime = runtime;
+      this.#activeRuntimeConfig = adoption.productionConfig;
+      this.#activeModelCatalog = modelCatalog;
       process.stderr.write("agent.stack.codex=ok\n");
       return;
     } catch (unifiedError) {
@@ -310,6 +369,8 @@ export class ManagedCodexDeepSeekRuntime implements AgentRuntime {
         });
         this.#workspace = workspace;
         this.#runtime = runtime;
+        this.#activeRuntimeConfig = adoption.fallbackConfig;
+        this.#activeModelCatalog = modelCatalog;
         process.stderr.write("agent.stack.codex_config.cutover=rolled-back\n");
         process.stderr.write("agent.stack.codex=ok\n");
         return;
@@ -487,12 +548,134 @@ export class ManagedCodexDeepSeekRuntime implements AgentRuntime {
     await operation;
   }
 
+  async #runtimeSlotForCwd(cwd: string): Promise<ManagedRuntimeSlot> {
+    const scope = await this.#projectRuntimeScope(cwd);
+    if (!scope) {
+      const runtime = this.#requireRuntime();
+      const workspace = this.#workspace;
+      if (!workspace) throw new Error("Managed Codex workspace is not started");
+      return {
+        key: "global",
+        runtime,
+        workspace,
+        codexHome: workspace.codexHome,
+      };
+    }
+
+    const existing = this.#projectRuntimes.get(scope.key);
+    if (existing) return existing;
+    const starting = this.#projectRuntimeStarting.get(scope.key);
+    if (starting) return await starting;
+
+    const startup = this.#startProjectRuntime(scope);
+    this.#projectRuntimeStarting.set(scope.key, startup);
+    try {
+      return await startup;
+    } finally {
+      this.#projectRuntimeStarting.delete(scope.key);
+    }
+  }
+
+  async #startProjectRuntime(scope: ProjectRuntimeScope): Promise<ManagedRuntimeSlot> {
+    const config = this.#activeRuntimeConfig;
+    const modelCatalog = this.#activeModelCatalog;
+    const token = this.#bridgeToken;
+    if (!config || !modelCatalog || !token) {
+      throw new Error("Managed Codex project runtime prerequisites are not ready");
+    }
+
+    const scopedConfig = scopeCodexConfigForProject(
+      config,
+      resolve(process.cwd(), this.env.DATA_DIR, "inbound", "feishu"),
+      scope.inboundRoot,
+    );
+    const workspace = await this.#createWorkspace(
+      scopedConfig,
+      scope.codexHome,
+      undefined,
+      modelCatalog,
+    );
+    const runtime = this.#createRuntime(workspace.codexHome, token);
+    try {
+      await runtime.start();
+    } catch (error) {
+      await runtime.stop().catch(() => undefined);
+      await workspace.cleanup().catch(() => undefined);
+      throw error;
+    }
+
+    const slot: ManagedRuntimeSlot = {
+      key: scope.key,
+      runtime,
+      workspace,
+      codexHome: workspace.codexHome,
+    };
+    this.#projectRuntimes.set(scope.key, slot);
+    process.stderr.write(`agent.stack.project_runtime=active:${scope.key}\n`);
+    return slot;
+  }
+
+  async #projectRuntimeScope(cwd: string): Promise<ProjectRuntimeScope | undefined> {
+    const workspaceRoot = this.#canonicalWorkspaceRoot;
+    if (!workspaceRoot) return undefined;
+
+    const canonicalCwd = await realpath(resolve(cwd)).catch(() => undefined);
+    if (!canonicalCwd) return undefined;
+    const rel = relative(workspaceRoot, canonicalCwd);
+    if (!rel || rel.startsWith(`..${sep}`) || rel === ".." || rel.includes(sep)) {
+      return undefined;
+    }
+
+    const key = projectRuntimeNamespace(canonicalCwd);
+    const managedHome = resolve(this.env.CODEX_MANAGED_HOME);
+    const dataRoot = resolve(process.cwd(), this.env.DATA_DIR, "projects", key);
+    return {
+      key,
+      projectPath: canonicalCwd,
+      codexHome: join(managedHome, "projects", key),
+      inboundRoot: join(dataRoot, "inbound", "feishu"),
+    };
+  }
+
+  #runtimeForThread(threadId: string): AgentRuntime {
+    const key = this.#threadRuntimeKeys.get(threadId);
+    if (!key || key === "global") return this.#requireRuntime();
+    const slot = this.#projectRuntimes.get(key);
+    if (!slot) {
+      throw new Error(
+        "Codex thread project runtime is not loaded; refresh the project chat list before retrying",
+      );
+    }
+    return slot.runtime;
+  }
+
   #requireRuntime(): AgentRuntime {
     if (!this.#runtime) {
       throw new Error("Managed Codex runtime is not started");
     }
     return this.#runtime;
   }
+}
+
+async function resolveConfiguredWorkspaceRoot(
+  configuredRoot: string | undefined,
+): Promise<string | undefined> {
+  const value = configuredRoot?.trim();
+  if (!value) return undefined;
+  return await realpath(resolve(value));
+}
+
+function scopeCodexConfigForProject(
+  config: string,
+  globalInboundRoot: string,
+  projectInboundRoot: string,
+): string {
+  const globalAssignment =
+    `FLORAL_VISION_INBOUND_ROOT = ${JSON.stringify(globalInboundRoot)}`;
+  if (!config.includes(globalAssignment)) return config;
+  const projectAssignment =
+    `FLORAL_VISION_INBOUND_ROOT = ${JSON.stringify(projectInboundRoot)}`;
+  return config.replace(globalAssignment, projectAssignment);
 }
 
 export async function createPersistentCodexWorkspace(

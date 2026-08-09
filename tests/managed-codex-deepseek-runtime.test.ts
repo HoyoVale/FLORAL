@@ -17,6 +17,7 @@ import { buildMcpRuntimeRegistry } from "../src/config/mcp/mcp-runtime-registry.
 import { loadEnv } from "../src/config/env.js";
 import type { AgentRuntime, AgentSkillSummary } from "../src/core/contracts.js";
 import type { AgentRunRequest, AgentRunResult } from "../src/core/types.js";
+import { projectRuntimeNamespace } from "../src/workspace/project-workspace.js";
 
 class FakeRuntime implements AgentRuntime {
   readonly name = "fake";
@@ -177,6 +178,88 @@ describe("ManagedCodexDeepSeekRuntime", () => {
     await managed.interrupt("thread-1");
     expect(runtime.interrupts).toBe(1);
     await managed.stop();
+  });
+
+  it("routes different workspace projects into independent Codex homes while sharing the bridge", async () => {
+    const root = await mkdtemp(join(tmpdir(), "floral-project-runtime-"));
+    const workspaceRoot = join(root, "workspace");
+    const projectA = join(workspaceRoot, "alpha");
+    const projectB = join(workspaceRoot, "beta");
+    const managedHome = join(root, "codex-runtime");
+    const dataDir = join(root, "data");
+    await mkdir(projectA, { recursive: true });
+    await mkdir(projectB, { recursive: true });
+
+    const bridgeCalls: string[] = [];
+    const runtimeByHome = new Map<string, FakeRuntime>();
+    const workspaceConfigs = new Map<string, string>();
+    const managed = new ManagedCodexDeepSeekRuntime(loadEnv({
+      DEEPSEEK_API_KEY: "secret",
+      FLORAL_WORKSPACE_ROOT: workspaceRoot,
+      CODEX_MANAGED_HOME: managedHome,
+      DATA_DIR: dataDir,
+    }), {
+      createToken: () => "token",
+      checkSearch: async () => ({ endpoint: "http://127.0.0.1:8888", resultCount: 1 }),
+      createBridge: () => ({
+        start: async () => {
+          bridgeCalls.push("start");
+          return { baseUrl: "http://127.0.0.1:9999/v1" };
+        },
+        stop: async () => { bridgeCalls.push("stop"); },
+      }),
+      prepareCodexConfig: async ({ legacyConfig }) => ({
+        mode: "legacy",
+        productionConfig: `${legacyConfig}\n# FLORAL_VISION_INBOUND_ROOT test fixture\nFLORAL_VISION_INBOUND_ROOT = ${JSON.stringify(join(dataDir, "inbound", "feishu"))}\n`,
+      }),
+      clearCodexShadowReport: async () => undefined,
+      clearCodexCutoverReport: async () => undefined,
+      clearMcpRegistryAdoptionReport: async () => undefined,
+      createWorkspace: async (config, codexHome) => {
+        workspaceConfigs.set(codexHome, config);
+        return {
+          codexHome,
+          cleanup: async () => undefined,
+        };
+      },
+      createRuntime: ({ codexHome }) => {
+        const runtime = new FakeRuntime();
+        runtimeByHome.set(codexHome, runtime);
+        return runtime;
+      },
+    });
+
+    try {
+      await managed.start();
+      await managed.run({ text: "alpha one", cwd: projectA });
+      await managed.run({ text: "alpha two", cwd: projectA });
+      await managed.run({ text: "beta", cwd: projectB });
+
+      const alphaKey = projectRuntimeNamespace(projectA);
+      const betaKey = projectRuntimeNamespace(projectB);
+      const alphaHome = join(managedHome, "projects", alphaKey);
+      const betaHome = join(managedHome, "projects", betaKey);
+
+      await expect(managed.resolveRuntimeHome({ cwd: projectA })).resolves.toBe(alphaHome);
+      await expect(managed.resolveRuntimeHome({ cwd: projectB })).resolves.toBe(betaHome);
+      expect(runtimeByHome.has(managedHome)).toBe(true);
+      expect(runtimeByHome.has(alphaHome)).toBe(true);
+      expect(runtimeByHome.has(betaHome)).toBe(true);
+      expect(runtimeByHome.size).toBe(3);
+      expect(runtimeByHome.get(alphaHome)?.starts).toBe(1);
+      expect(runtimeByHome.get(betaHome)?.starts).toBe(1);
+      expect(bridgeCalls).toEqual(["start"]);
+
+      expect(workspaceConfigs.get(alphaHome)).toContain(
+        `FLORAL_VISION_INBOUND_ROOT = ${JSON.stringify(join(dataDir, "projects", alphaKey, "inbound", "feishu"))}`,
+      );
+      expect(workspaceConfigs.get(betaHome)).toContain(
+        `FLORAL_VISION_INBOUND_ROOT = ${JSON.stringify(join(dataDir, "projects", betaKey, "inbound", "feishu"))}`,
+      );
+    } finally {
+      await managed.stop();
+      await rm(root, { recursive: true, force: true });
+    }
   });
 
   it("stops owned resources exactly once", async () => {

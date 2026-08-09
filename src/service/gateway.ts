@@ -43,7 +43,11 @@ import {
   formatNativeMemoryStatus,
   gatewayHelpText,
 } from "./gateway-status.js";
-import type { ProjectWorkspaceRoot, WorkspaceProject } from "../workspace/project-workspace.js";
+import {
+  projectRuntimeNamespace,
+  type ProjectWorkspaceRoot,
+  type WorkspaceProject,
+} from "../workspace/project-workspace.js";
 import {
   bootstrapProjectContext,
   inspectProjectContext,
@@ -59,8 +63,8 @@ export interface GatewayOptions {
   model?: string;
   ownerPairingCode?: string;
   trustMockOwner?: boolean;
-  runtimeStatusLines?: (() => Promise<string[]>) | undefined;
-  nativeMemoryDiagnosticLines?: (() => Promise<string[]>) | undefined;
+  runtimeStatusLines?: ((cwd: string) => Promise<string[]>) | undefined;
+  nativeMemoryDiagnosticLines?: ((cwd: string) => Promise<string[]>) | undefined;
   conversationUx?: {
     visibleActivityFallback: boolean;
     visibleActivityDelayMs: number;
@@ -359,8 +363,9 @@ export class GatewayService {
           eventType: "command.status",
           payload: { debug: command.debug },
         });
+        const runtimeCwd = projectContext?.project.path ?? this.options.cwd;
         const runtimeLines = this.options.runtimeStatusLines
-          ? await this.options.runtimeStatusLines().catch(() => ["cost_guard=error"])
+          ? await this.options.runtimeStatusLines(runtimeCwd).catch(() => ["cost_guard=error"])
           : [];
         const controlMode = this.#controlMode(resolved.conversationId);
         const executionPolicy = executionPolicyForMode(controlMode);
@@ -453,8 +458,12 @@ export class GatewayService {
           eventType: "command.native_memory_status",
           payload: {},
         });
+        const projectContext = await this.#resolveSelectedProjectContext(
+          resolved.conversationId,
+        );
+        const runtimeCwd = projectContext?.project.path ?? this.options.cwd;
         const runtimeLines = this.options.runtimeStatusLines
-          ? await this.options.runtimeStatusLines().catch(() => ["codex_memory=unknown"])
+          ? await this.options.runtimeStatusLines(runtimeCwd).catch(() => ["codex_memory=unknown"])
           : ["codex_memory=unknown"];
         await this.#send(
           message.identity.conversationId,
@@ -483,8 +492,12 @@ export class GatewayService {
           eventType: "command.native_memory_diagnose",
           payload: {},
         });
+        const projectContext = await this.#resolveSelectedProjectContext(
+          resolved.conversationId,
+        );
+        const runtimeCwd = projectContext?.project.path ?? this.options.cwd;
         const diagnosticLines = this.options.nativeMemoryDiagnosticLines
-          ? await this.options.nativeMemoryDiagnosticLines().catch(() => [
+          ? await this.options.nativeMemoryDiagnosticLines(runtimeCwd).catch(() => [
               "codex_memory_lifecycle=unknown",
               "codex_memory_phase2_diagnosis=unavailable",
             ])
@@ -1343,7 +1356,12 @@ export class GatewayService {
     let agentMessage = message;
     if (message.attachments?.length && supportsInboundAttachmentMaterializer(this.transport)) {
       try {
-        agentMessage = await this.transport.materializeInboundAttachments(message);
+        agentMessage = await this.transport.materializeInboundAttachments(
+          message,
+          projectContext
+            ? { projectNamespace: projectRuntimeNamespace(projectContext.project.path) }
+            : undefined,
+        );
       } catch (error) {
         await this.store.appendAudit({
           userId: resolved.userId,

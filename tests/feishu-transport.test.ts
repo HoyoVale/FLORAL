@@ -257,6 +257,57 @@ describe("FeishuTransport", () => {
     }
   });
 
+  it("materializes project attachments under the project data namespace", async () => {
+    const worker = new FakeWorker();
+    const root = await mkdtemp(join(tmpdir(), "floral-feishu-project-inbound-"));
+    const projectRoot = join(root, "projects");
+    const namespace = "0123456789abcdef01234567";
+    const transport = new FeishuTransport({
+      ...options({
+        worker,
+        resourceGet: async () => ({
+          getReadableStream: () =>
+            Readable.from([Buffer.from("project file")]) as AsyncIterable<unknown> & {
+              destroy?: ((error?: Error) => void) | undefined;
+            },
+        }),
+      }),
+      inboundRoot: join(root, "global"),
+      projectInboundRoot: projectRoot,
+    });
+    try {
+      await startTransport(transport, worker);
+      const result = await transport.materializeInboundAttachments({
+        id: "om_project_media",
+        identity: {
+          transport: "feishu",
+          botId: "cli_floral",
+          externalUserId: "ou_owner",
+          conversationId: "oc_chat",
+        },
+        text: "",
+        attachments: [{
+          id: "file:file_project",
+          kind: "file",
+          fileName: "notes.txt",
+          source: {
+            transport: "feishu",
+            messageId: "om_project_media",
+            resourceKey: "file_project",
+          },
+        }],
+        receivedAt: new Date(),
+      }, { projectNamespace: namespace });
+
+      expect(result.attachments?.[0]?.localPath).toContain(
+        join("projects", namespace, "inbound", "feishu"),
+      );
+    } finally {
+      await transport.stop();
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
   it("sends text by chat_id and serializes concurrent sends in one conversation", async () => {
     const worker = new FakeWorker();
     const requests: unknown[] = [];

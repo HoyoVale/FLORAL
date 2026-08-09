@@ -39,6 +39,7 @@ export interface FeishuTransportOptions {
   textChunkBytes: number;
   maxReplyChunks: number;
   inboundRoot: string;
+  projectInboundRoot?: string | undefined;
   inboundMaxFileBytes: number;
   inboundMaxAttachments: number;
   inboundTimeoutMs: number;
@@ -207,7 +208,10 @@ export class FeishuTransport
     }
   }
 
-  async materializeInboundAttachments(message: IncomingMessage): Promise<IncomingMessage> {
+  async materializeInboundAttachments(
+    message: IncomingMessage,
+    options: { projectNamespace?: string | undefined } = {},
+  ): Promise<IncomingMessage> {
     const attachments = message.attachments ?? [];
     if (attachments.length === 0) return message;
     if (attachments.length > this.options.inboundMaxAttachments) {
@@ -217,7 +221,19 @@ export class FeishuTransport
       throw new Error("Feishu inbound attachment source does not match the message");
     }
 
-    const root = resolve(this.options.inboundRoot);
+    const projectNamespace = options.projectNamespace?.trim();
+    if (projectNamespace && !/^[a-f0-9]{24}$/u.test(projectNamespace)) {
+      throw new Error("Invalid FLORAL project attachment namespace");
+    }
+    const root = projectNamespace
+      ? resolve(
+          this.options.projectInboundRoot
+            ?? join(resolve(this.options.inboundRoot), "..", "..", "projects"),
+          projectNamespace,
+          "inbound",
+          "feishu",
+        )
+      : resolve(this.options.inboundRoot);
     await mkdir(root, { recursive: true, mode: 0o700 });
     const fingerprint = createHash("sha256").update(message.id).digest("hex").slice(0, 20);
     const directory = await mkdtemp(join(root, `${fingerprint}-`));
@@ -747,6 +763,9 @@ function validateOptions(options: FeishuTransportOptions): void {
     throw new Error("Feishu maximum reply chunks exceeds 5");
   }
   if (!options.inboundRoot.trim()) throw new Error("Feishu inbound root must not be empty");
+  if (options.projectInboundRoot !== undefined && !options.projectInboundRoot.trim()) {
+    throw new Error("Feishu project inbound root must not be empty");
+  }
   if (options.inboundMaxFileBytes > 100 * 1024 * 1024) {
     throw new Error("Feishu inbound file limit exceeds the platform 100 MiB ceiling");
   }
