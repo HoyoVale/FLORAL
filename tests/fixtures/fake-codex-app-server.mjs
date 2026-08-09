@@ -1,4 +1,4 @@
-import { isAbsolute } from "node:path";
+import { isAbsolute, resolve } from "node:path";
 import { createInterface } from "node:readline";
 
 const scenario = process.argv[2] ?? "normal";
@@ -178,7 +178,7 @@ lines.on("line", (line) => {
                 path: `${extraSkillRoots[1]}/brainstorming/SKILL.md`,
                 scope: "user",
                 enabled: skillEnabled.get(
-                  `${extraSkillRoots[1]}/brainstorming/SKILL.md`,
+                  resolve(extraSkillRoots[1], "brainstorming", "SKILL.md"),
                 ) ?? true,
               }]
             : []),
@@ -202,7 +202,7 @@ lines.on("line", (line) => {
       });
       return;
     }
-    skillEnabled.set(path, enabled);
+    skillEnabled.set(resolve(path), enabled);
     send({ id: message.id, result: {} });
     send({ method: "skills/changed", params: {} });
     return;

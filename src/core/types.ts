@@ -172,6 +172,7 @@ export interface AgentRunRequest {
   sandboxMode?: "read-only" | "workspace-write" | "danger-full-access";
   approvalsReviewer?: "user" | "auto_review";
   approvalHandler?: AgentApprovalHandler;
+  skillManagementApprovalHandler?: AgentApprovalHandler;
   artifactRegistrationHandler?: AgentArtifactRegistrationHandler;
   artifactDeliveryHandler?: AgentArtifactDeliveryHandler;
 }

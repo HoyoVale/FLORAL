@@ -16,6 +16,8 @@ import {
   supportsInboundAttachmentMaterializer,
 } from "../core/contracts.js";
 import type {
+  AgentApprovalDecision,
+  AgentApprovalRequest,
   AgentArtifact,
   AgentArtifactDeliveryResult,
   AgentArtifactRegistrationResult,
@@ -1445,14 +1447,8 @@ export class GatewayService {
                 )
               ),
           } : {}),
-          ...(this.#approvalBroker ? {
+          ...(controlMode !== "auto" && this.#approvalBroker ? {
             approvalHandler: async (request) => {
-              if (
-                controlMode === "auto"
-                && request.kind !== "skill-management"
-              ) {
-                return "deny";
-              }
               if (
                 controlMode === "full"
                 && isCodexNativeFullAutoApproval(request)
@@ -1469,34 +1465,22 @@ export class GatewayService {
                 return "approve";
               }
 
-              active.waitingForApproval = true;
-              active.visibleActivitySatisfied = true;
-              this.#cancelVisibleActivityFallback(active);
-              this.#setConversationActivity(
+              return await this.#requestRemoteApproval(
                 message.identity.conversationId,
-                "idle",
-              );
-              const decision = await this.#approvalBroker!.request(
-                {
-                  userId: resolved.userId,
-                  role: resolved.role,
-                  conversationId: resolved.conversationId,
-                  deliveryConversationId: message.identity.conversationId,
-                },
+                resolved,
+                active,
                 request,
               );
-              active.waitingForApproval = false;
-              if (
-                !active.stopRequested
-                && this.#activeRuns.get(resolved.conversationId) === active
-              ) {
-                this.#setConversationActivity(
-                  message.identity.conversationId,
-                  "typing",
-                );
-              }
-              return decision;
             },
+          } : {}),
+          ...(this.#approvalBroker ? {
+            skillManagementApprovalHandler: async (request) =>
+              await this.#requestRemoteApproval(
+                message.identity.conversationId,
+                resolved,
+                active,
+                request,
+              ),
           } : {}),
         },
         (event) => this.#handleAgentEvent(
@@ -1557,6 +1541,40 @@ export class GatewayService {
       this.#approvalBroker?.cancelConversation(resolved.conversationId);
       if (this.#activeRuns.get(resolved.conversationId) === active) {
         this.#activeRuns.delete(resolved.conversationId);
+      }
+    }
+  }
+
+  async #requestRemoteApproval(
+    deliveryConversationId: string,
+    resolved: ResolvedGatewayIdentity,
+    active: ActiveRun,
+    request: AgentApprovalRequest,
+  ): Promise<AgentApprovalDecision> {
+    const broker = this.#approvalBroker;
+    if (!broker) return "deny";
+
+    active.waitingForApproval = true;
+    active.visibleActivitySatisfied = true;
+    this.#cancelVisibleActivityFallback(active);
+    this.#setConversationActivity(deliveryConversationId, "idle");
+    try {
+      return await broker.request(
+        {
+          userId: resolved.userId,
+          role: resolved.role,
+          conversationId: resolved.conversationId,
+          deliveryConversationId,
+        },
+        request,
+      );
+    } finally {
+      active.waitingForApproval = false;
+      if (
+        !active.stopRequested
+        && this.#activeRuns.get(resolved.conversationId) === active
+      ) {
+        this.#setConversationActivity(deliveryConversationId, "typing");
       }
     }
   }

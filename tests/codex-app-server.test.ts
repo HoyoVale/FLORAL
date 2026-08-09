@@ -176,7 +176,7 @@ describe("CodexAppServerRuntime", () => {
       const result = await runtime.run({
         text: "Install Superpowers.",
         cwd: process.cwd(),
-        approvalHandler: async (request) => {
+        skillManagementApprovalHandler: async (request) => {
           approvals += 1;
           expect(request).toMatchObject({
             kind: "skill-management",

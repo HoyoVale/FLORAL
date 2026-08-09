@@ -516,7 +516,7 @@ export class ManagedCodexDeepSeekRuntime implements AgentRuntime {
       skillRoots,
       protectedSkillRoots: [resolve(process.cwd(), "skills")],
       externalSkillCatalog: async () => await this.#externalSkillCatalogText(),
-      manageExternalSkill: async (request) =>
+      manageExternalSkill: async (request: ExternalSkillMutationRequest) =>
         await this.#manageExternalSkill(request),
       ...(permissionScope
         ? {

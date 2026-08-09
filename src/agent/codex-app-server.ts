@@ -345,6 +345,7 @@ export class CodexAppServerRuntime implements AgentRuntime {
   readonly #activeTurns = new Map<string, string>();
   readonly #eventHandlers = new Map<string, (event: AgentEvent) => void>();
   readonly #approvalHandlers = new Map<string, AgentApprovalHandler>();
+  readonly #skillManagementApprovalHandlers = new Map<string, AgentApprovalHandler>();
   readonly #artifactRegistrationHandlers = new Map<string, AgentArtifactRegistrationHandler>();
   readonly #artifactDeliveryHandlers = new Map<string, AgentArtifactDeliveryHandler>();
   readonly #threadCwds = new Map<string, string>();
@@ -548,6 +549,7 @@ export class CodexAppServerRuntime implements AgentRuntime {
     this.#activeTurns.delete(normalized);
     this.#eventHandlers.delete(normalized);
     this.#approvalHandlers.delete(normalized);
+    this.#skillManagementApprovalHandlers.delete(normalized);
     this.#artifactRegistrationHandlers.delete(normalized);
     this.#artifactDeliveryHandlers.delete(normalized);
     this.#threadCwds.delete(normalized);
@@ -567,6 +569,12 @@ export class CodexAppServerRuntime implements AgentRuntime {
     this.#threadCwds.set(threadId, cwd);
     if (onEvent) this.#eventHandlers.set(threadId, onEvent);
     if (request.approvalHandler) this.#approvalHandlers.set(threadId, request.approvalHandler);
+    if (request.skillManagementApprovalHandler) {
+      this.#skillManagementApprovalHandlers.set(
+        threadId,
+        request.skillManagementApprovalHandler,
+      );
+    }
     if (request.artifactRegistrationHandler) {
       this.#artifactRegistrationHandlers.set(threadId, request.artifactRegistrationHandler);
     }
@@ -830,6 +838,7 @@ export class CodexAppServerRuntime implements AgentRuntime {
       this.#activeTurns.delete(threadId);
       this.#eventHandlers.delete(threadId);
       this.#approvalHandlers.delete(threadId);
+      this.#skillManagementApprovalHandlers.delete(threadId);
       this.#artifactRegistrationHandlers.delete(threadId);
       this.#artifactDeliveryHandlers.delete(threadId);
       this.#threadCwds.delete(threadId);
@@ -857,6 +866,7 @@ export class CodexAppServerRuntime implements AgentRuntime {
     this.#activeTurns.clear();
     this.#eventHandlers.clear();
     this.#approvalHandlers.clear();
+    this.#skillManagementApprovalHandlers.clear();
     this.#artifactRegistrationHandlers.clear();
     this.#artifactDeliveryHandlers.clear();
     this.#threadCwds.clear();
@@ -1374,7 +1384,8 @@ export class CodexAppServerRuntime implements AgentRuntime {
         detail: { summary: approval.summary },
       });
 
-      const approvalHandler = this.#approvalHandlers.get(threadId);
+      const approvalHandler =
+        this.#skillManagementApprovalHandlers.get(threadId);
       const decision = approvalHandler
         ? await approvalHandler(approval).catch(() => "deny" as const)
         : "deny";

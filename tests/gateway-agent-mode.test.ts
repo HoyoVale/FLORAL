@@ -157,6 +157,9 @@ describe("Gateway Codex-native execution mode", () => {
       expect(runtime.requests).toHaveLength(1);
       expect(runtime.requests[0]?.approvalsReviewer).toBe("auto_review");
       expect(runtime.requests[0]?.approvalHandler).toBeUndefined();
+      expect(runtime.requests[0]?.skillManagementApprovalHandler).toBeTypeOf(
+        "function",
+      );
 
       await transport.emit("/status --debug", "status-1");
       expect(transport.sent.at(-1)?.text).toContain("mode=auto");
