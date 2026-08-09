@@ -9,6 +9,7 @@ export type AuthorizationSource =
   | "codex-permission-request"
   | "codex-permission-profile"
   | "mcp-tool"
+  | "floral-skill"
   | "floral";
 
 export interface AuthorizationRequest {
@@ -92,12 +93,15 @@ export class AuthorizationAuthority {
       && request.mcpToolName === "click";
     const scopedCodexPermissionGrant = request.source === "codex-permission-request"
       && request.capability === "codex.permission.grant";
+    const scopedFloralSkillSupplyChainGrant = request.source === "floral-skill"
+      && request.capability === "software.install";
 
     if (
       !sandboxAllows(this.options.sandboxMode, request.capability)
       && !scopedFileChangeGrant
       && !scopedPeekabooClickGrant
       && !scopedCodexPermissionGrant
+      && !scopedFloralSkillSupplyChainGrant
     ) {
       return {
         status: "deny",

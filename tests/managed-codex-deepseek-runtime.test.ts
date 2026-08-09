@@ -5,6 +5,7 @@ import { describe, expect, it } from "vitest";
 import {
   ManagedCodexDeepSeekRuntime,
   createPersistentCodexWorkspace,
+  type ManagedCodexDeepSeekDependencies,
 } from "../src/agent/managed-codex-deepseek-runtime.js";
 import { compareCodexShadowConfigs } from "../src/config/adoption/codex-shadow-adoption.js";
 import {
@@ -24,6 +25,7 @@ class FakeRuntime implements AgentRuntime {
   starts = 0;
   stops = 0;
   interrupts = 0;
+  skillRootUpdates: string[][] = [];
   async start(): Promise<void> { this.starts += 1; }
   async run(request: AgentRunRequest): Promise<AgentRunResult> {
     return { threadId: request.threadId ?? "thread-1", finalText: "ok" };
@@ -37,6 +39,9 @@ class FakeRuntime implements AgentRuntime {
       scope: "user",
       enabled: true,
     }];
+  }
+  async setSkillRoots(roots: string[]): Promise<void> {
+    this.skillRootUpdates.push([...roots]);
   }
   async stop(): Promise<void> { this.stops += 1; }
 }
@@ -56,9 +61,15 @@ async function createEmptyMcpRegistry() {
 function setup(options: {
   runtimeStartError?: Error;
   externalSkillRoots?: string[];
+  externalSkillRootsAfterMutation?: string[];
+  manageExternalSkill?: ManagedCodexDeepSeekDependencies["manageExternalSkill"];
 } = {}) {
   const calls: string[] = [];
   const runtime = new FakeRuntime();
+  let mutated = false;
+  let createdRuntimeOptions:
+    Parameters<NonNullable<ManagedCodexDeepSeekDependencies["createRuntime"]>>[0]
+    | undefined;
   if (options.runtimeStartError) {
     runtime.start = async () => { throw options.runtimeStartError; };
   }
@@ -85,7 +96,9 @@ function setup(options: {
         cleanup: async () => { calls.push("workspace.cleanup"); },
       };
     },
-    createRuntime: ({ codexHome, bridgeToken, skillRoots }) => {
+    createRuntime: (creationOptions) => {
+      createdRuntimeOptions = creationOptions;
+      const { codexHome, bridgeToken, skillRoots } = creationOptions;
       calls.push(`${codexHome}:${bridgeToken}`);
       if (options.externalSkillRoots) {
         calls.push(`skillRoots=${skillRoots.join("|")}`);
@@ -99,9 +112,26 @@ function setup(options: {
     clearCodexShadowReport: async () => undefined,
     clearCodexCutoverReport: async () => undefined,
     clearMcpRegistryAdoptionReport: async () => undefined,
-    resolveExternalSkillRoots: async () => options.externalSkillRoots ?? [],
+    resolveExternalSkillRoots: async () =>
+      mutated
+        ? options.externalSkillRootsAfterMutation
+          ?? options.externalSkillRoots
+          ?? []
+        : options.externalSkillRoots ?? [],
+    manageExternalSkill: options.manageExternalSkill
+      ? async (request) => {
+          const result = await options.manageExternalSkill!(request);
+          if (result.changed) mutated = true;
+          return result;
+        }
+      : undefined,
   });
-  return { managed, runtime, calls };
+  return {
+    managed,
+    runtime,
+    calls,
+    getCreatedRuntimeOptions: () => createdRuntimeOptions,
+  };
 }
 
 describe("ManagedCodexDeepSeekRuntime", () => {
@@ -137,6 +167,50 @@ describe("ManagedCodexDeepSeekRuntime", () => {
     await managed.stop();
   });
 
+
+  it("hot-refreshes Codex extraRoots after an approved shared External Skill mutation", async () => {
+    const externalRoot = resolve(
+      process.cwd(),
+      "data",
+      "external-skills",
+      "packages",
+      "superpowers",
+      "repository",
+      "skills",
+    );
+    const { managed, runtime, getCreatedRuntimeOptions } = setup({
+      externalSkillRoots: [],
+      externalSkillRootsAfterMutation: [externalRoot],
+      manageExternalSkill: async (request) => {
+        expect(request).toEqual({
+          action: "install",
+          id: "superpowers",
+        });
+        return {
+          changed: true,
+          message: "external_skills.install=ok\nid=superpowers",
+        };
+      },
+    });
+
+    await managed.start();
+    const control = getCreatedRuntimeOptions();
+    expect(control?.protectedSkillRoots).toEqual([
+      resolve(process.cwd(), "skills"),
+    ]);
+    const result = await control!.manageExternalSkill({
+      action: "install",
+      id: "superpowers",
+    });
+    expect(result.message).toContain("hot_reload=scheduled");
+    expect(result.message).toContain("restart_required=false");
+    await new Promise<void>((resolvePromise) => setImmediate(resolvePromise));
+    expect(runtime.skillRootUpdates.at(-1)).toEqual([
+      resolve(process.cwd(), "skills"),
+      externalRoot,
+    ]);
+    await managed.stop();
+  });
 
   it("passes the FLORAL turn-scoped approval profile to Codex runtime creation", async () => {
     let observed: { approvalPolicy: string; sandboxMode: string; approvalsReviewer: string } | undefined;
@@ -306,6 +380,9 @@ describe("ManagedCodexDeepSeekRuntime", () => {
       );
       expect(workspaceConfigs.get(alphaHome)).toContain(
         `${JSON.stringify(externalSkillRoot)} = "read"`,
+      );
+      expect(workspaceConfigs.get(alphaHome)).toContain(
+        `${JSON.stringify(join(dataDir, "external-skills", "packages"))} = "read"`,
       );
       expect(workspaceConfigs.get(alphaHome)).toContain(
         `${JSON.stringify(join(dataDir, "projects", alphaKey, "inbound", "feishu"))} = "read"`,

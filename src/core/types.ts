@@ -23,7 +23,8 @@ export type AgentApprovalKind =
   | "file-change"
   | "permission-request"
   | "permission-profile"
-  | "mcp-tool";
+  | "mcp-tool"
+  | "skill-management";
 
 export type AgentApprovalDecision = "approve" | "approve-session" | "deny";
 export type AgentLocalApprovalDecision = Exclude<AgentApprovalDecision, "approve-session">;

@@ -174,7 +174,8 @@ export class QqApprovalBroker {
             capability: request.capability,
             summary: boundedSummary(request.summary),
             ttlMs: this.options.ttlMs,
-            allowSession: request.kind !== "mcp-tool",
+            allowSession: request.kind !== "mcp-tool"
+              && request.kind !== "skill-management",
           });
           presentation = "interactive";
         } catch (error) {
@@ -228,6 +229,18 @@ export class QqApprovalBroker {
       this.#finish(normalizedId, "deny");
       await this.#audit(pending.scope, "authorization.approval_expired", pending.request);
       return "not-found";
+    }
+
+    if (
+      pending.request.kind === "skill-management"
+      && decision === "approve-session"
+    ) {
+      await this.#audit(
+        pending.scope,
+        "authorization.approval_session_not_supported",
+        pending.request,
+      );
+      return "not-authorized";
     }
 
     this.#finish(normalizedId, decision);
@@ -313,12 +326,13 @@ export class QqApprovalBroker {
 
 function sourceFor(
   request: AgentApprovalRequest,
-): "codex-command" | "codex-file-change" | "codex-permission-request" | "codex-permission-profile" | "mcp-tool" | "floral" {
+): "codex-command" | "codex-file-change" | "codex-permission-request" | "codex-permission-profile" | "mcp-tool" | "floral-skill" | "floral" {
   if (request.kind === "command-execution") return "codex-command";
   if (request.kind === "file-change") return "codex-file-change";
   if (request.kind === "permission-request") return "codex-permission-request";
   if (request.kind === "permission-profile") return "codex-permission-profile";
   if (request.kind === "mcp-tool") return "mcp-tool";
+  if (request.kind === "skill-management") return "floral-skill";
   return "floral";
 }
 

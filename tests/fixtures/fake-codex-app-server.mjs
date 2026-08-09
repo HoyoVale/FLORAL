@@ -9,6 +9,7 @@ let activeThreadId = "thr_new";
 let activeTurnId = "turn_1";
 let waitingForApproval = false;
 let extraSkillRoots = [];
+const skillEnabled = new Map();
 
 function send(message) {
   process.stdout.write(`${JSON.stringify(message)}\n`);
@@ -21,6 +22,23 @@ function hasFloralRoutingPolicy(params) {
     && instructions.includes("floral_peekaboo/click")
     && instructions.includes("floral_delivery/send_artifact")
     && instructions.includes("local filesystem path");
+}
+
+function hasFloralSkillTools(params) {
+  const dynamicTools = params?.dynamicTools;
+  if (!Array.isArray(dynamicTools)) return false;
+  const namespace = dynamicTools.find((entry) =>
+    entry?.type === "namespace" && entry?.name === "floral_skills"
+  );
+  if (!namespace || !Array.isArray(namespace.tools)) return false;
+  const names = namespace.tools.map((tool) => tool?.name).sort();
+  return JSON.stringify(names) === JSON.stringify([
+    "external_catalog",
+    "list",
+    "manage_external",
+    "refresh",
+    "set_enabled",
+  ]);
 }
 
 function hasFloralDeliveryTools(params) {
@@ -146,9 +164,47 @@ lines.on("line", (line) => {
             scope: "user",
             enabled: true,
           },
+          {
+            name: "skill-manager",
+            description: "Manage FLORAL and Codex Skills safely.",
+            path: `${root}/skill-manager/SKILL.md`,
+            scope: "user",
+            enabled: true,
+          },
+          ...(typeof extraSkillRoots[1] === "string"
+            ? [{
+                name: "superpowers:brainstorming",
+                description: "Brainstorm before creative implementation work.",
+                path: `${extraSkillRoots[1]}/brainstorming/SKILL.md`,
+                scope: "user",
+                enabled: skillEnabled.get(
+                  `${extraSkillRoots[1]}/brainstorming/SKILL.md`,
+                ) ?? true,
+              }]
+            : []),
         ]
       : [];
     send({ id: message.id, result: { data: [{ cwd, skills, errors: [] }] } });
+    return;
+  }
+
+  if (message.method === "skills/config/write") {
+    const path = message.params?.path;
+    const enabled = message.params?.enabled;
+    if (
+      typeof path !== "string"
+      || !isAbsolute(path)
+      || typeof enabled !== "boolean"
+    ) {
+      send({
+        id: message.id,
+        error: { code: -32602, message: "invalid skill config write" },
+      });
+      return;
+    }
+    skillEnabled.set(path, enabled);
+    send({ id: message.id, result: {} });
+    send({ method: "skills/changed", params: {} });
     return;
   }
 
@@ -199,6 +255,17 @@ lines.on("line", (line) => {
     }
     if (scenario === "delivery-dynamic-tools" && !hasFloralDeliveryTools(message.params)) {
       send({ id: message.id, error: { code: -32602, message: "missing FLORAL delivery dynamic tools" } });
+      return;
+    }
+    if (
+      (scenario === "skill-control-disable"
+        || scenario === "skill-external-install")
+      && !hasFloralSkillTools(message.params)
+    ) {
+      send({
+        id: message.id,
+        error: { code: -32602, message: "missing FLORAL Skill dynamic tools" },
+      });
       return;
     }
     if (scenario === "on-request-file-approval") {
@@ -344,16 +411,29 @@ lines.on("line", (line) => {
       const text = Array.isArray(input)
         ? input.find((item) => item?.type === "text")?.text
         : undefined;
-      const requestedSkill = typeof text === "string" && text.includes("$macos-ui-operation")
-        ? "macos-ui-operation"
-        : "system-status";
+      const requestedSkill = typeof text === "string"
+        && text.includes("$superpowers:brainstorming")
+        ? "superpowers:brainstorming"
+        : typeof text === "string"
+          && text.includes("$macos-ui-operation")
+          ? "macos-ui-operation"
+          : "system-status";
+      const expectedDirectory = requestedSkill.includes(":")
+        ? requestedSkill.split(":").at(-1)
+        : requestedSkill;
       const skill = Array.isArray(input)
-        ? input.find((item) => item?.type === "skill" && item?.name === requestedSkill)
+        ? input.find((item) =>
+            item?.type === "skill" && item?.name === requestedSkill
+          )
         : undefined;
       const normalizedSkillPath = typeof skill?.path === "string"
         ? skill.path.replace(/\\/gu, "/")
         : "";
-      if (!skill || !normalizedSkillPath.endsWith(`/${requestedSkill}/SKILL.md`)) {
+      if (
+        !skill
+        || !expectedDirectory
+        || !normalizedSkillPath.endsWith(`/${expectedDirectory}/SKILL.md`)
+      ) {
         send({ id: message.id, error: { code: -32602, message: "missing explicit skill input item" } });
         return;
       }
@@ -597,6 +677,44 @@ lines.on("line", (line) => {
             arguments: {
               artifact_id: "artifact-screen-fixture",
               caption: "current screen",
+            },
+          },
+        });
+        return;
+      }
+
+      if (scenario === "skill-control-disable") {
+        send({
+          id: "dynamic_1",
+          method: "item/tool/call",
+          params: {
+            threadId: activeThreadId,
+            turnId: activeTurnId,
+            callId: "call_skill_disable_1",
+            namespace: "floral_skills",
+            tool: "set_enabled",
+            arguments: {
+              name: "superpowers:brainstorming",
+              enabled: false,
+            },
+          },
+        });
+        return;
+      }
+
+      if (scenario === "skill-external-install") {
+        send({
+          id: "dynamic_1",
+          method: "item/tool/call",
+          params: {
+            threadId: activeThreadId,
+            turnId: activeTurnId,
+            callId: "call_skill_install_1",
+            namespace: "floral_skills",
+            tool: "manage_external",
+            arguments: {
+              action: "install",
+              id: "superpowers",
             },
           },
         });
@@ -876,6 +994,24 @@ lines.on("line", (line) => {
       && text.includes("artifactId=artifact-screen-fixture")
     ) {
       sendSuccess(activeThreadId, activeTurnId, "delivery send complete");
+      return;
+    }
+    if (
+      scenario === "skill-control-disable"
+      && success === true
+      && text.includes("skill_config=updated")
+      && text.includes("enabled=false")
+    ) {
+      sendSuccess(activeThreadId, activeTurnId, "skill disable complete");
+      return;
+    }
+    if (
+      scenario === "skill-external-install"
+      && success === true
+      && text.includes("external_skills.install=ok")
+      && text.includes("id=superpowers")
+    ) {
+      sendSuccess(activeThreadId, activeTurnId, "external skill install complete");
       return;
     }
     send({

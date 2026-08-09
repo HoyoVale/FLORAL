@@ -1445,8 +1445,14 @@ export class GatewayService {
                 )
               ),
           } : {}),
-          ...(controlMode !== "auto" && this.#approvalBroker ? {
+          ...(this.#approvalBroker ? {
             approvalHandler: async (request) => {
+              if (
+                controlMode === "auto"
+                && request.kind !== "skill-management"
+              ) {
+                return "deny";
+              }
               if (
                 controlMode === "full"
                 && isCodexNativeFullAutoApproval(request)

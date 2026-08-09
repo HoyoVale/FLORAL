@@ -116,6 +116,18 @@ export function supportsAgentSkills(
   return typeof (runtime as Partial<AgentSkillRuntime>).listSkills === "function";
 }
 
+export interface AgentSkillControlRuntime extends AgentSkillRuntime {
+  setSkillRoots(roots: string[]): Promise<void>;
+}
+
+export function supportsAgentSkillControl(
+  runtime: AgentRuntime,
+): runtime is AgentRuntime & AgentSkillControlRuntime {
+  const candidate = runtime as Partial<AgentSkillControlRuntime>;
+  return typeof candidate.listSkills === "function"
+    && typeof candidate.setSkillRoots === "function";
+}
+
 export interface AgentProjectRuntimeStorage {
   resolveRuntimeHome(input: { cwd: string }): Promise<string>;
 }

@@ -1,4 +1,4 @@
-import { resolve } from "node:path";
+import { isAbsolute, relative, resolve, sep } from "node:path";
 import type {
   AgentRuntime,
   AgentSkillSummary,
@@ -21,6 +21,10 @@ import {
   codexRequestTimeout,
 } from "./codex-errors.js";
 import { capabilityForMcpTool } from "../policy/authorization-authority.js";
+import type {
+  ExternalSkillManagementResult,
+  ExternalSkillMutationRequest,
+} from "../skills/external-skill-manager.js";
 import {
   CodexRpcClient,
   type CodexExitEvent,
@@ -124,6 +128,11 @@ export interface CodexAppServerOptions {
   processCwd?: string | undefined;
   processEnv?: NodeJS.ProcessEnv | undefined;
   skillRoots?: string[] | undefined;
+  protectedSkillRoots?: string[] | undefined;
+  externalSkillCatalog?: (() => Promise<string>) | undefined;
+  manageExternalSkill?: ((
+    request: ExternalSkillMutationRequest,
+  ) => Promise<ExternalSkillManagementResult>) | undefined;
   permissionProfile?: string | undefined;
   permissionProfileCwd?: string | undefined;
 }
@@ -154,6 +163,7 @@ export const FLORAL_AGENT_DEVELOPER_INSTRUCTIONS = [
   "- A local filesystem path or Markdown link/image is not a delivered chat attachment.",
   "- When the user explicitly asks to receive a screenshot or another already-registered artifact, call floral_delivery/send_artifact with the artifactId returned by the trusted producer. Never claim delivery unless that tool reports success.",
   "- For terminal-produced files, first create or copy the final attachment into <cwd>/artifacts/outbound, then call floral_delivery/register_outbound_file, then floral_delivery/send_artifact. Do not register or send arbitrary paths outside that staging root.",
+  "- Manage Skills through floral_skills and Codex-native Skill discovery. Project Skills may be created under <cwd>/.agents/skills. Never edit data/external-skills/registry.json directly or use shell/git to bypass External Skill approval.",
 ].join("\n");
 
 const FLORAL_DELIVERY_DYNAMIC_TOOLS = [
@@ -221,6 +231,99 @@ const FLORAL_DELIVERY_DYNAMIC_TOOLS = [
   },
 ] as const;
 
+const FLORAL_SKILLS_DYNAMIC_TOOLS = [
+  {
+    type: "namespace",
+    name: "floral_skills",
+    description: "FLORAL-controlled Skill discovery and management. Builtin Skills are immutable; shared external supply-chain mutations require user approval.",
+    tools: [
+      {
+        type: "function",
+        name: "list",
+        description: "List Skills currently discovered for this Project/runtime with FLORAL source classification.",
+        inputSchema: {
+          type: "object",
+          properties: {},
+          additionalProperties: false,
+        },
+        deferLoading: false,
+      },
+      {
+        type: "function",
+        name: "refresh",
+        description: "Force Codex to reload the current Project/runtime Skill catalog from disk.",
+        inputSchema: {
+          type: "object",
+          properties: {},
+          additionalProperties: false,
+        },
+        deferLoading: false,
+      },
+      {
+        type: "function",
+        name: "set_enabled",
+        description: "Enable or disable one discovered non-builtin Skill in the current Codex runtime using native skills/config/write.",
+        inputSchema: {
+          type: "object",
+          properties: {
+            name: {
+              type: "string",
+              minLength: 1,
+              maxLength: 128,
+            },
+            enabled: { type: "boolean" },
+          },
+          required: ["name", "enabled"],
+          additionalProperties: false,
+        },
+        deferLoading: false,
+      },
+      {
+        type: "function",
+        name: "external_catalog",
+        description: "Read the curated shared External Skill package catalog and installation state.",
+        inputSchema: {
+          type: "object",
+          properties: {},
+          additionalProperties: false,
+        },
+        deferLoading: false,
+      },
+      {
+        type: "function",
+        name: "manage_external",
+        description: "Install, update, shared-enable, shared-disable, or remove one curated External Skill package. FLORAL requires user approval before any supply-chain mutation.",
+        inputSchema: {
+          type: "object",
+          properties: {
+            action: {
+              type: "string",
+              enum: ["install", "update", "enable", "disable", "remove"],
+            },
+            id: {
+              type: "string",
+              pattern: "^[a-z0-9][a-z0-9-]{0,63}$",
+            },
+            ref: {
+              type: "string",
+              minLength: 1,
+              maxLength: 160,
+            },
+          },
+          required: ["action", "id"],
+          additionalProperties: false,
+        },
+        deferLoading: false,
+      },
+    ],
+  },
+] as const;
+
+const FLORAL_DYNAMIC_TOOLS = [
+  ...FLORAL_DELIVERY_DYNAMIC_TOOLS,
+  ...FLORAL_SKILLS_DYNAMIC_TOOLS,
+] as const;
+
 export class CodexAppServerRuntime implements AgentRuntime {
   readonly name = "codex-app-server";
   readonly #client: CodexRpcClient;
@@ -230,7 +333,12 @@ export class CodexAppServerRuntime implements AgentRuntime {
   readonly #sandboxMode: "read-only" | "workspace-write";
   readonly #approvalsReviewer: "user" | "auto_review";
   readonly #developerInstructions: string;
-  readonly #skillRoots: string[];
+  #skillRoots: string[];
+  readonly #protectedSkillRoots: string[];
+  readonly #externalSkillCatalog: (() => Promise<string>) | undefined;
+  readonly #manageExternalSkill: ((
+    request: ExternalSkillMutationRequest,
+  ) => Promise<ExternalSkillManagementResult>) | undefined;
   readonly #permissionProfile: string | undefined;
   readonly #permissionProfileCwd: string | undefined;
   readonly #loadedThreads = new Set<string>();
@@ -239,8 +347,10 @@ export class CodexAppServerRuntime implements AgentRuntime {
   readonly #approvalHandlers = new Map<string, AgentApprovalHandler>();
   readonly #artifactRegistrationHandlers = new Map<string, AgentArtifactRegistrationHandler>();
   readonly #artifactDeliveryHandlers = new Map<string, AgentArtifactDeliveryHandler>();
+  readonly #threadCwds = new Map<string, string>();
   readonly #approvalItemSummaries = new Map<string, string>();
   readonly #inFlightMcpToolCalls = new Map<string, InFlightMcpToolCall>();
+  #skillsDirty = false;
   #started = false;
 
   constructor(options: CodexAppServerOptions) {
@@ -258,12 +368,12 @@ export class CodexAppServerRuntime implements AgentRuntime {
     this.#approvalsReviewer = options.approvalsReviewer ?? "user";
     this.#developerInstructions = options.developerInstructions?.trim()
       || FLORAL_AGENT_DEVELOPER_INSTRUCTIONS;
-    this.#skillRoots = [...new Set(
-      (options.skillRoots ?? [])
-        .map((root) => root.trim())
-        .filter(Boolean)
-        .map((root) => resolve(root)),
-    )];
+    this.#skillRoots = normalizeSkillRoots(options.skillRoots ?? []);
+    this.#protectedSkillRoots = normalizeSkillRoots(
+      options.protectedSkillRoots ?? [],
+    );
+    this.#externalSkillCatalog = options.externalSkillCatalog;
+    this.#manageExternalSkill = options.manageExternalSkill;
     this.#permissionProfile = options.permissionProfile?.trim() || undefined;
     this.#permissionProfileCwd = options.permissionProfileCwd?.trim()
       ? resolve(options.permissionProfileCwd)
@@ -275,6 +385,10 @@ export class CodexAppServerRuntime implements AgentRuntime {
           message: "FLORAL rejected an approval request after an internal authorization error",
         });
       });
+    });
+    this.#client.on("notification:skills/changed", () => {
+      this.#skillsDirty = true;
+      process.stderr.write("agent.stack.skills.changed=1\n");
     });
   }
 
@@ -347,7 +461,7 @@ export class CodexAppServerRuntime implements AgentRuntime {
       "skills/list",
       {
         cwds: [cwd],
-        forceReload: input.forceReload === true,
+        forceReload: input.forceReload === true || this.#skillsDirty,
       },
     );
     const entry = Array.isArray(response?.data)
@@ -373,7 +487,21 @@ export class CodexAppServerRuntime implements AgentRuntime {
         enabled: skill?.enabled === true,
       });
     }
+    this.#skillsDirty = false;
     return output;
+  }
+
+  async setSkillRoots(roots: string[]): Promise<void> {
+    this.#ensureStarted();
+    const normalized = normalizeSkillRoots(roots);
+    await this.#client.request("skills/extraRoots/set", {
+      extraRoots: normalized,
+    });
+    this.#skillRoots = normalized;
+    this.#skillsDirty = true;
+    process.stderr.write(
+      `agent.stack.skills.roots=${String(normalized.length)}\n`,
+    );
   }
 
   async listThreads(input: {
@@ -422,6 +550,7 @@ export class CodexAppServerRuntime implements AgentRuntime {
     this.#approvalHandlers.delete(normalized);
     this.#artifactRegistrationHandlers.delete(normalized);
     this.#artifactDeliveryHandlers.delete(normalized);
+    this.#threadCwds.delete(normalized);
     this.#deleteApprovalItemSummaries(normalized);
     this.#deleteInFlightMcpToolCalls(normalized);
   }
@@ -435,6 +564,7 @@ export class CodexAppServerRuntime implements AgentRuntime {
       : await this.#startThread(request, cwd);
 
     onEvent?.({ type: "run.started", threadId });
+    this.#threadCwds.set(threadId, cwd);
     if (onEvent) this.#eventHandlers.set(threadId, onEvent);
     if (request.approvalHandler) this.#approvalHandlers.set(threadId, request.approvalHandler);
     if (request.artifactRegistrationHandler) {
@@ -702,6 +832,7 @@ export class CodexAppServerRuntime implements AgentRuntime {
       this.#approvalHandlers.delete(threadId);
       this.#artifactRegistrationHandlers.delete(threadId);
       this.#artifactDeliveryHandlers.delete(threadId);
+      this.#threadCwds.delete(threadId);
       this.#deleteApprovalItemSummaries(threadId);
       this.#deleteInFlightMcpToolCalls(threadId);
     }
@@ -728,6 +859,7 @@ export class CodexAppServerRuntime implements AgentRuntime {
     this.#approvalHandlers.clear();
     this.#artifactRegistrationHandlers.clear();
     this.#artifactDeliveryHandlers.clear();
+    this.#threadCwds.clear();
     this.#approvalItemSummaries.clear();
     this.#inFlightMcpToolCalls.clear();
     await this.#client.stop();
@@ -757,7 +889,7 @@ export class CodexAppServerRuntime implements AgentRuntime {
     const params: Record<string, unknown> = {
       cwd,
       developerInstructions: this.#developerInstructions,
-      dynamicTools: FLORAL_DELIVERY_DYNAMIC_TOOLS,
+      dynamicTools: FLORAL_DYNAMIC_TOOLS,
     };
     const model = request.model ?? this.#defaultModel;
     if (model) params.model = model;
@@ -801,7 +933,22 @@ export class CodexAppServerRuntime implements AgentRuntime {
     }
 
     if (request.method === "item/tool/call") {
-      await this.#handleArtifactDynamicToolCall(request);
+      const namespace = readString(asPlainRecord(request.params)?.namespace);
+      if (namespace === "floral_delivery") {
+        await this.#handleArtifactDynamicToolCall(request);
+        return;
+      }
+      if (namespace === "floral_skills") {
+        await this.#handleSkillDynamicToolCall(request);
+        return;
+      }
+      this.#respondSafely(
+        request.id,
+        dynamicToolResponse(
+          false,
+          "floral_dynamic_tool=denied\nreason=unsupported-namespace",
+        ),
+      );
       return;
     }
 
@@ -1017,6 +1164,261 @@ export class CodexAppServerRuntime implements AgentRuntime {
     this.#respondSafely(
       request.id,
       dynamicToolResponse(false, "artifact_delivery=denied\nreason=unsupported-tool"),
+    );
+  }
+
+  async #handleSkillDynamicToolCall(
+    request: CodexServerRequest,
+  ): Promise<void> {
+    const params = asPlainRecord(request.params);
+    const threadId = readString(params?.threadId);
+    const turnId = readString(params?.turnId);
+    const tool = readString(params?.tool);
+    const activeTurnId = threadId ? this.#activeTurns.get(threadId) : undefined;
+    const cwd = threadId ? this.#threadCwds.get(threadId) : undefined;
+
+    if (!threadId || !turnId || activeTurnId !== turnId || !tool || !cwd) {
+      this.#respondSafely(
+        request.id,
+        dynamicToolResponse(
+          false,
+          "skill_management=denied\nreason=invalid-context",
+        ),
+      );
+      return;
+    }
+
+    const argumentsValue = asPlainRecord(params?.arguments);
+    if (!argumentsValue) {
+      this.#respondSafely(
+        request.id,
+        dynamicToolResponse(
+          false,
+          "skill_management=denied\nreason=invalid-arguments",
+        ),
+      );
+      return;
+    }
+
+    if (tool === "list" || tool === "refresh") {
+      const skills = await this.listSkills({
+        cwd,
+        forceReload: tool === "refresh",
+      });
+      this.#respondSafely(
+        request.id,
+        dynamicToolResponse(
+          true,
+          formatSkillCatalogForTool(
+            skills,
+            cwd,
+            this.#protectedSkillRoots,
+            this.#skillRoots,
+          ),
+        ),
+      );
+      return;
+    }
+
+    if (tool === "set_enabled") {
+      const name = readManagedSkillName(argumentsValue.name);
+      const enabled = argumentsValue.enabled;
+      if (!name || typeof enabled !== "boolean") {
+        this.#respondSafely(
+          request.id,
+          dynamicToolResponse(
+            false,
+            "skill_config=denied\nreason=invalid-arguments",
+          ),
+        );
+        return;
+      }
+
+      const skills = await this.listSkills({
+        cwd,
+        forceReload: true,
+      });
+      const selected = skills.find((skill) => skill.name === name);
+      if (!selected) {
+        this.#respondSafely(
+          request.id,
+          dynamicToolResponse(
+            false,
+            "skill_config=denied\nreason=skill-not-found",
+          ),
+        );
+        return;
+      }
+      if (
+        selected.scope === "system"
+        || selected.scope === "admin"
+        || this.#protectedSkillRoots.some((root) =>
+          pathIsInside(root, selected.path)
+        )
+      ) {
+        this.#respondSafely(
+          request.id,
+          dynamicToolResponse(
+            false,
+            "skill_config=denied\nreason=builtin-or-managed",
+          ),
+        );
+        return;
+      }
+
+      await this.#client.request("skills/config/write", {
+        path: selected.path,
+        name: null,
+        enabled,
+      });
+      this.#skillsDirty = true;
+      const verified = (
+        await this.listSkills({
+          cwd,
+          forceReload: true,
+        })
+      ).find((skill) => skill.name === name);
+
+      if (!verified || verified.enabled !== enabled) {
+        this.#respondSafely(
+          request.id,
+          dynamicToolResponse(
+            false,
+            "skill_config=failed\nreason=verification",
+          ),
+        );
+        return;
+      }
+
+      this.#respondSafely(
+        request.id,
+        dynamicToolResponse(
+          true,
+          [
+            "skill_config=updated",
+            `name=${safeDynamicToolToken(name)}`,
+            `enabled=${String(enabled)}`,
+          ].join("\n"),
+        ),
+      );
+      return;
+    }
+
+    if (tool === "external_catalog") {
+      if (!this.#externalSkillCatalog) {
+        this.#respondSafely(
+          request.id,
+          dynamicToolResponse(
+            false,
+            "external_skills=denied\nreason=handler-unavailable",
+          ),
+        );
+        return;
+      }
+      const text = await this.#externalSkillCatalog().catch(() =>
+        "external_skills.list=failed"
+      );
+      this.#respondSafely(
+        request.id,
+        dynamicToolResponse(
+          !text.startsWith("external_skills.list=failed"),
+          boundedDynamicToolText(text),
+        ),
+      );
+      return;
+    }
+
+    if (tool === "manage_external") {
+      const action = readExternalSkillAction(argumentsValue.action);
+      const id = readExternalSkillId(argumentsValue.id);
+      const ref = readOptionalExternalSkillRef(argumentsValue.ref);
+      if (
+        !action
+        || !id
+        || (argumentsValue.ref !== undefined && !ref)
+        || (ref && action !== "install" && action !== "update")
+        || !this.#manageExternalSkill
+      ) {
+        this.#respondSafely(
+          request.id,
+          dynamicToolResponse(
+            false,
+            "external_skills=denied\nreason=invalid-arguments-or-handler",
+          ),
+        );
+        return;
+      }
+
+      const approval: AgentApprovalRequest = {
+        requestId: `skill-${
+          safeDynamicToolToken(
+            readString(params?.callId) ?? String(request.id),
+          )
+        }`,
+        kind: "skill-management",
+        capability: "software.install",
+        summary: [
+          "FLORAL Agent 请求修改共享 External Skill。",
+          `action=${action}`,
+          `id=${id}`,
+          ...(ref ? [`ref=${ref}`] : []),
+        ].join(" "),
+        source: "floral",
+      };
+      const onEvent = this.#eventHandlers.get(threadId);
+      onEvent?.({
+        type: "approval.requested",
+        requestId: approval.requestId,
+        capability: approval.capability,
+        kind: approval.kind,
+        detail: { summary: approval.summary },
+      });
+
+      const approvalHandler = this.#approvalHandlers.get(threadId);
+      const decision = approvalHandler
+        ? await approvalHandler(approval).catch(() => "deny" as const)
+        : "deny";
+      if (decision !== "approve" && decision !== "approve-session") {
+        this.#respondSafely(
+          request.id,
+          dynamicToolResponse(
+            false,
+            "external_skills=denied\nreason=user-approval",
+          ),
+        );
+        return;
+      }
+
+      const result = await this.#manageExternalSkill({
+        action,
+        id,
+        ...(ref ? { ref } : {}),
+      }).catch((error) => ({
+        changed: false,
+        message: [
+          `external_skills.${action}=failed`,
+          `reason=${safeDynamicToolToken(
+            error instanceof Error ? error.name : "Error",
+          )}`,
+        ].join("\n"),
+      }));
+
+      this.#respondSafely(
+        request.id,
+        dynamicToolResponse(
+          !result.message.includes("=failed"),
+          boundedDynamicToolText(result.message),
+        ),
+      );
+      return;
+    }
+
+    this.#respondSafely(
+      request.id,
+      dynamicToolResponse(
+        false,
+        "skill_management=denied\nreason=unsupported-tool",
+      ),
     );
   }
 
@@ -1469,7 +1871,7 @@ function normalizeSkillScope(value: unknown): AgentSkillSummary["scope"] | undef
 function extractExplicitSkillNames(text: string): string[] {
   const names: string[] = [];
   const seen = new Set<string>();
-  const pattern = /(?:^|\s)\$([a-z0-9][a-z0-9-]{0,63})(?=\s|$|[.,!?;:])/giu;
+  const pattern = /(?:^|\s)\$([a-z0-9][a-z0-9:-]{0,127})(?=\s|$|[.,!?;])/giu;
   for (const match of text.matchAll(pattern)) {
     const name = match[1]?.toLowerCase();
     if (!name || seen.has(name)) continue;
@@ -1636,6 +2038,113 @@ function readOptionalToolText(value: unknown, maxLength: number): string | undef
     .trim();
   if (!normalized || Array.from(normalized).length > maxLength) return undefined;
   return normalized;
+}
+
+
+function normalizeSkillRoots(roots: readonly string[]): string[] {
+  return [...new Set(
+    roots
+      .map((root) => root.trim())
+      .filter(Boolean)
+      .map((root) => resolve(root)),
+  )];
+}
+
+function pathIsInside(root: string, candidate: string): boolean {
+  const rel = relative(resolve(root), resolve(candidate));
+  return rel === ""
+    || (!rel.startsWith(`..${sep}`) && rel !== ".." && !isAbsolute(rel));
+}
+
+function readManagedSkillName(value: unknown): string | undefined {
+  if (typeof value !== "string") return undefined;
+  const name = value.trim();
+  return /^[A-Za-z0-9][A-Za-z0-9:_-]{0,127}$/u.test(name)
+    ? name
+    : undefined;
+}
+
+function readExternalSkillAction(
+  value: unknown,
+): ExternalSkillMutationRequest["action"] | undefined {
+  return value === "install"
+    || value === "update"
+    || value === "enable"
+    || value === "disable"
+    || value === "remove"
+    ? value
+    : undefined;
+}
+
+function readExternalSkillId(value: unknown): string | undefined {
+  if (typeof value !== "string") return undefined;
+  const id = value.trim();
+  return /^[a-z0-9][a-z0-9-]{0,63}$/u.test(id)
+    ? id
+    : undefined;
+}
+
+function readOptionalExternalSkillRef(
+  value: unknown,
+): string | undefined {
+  if (value === undefined) return undefined;
+  if (typeof value !== "string") return undefined;
+  const ref = value.trim();
+  if (
+    !ref
+    || ref.length > 160
+    || /[\u0000-\u001F\u007F\s]/u.test(ref)
+  ) {
+    return undefined;
+  }
+  return ref;
+}
+
+function formatSkillCatalogForTool(
+  skills: AgentSkillSummary[],
+  cwd: string,
+  protectedRoots: readonly string[],
+  sharedRoots: readonly string[],
+): string {
+  const projectSkillRoot = resolve(cwd, ".agents", "skills");
+  const externalRoots = sharedRoots.filter((root) =>
+    !protectedRoots.some((protectedRoot) =>
+      resolve(protectedRoot) === resolve(root)
+    )
+  );
+  const lines = [`skill_catalog.count=${String(skills.length)}`];
+
+  for (const skill of skills.slice(0, 200)) {
+    const source = protectedRoots.some((root) =>
+      pathIsInside(root, skill.path)
+    )
+      ? "floral-builtin"
+      : pathIsInside(projectSkillRoot, skill.path)
+        ? "project"
+        : externalRoots.some((root) =>
+            pathIsInside(root, skill.path)
+          )
+          ? "external"
+          : skill.scope;
+
+    lines.push([
+      `name=${safeDynamicToolToken(skill.name)}`,
+      `enabled=${String(skill.enabled)}`,
+      `scope=${skill.scope}`,
+      `source=${source}`,
+    ].join(" "));
+  }
+
+  return lines.join("\n");
+}
+
+function boundedDynamicToolText(value: string): string {
+  const normalized = value
+    .replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F]/gu, " ")
+    .trim();
+  return normalized.length <= 12_000
+    ? normalized
+    : `${normalized.slice(0, 11_980)}\ntruncated=true`;
 }
 
 function dynamicToolResponse(

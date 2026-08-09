@@ -1,3 +1,4 @@
+import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 import { CodexAppServerRuntime } from "../src/agent/codex-app-server.js";
@@ -14,6 +15,13 @@ function createRuntime(
     sandboxMode?: "read-only" | "workspace-write";
     approvalsReviewer?: "user" | "auto_review";
     skillRoots?: string[];
+    protectedSkillRoots?: string[];
+    externalSkillCatalog?: () => Promise<string>;
+    manageExternalSkill?: (request: {
+      action: "install" | "update" | "enable" | "disable" | "remove";
+      id: string;
+      ref?: string | undefined;
+    }) => Promise<{ changed: boolean; message: string }>;
     permissionProfile?: string;
     permissionProfileCwd?: string;
   } = {},
@@ -61,6 +69,7 @@ describe("CodexAppServerRuntime", () => {
         "system-status",
         "attachment-analysis",
         "macos-ui-operation",
+        "skill-manager",
       ]);
       expect(skills.every((skill) => skill.enabled)).toBe(true);
       expect(skills[0]?.path).toMatch(/system-status[\\/]SKILL\.md$/u);
@@ -95,6 +104,112 @@ describe("CodexAppServerRuntime", () => {
       await runtime.start();
       const result = await runtime.run({
         text: "$macos-ui-operation inspect the frontmost Mac app safely",
+        cwd: process.cwd(),
+      });
+      expect(result.finalText).toBe("authoritative final");
+    } finally {
+      await runtime.stop();
+    }
+  });
+
+  it("uses native skills/config/write for a non-builtin Skill requested by the Agent", async () => {
+    const builtInRoot = fileURLToPath(
+      new URL("../skills/", import.meta.url),
+    );
+    const externalRoot = resolve(
+      process.cwd(),
+      "data",
+      "test-external-skills",
+    );
+    const runtime = createRuntime("skill-control-disable", 5_000, {
+      skillRoots: [builtInRoot, externalRoot],
+      protectedSkillRoots: [builtInRoot],
+    });
+    try {
+      await runtime.start();
+      const result = await runtime.run({
+        text: "Disable brainstorming for this Project.",
+        cwd: process.cwd(),
+      });
+      expect(result.finalText).toBe("skill disable complete");
+
+      const skills = await runtime.listSkills({
+        cwd: process.cwd(),
+        forceReload: true,
+      });
+      expect(
+        skills.find(
+          (skill) => skill.name === "superpowers:brainstorming",
+        )?.enabled,
+      ).toBe(false);
+    } finally {
+      await runtime.stop();
+    }
+  });
+
+  it("requires approval before Agent-initiated shared External Skill installation", async () => {
+    const builtInRoot = fileURLToPath(
+      new URL("../skills/", import.meta.url),
+    );
+    let approvals = 0;
+    let mutations = 0;
+    const runtime = createRuntime("skill-external-install", 5_000, {
+      skillRoots: [builtInRoot],
+      protectedSkillRoots: [builtInRoot],
+      externalSkillCatalog: async () =>
+        "external_skill_catalog.count=1\nid=superpowers installed=false enabled=false",
+      manageExternalSkill: async (request) => {
+        mutations += 1;
+        expect(request).toEqual({
+          action: "install",
+          id: "superpowers",
+        });
+        return {
+          changed: true,
+          message: "external_skills.install=ok\nid=superpowers",
+        };
+      },
+    });
+
+    try {
+      await runtime.start();
+      const result = await runtime.run({
+        text: "Install Superpowers.",
+        cwd: process.cwd(),
+        approvalHandler: async (request) => {
+          approvals += 1;
+          expect(request).toMatchObject({
+            kind: "skill-management",
+            capability: "software.install",
+            source: "floral",
+          });
+          return "approve";
+        },
+      });
+      expect(result.finalText).toBe("external skill install complete");
+      expect(approvals).toBe(1);
+      expect(mutations).toBe(1);
+    } finally {
+      await runtime.stop();
+    }
+  });
+
+  it("adds the official skill input item for explicit namespaced external Skills", async () => {
+    const builtInRoot = fileURLToPath(
+      new URL("../skills/", import.meta.url),
+    );
+    const externalRoot = resolve(
+      process.cwd(),
+      "data",
+      "test-external-skills",
+    );
+    const runtime = createRuntime("skills-explicit", 5_000, {
+      skillRoots: [builtInRoot, externalRoot],
+    });
+    try {
+      await runtime.start();
+      const result = await runtime.run({
+        text: "$superpowers:brainstorming explore the design",
         cwd: process.cwd(),
       });
       expect(result.finalText).toBe("authoritative final");

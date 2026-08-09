@@ -20,6 +20,7 @@ import {
 } from "../config/adoption/mcp-registry-adoption.js";
 import type { AppEnv } from "../config/env.js";
 import {
+  supportsAgentSkillControl,
   supportsAgentSkills,
   supportsAgentThreadManagement,
   type AgentRuntime,
@@ -44,7 +45,15 @@ import {
 import { CodexAppServerRuntime } from "./codex-app-server.js";
 import { buildCodexDeepSeekConfig } from "./codex-deepseek-config.js";
 import { projectRuntimeNamespace } from "../workspace/project-workspace.js";
-import { resolveEnabledExternalSkillRoots } from "../skills/external-skill-registry.js";
+import {
+  resolveEnabledExternalSkillRoots,
+  resolveExternalSkillRegistryPaths,
+} from "../skills/external-skill-registry.js";
+import {
+  ExternalSkillManager,
+  type ExternalSkillManagementResult,
+  type ExternalSkillMutationRequest,
+} from "../skills/external-skill-manager.js";
 
 interface ManagedBridge {
   start(): Promise<{ baseUrl: string }>;
@@ -97,10 +106,19 @@ export interface ManagedCodexDeepSeekDependencies {
     sandboxMode: "read-only" | "workspace-write";
     approvalsReviewer: "user";
     skillRoots: string[];
+    protectedSkillRoots: string[];
+    externalSkillCatalog: () => Promise<string>;
+    manageExternalSkill: (
+      request: ExternalSkillMutationRequest,
+    ) => Promise<ExternalSkillManagementResult>;
     permissionProfile?: string | undefined;
     permissionProfileCwd?: string | undefined;
   }) => AgentRuntime) | undefined;
   resolveExternalSkillRoots?: (() => Promise<string[]>) | undefined;
+  externalSkillCatalog?: (() => Promise<string>) | undefined;
+  manageExternalSkill?: ((
+    request: ExternalSkillMutationRequest,
+  ) => Promise<ExternalSkillManagementResult>) | undefined;
   prepareCodexConfig?: ((options: {
     legacyConfig: string;
     bridgeBaseUrl: string;
@@ -133,6 +151,8 @@ export class ManagedCodexDeepSeekRuntime implements AgentRuntime {
   #bridgeToken: string | undefined;
   #canonicalWorkspaceRoot: string | undefined;
   #sharedSkillRoots: string[] = [];
+  #externalSkillManager: ExternalSkillManager | undefined;
+  #externalSkillMutationTail: Promise<void> = Promise.resolve();
   #stopped = false;
 
   constructor(
@@ -239,6 +259,8 @@ export class ManagedCodexDeepSeekRuntime implements AgentRuntime {
     this.#bridgeToken = undefined;
     this.#canonicalWorkspaceRoot = undefined;
     this.#sharedSkillRoots = [];
+    this.#externalSkillManager = undefined;
+    this.#externalSkillMutationTail = Promise.resolve();
 
     await Promise.all(
       projectSlots.map(async (slot) => {
@@ -258,6 +280,14 @@ export class ManagedCodexDeepSeekRuntime implements AgentRuntime {
     this.#canonicalWorkspaceRoot = await resolveConfiguredWorkspaceRoot(
       this.env.FLORAL_WORKSPACE_ROOT,
     );
+    const externalSkillPackagesRoot = this.#externalSkillPackagesRoot();
+    await mkdir(externalSkillPackagesRoot, {
+      recursive: true,
+      mode: 0o700,
+    });
+    await chmod(externalSkillPackagesRoot, 0o700)
+      .catch(() => undefined);
+
     const builtInSkillRoot = resolve(process.cwd(), "skills");
     const externalSkillRoots = await (this.dependencies.resolveExternalSkillRoots?.()
       ?? resolveEnabledExternalSkillRoots({
@@ -484,6 +514,10 @@ export class ManagedCodexDeepSeekRuntime implements AgentRuntime {
       sandboxMode,
       approvalsReviewer,
       skillRoots,
+      protectedSkillRoots: [resolve(process.cwd(), "skills")],
+      externalSkillCatalog: async () => await this.#externalSkillCatalogText(),
+      manageExternalSkill: async (request) =>
+        await this.#manageExternalSkill(request),
       ...(permissionScope
         ? {
             permissionProfile: permissionScope.profile,
@@ -493,6 +527,97 @@ export class ManagedCodexDeepSeekRuntime implements AgentRuntime {
     };
     return this.dependencies.createRuntime?.(runtimeOptions)
       ?? createCodexRuntime(this.env, codexHome, bridgeToken, runtimeOptions);
+  }
+
+  async #externalSkillCatalogText(): Promise<string> {
+    return await (this.dependencies.externalSkillCatalog?.()
+      ?? this.#externalSkillManagerForRuntime().listText());
+  }
+
+  async #manageExternalSkill(
+    request: ExternalSkillMutationRequest,
+  ): Promise<ExternalSkillManagementResult> {
+    const operation = this.#externalSkillMutationTail
+      .catch(() => undefined)
+      .then(async () => await this.#manageExternalSkillOnce(request));
+    this.#externalSkillMutationTail = operation.then(
+      () => undefined,
+      () => undefined,
+    );
+    return await operation;
+  }
+
+  async #manageExternalSkillOnce(
+    request: ExternalSkillMutationRequest,
+  ): Promise<ExternalSkillManagementResult> {
+    const result = await (this.dependencies.manageExternalSkill?.(request)
+      ?? this.#externalSkillManagerForRuntime().manage(request));
+    if (!result.changed) return result;
+
+    const externalRoots = await (this.dependencies.resolveExternalSkillRoots?.()
+      ?? this.#externalSkillManagerForRuntime().enabledRoots(true));
+    this.#sharedSkillRoots = uniqueAbsolutePaths([
+      resolve(process.cwd(), "skills"),
+      ...externalRoots,
+    ]);
+
+    const roots = [...this.#sharedSkillRoots];
+    setImmediate(() => {
+      void this.#applySharedSkillRoots(roots).catch((error) => {
+        process.stderr.write(
+          `agent.stack.skills.hot_reload=error:${errorName(error)}\n`,
+        );
+      });
+    });
+    return {
+      ...result,
+      message: `${result.message}\nhot_reload=scheduled\nrestart_required=false`,
+    };
+  }
+
+  #externalSkillManagerForRuntime(): ExternalSkillManager {
+    if (!this.#externalSkillManager) {
+      this.#externalSkillManager = new ExternalSkillManager({
+        repositoryRoot: process.cwd(),
+        dataDir: this.env.DATA_DIR,
+      });
+    }
+    return this.#externalSkillManager;
+  }
+
+  #externalSkillPackagesRoot(): string {
+    return resolveExternalSkillRegistryPaths(
+      process.cwd(),
+      this.env.DATA_DIR,
+    ).packagesRoot;
+  }
+
+  async #applySharedSkillRoots(
+    roots: string[],
+  ): Promise<void> {
+    const runtimes = [
+      this.#runtime,
+      ...[...this.#projectRuntimes.values()].map((slot) => slot.runtime),
+    ].filter((runtime): runtime is AgentRuntime => Boolean(runtime));
+    const uniqueRuntimes = [...new Set(runtimes)];
+
+    const outcomes = await Promise.allSettled(
+      uniqueRuntimes.map(async (runtime) => {
+        if (!supportsAgentSkillControl(runtime)) return;
+        await runtime.setSkillRoots(roots);
+      }),
+    );
+    const failures = outcomes.filter(
+      (outcome) => outcome.status === "rejected",
+    );
+    if (failures.length > 0) {
+      throw new Error(
+        `Unable to hot-reload Skill roots in ${String(failures.length)} runtime(s)`,
+      );
+    }
+    process.stderr.write(
+      `agent.stack.skills.hot_reload=ok:${String(roots.length)}\n`,
+    );
   }
 
   async #recordMcpRegistryAdoption(
@@ -622,6 +747,7 @@ export class ManagedCodexDeepSeekRuntime implements AgentRuntime {
       resolve(process.cwd(), this.env.DATA_DIR, "inbound", "feishu"),
       scope,
       this.#sharedSkillRoots,
+      this.#externalSkillPackagesRoot(),
     );
     const workspace = await this.#createWorkspace(
       scopedConfig,
@@ -707,6 +833,7 @@ function scopeCodexConfigForProject(
   globalInboundRoot: string,
   scope: ProjectRuntimeScope,
   sharedSkillRoots: readonly string[],
+  externalSkillPackagesRoot: string,
 ): string {
   const globalAssignment =
     `FLORAL_VISION_INBOUND_ROOT = ${JSON.stringify(globalInboundRoot)}`;
@@ -721,12 +848,17 @@ function scopeCodexConfigForProject(
     throw new Error("Project Codex config already defines the FLORAL permission profile");
   }
 
-  return `${visionScoped.trimEnd()}\n\n${renderProjectPermissionProfile(scope, sharedSkillRoots)}\n`;
+  return `${visionScoped.trimEnd()}\n\n${renderProjectPermissionProfile(
+    scope,
+    sharedSkillRoots,
+    externalSkillPackagesRoot,
+  )}\n`;
 }
 
 function renderProjectPermissionProfile(
   scope: ProjectRuntimeScope,
   sharedSkillRoots: readonly string[],
+  externalSkillPackagesRoot: string,
 ): string {
   const readableSkillRoots = uniqueAbsolutePaths(
     sharedSkillRoots.length > 0
@@ -740,6 +872,7 @@ function renderProjectPermissionProfile(
     `[permissions.${FLORAL_PROJECT_PERMISSION_PROFILE}.filesystem]`,
     '":minimal" = "read"',
     ...readableSkillRoots.map((root) => `${JSON.stringify(root)} = "read"`),
+    `${JSON.stringify(resolve(externalSkillPackagesRoot))} = "read"`,
     `${JSON.stringify(scope.inboundRoot)} = "read"`,
     "",
     `[permissions.${FLORAL_PROJECT_PERMISSION_PROFILE}.filesystem.":workspace_roots"]`,
@@ -850,6 +983,11 @@ function createCodexRuntime(
     sandboxMode: "read-only" | "workspace-write";
     approvalsReviewer: "user";
     skillRoots: string[];
+    protectedSkillRoots: string[];
+    externalSkillCatalog: () => Promise<string>;
+    manageExternalSkill: (
+      request: ExternalSkillMutationRequest,
+    ) => Promise<ExternalSkillManagementResult>;
     permissionProfile?: string | undefined;
     permissionProfileCwd?: string | undefined;
   },
@@ -875,6 +1013,9 @@ function createCodexRuntime(
     approvalsReviewer: execution.approvalsReviewer,
     processCwd: env.CODEX_CWD,
     skillRoots: execution.skillRoots,
+    protectedSkillRoots: execution.protectedSkillRoots,
+    externalSkillCatalog: execution.externalSkillCatalog,
+    manageExternalSkill: execution.manageExternalSkill,
     permissionProfile: execution.permissionProfile,
     permissionProfileCwd: execution.permissionProfileCwd,
     processEnv,

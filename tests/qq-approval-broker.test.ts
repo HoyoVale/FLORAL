@@ -108,6 +108,47 @@ describe("QqApprovalBroker", () => {
   });
 
 
+  it("keeps shared Skill supply-chain approval one-shot even when approve-session is requested", async () => {
+    const interactive: Array<{ allowSession?: boolean | undefined }> = [];
+    const broker = new QqApprovalBroker({
+      ttlMs: 5_000,
+      maxPending: 4,
+      ownerOnly: true,
+      authority: writableAuthority(),
+      send: async () => undefined,
+      sendInteractive: async (prompt) => {
+        interactive.push({ allowSession: prompt.allowSession });
+      },
+      audit: async () => undefined,
+      createPublicId: () => "SKILL777",
+    });
+    const scope = {
+      userId: "owner-1",
+      role: "owner" as const,
+      conversationId: "conversation-1",
+      deliveryConversationId: "qq-conversation-1",
+    };
+    const decisionPromise = broker.request(scope, {
+      requestId: "skill-private",
+      kind: "skill-management",
+      capability: "software.install",
+      summary: "Install shared External Skill superpowers",
+      source: "floral",
+    });
+    await Promise.resolve();
+
+    expect(interactive).toEqual([{ allowSession: false }]);
+    await expect(
+      broker.resolve(scope, "SKILL777", "approve-session"),
+    ).resolves.toBe("not-authorized");
+    expect(broker.pendingCount()).toBe(1);
+
+    await expect(
+      broker.resolve(scope, "SKILL777", "approve"),
+    ).resolves.toBe("approved");
+    await expect(decisionPromise).resolves.toBe("approve");
+  });
+
   it("prefers an interactive one-shot prompt and keeps the approval ID out of text", async () => {
     const sent: string[] = [];
     const interactive: Array<{ approvalId: string; capability: string; summary: string }> = [];

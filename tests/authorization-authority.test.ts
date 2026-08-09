@@ -141,6 +141,27 @@ describe("AuthorizationAuthority", () => {
     });
   });
 
+  it("allows only owner-approved FLORAL Skill supply-chain changes to cross a read-only Codex sandbox", () => {
+    expect(authority("read-only").evaluate({
+      role: "owner",
+      capability: "software.install",
+      source: "floral-skill",
+    })).toEqual({
+      status: "approval-required",
+      approvalLevel: "chat-confirmation",
+      reason: "policy",
+    });
+
+    expect(authority("read-only").evaluate({
+      role: "operator",
+      capability: "software.install",
+      source: "floral-skill",
+    })).toMatchObject({
+      status: "deny",
+      reason: "role-capability-denied",
+    });
+  });
+
   it("requires local confirmation for system administration", () => {
     expect(authority("danger-full-access").evaluate({
       role: "owner",
