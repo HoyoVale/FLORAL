@@ -1,4 +1,4 @@
-import { mkdtemp, mkdir, realpath, rm, writeFile } from "node:fs/promises";
+import { lstat, mkdtemp, mkdir, realpath, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
@@ -58,6 +58,7 @@ class ArtifactProbeAgent implements AgentRuntime {
   async run(request: AgentRunRequest): Promise<AgentRunResult> {
     const handler = request.artifactRegistrationHandler;
     if (!handler) throw new Error("artifact handler missing");
+    await writeFile(this.validPath, "report", "utf8");
     this.results = [
       await handler({ localPath: this.validPath }),
       await handler({ localPath: this.outsidePath }),
@@ -74,11 +75,10 @@ describe("workspace artifact staging", () => {
     const floralDir = join(root, "FLORAL");
     const wisteriaDir = join(root, "WISTERIA");
     const outboundDir = join(floralDir, "artifacts", "outbound");
-    await mkdir(outboundDir, { recursive: true });
+    await mkdir(floralDir);
     await mkdir(wisteriaDir);
     const validPath = join(outboundDir, "report.txt");
     const outsidePath = join(wisteriaDir, "private.txt");
-    await writeFile(validPath, "report", "utf8");
     await writeFile(outsidePath, "private", "utf8");
 
     const workspace = new ProjectWorkspaceRoot(root);
@@ -111,9 +111,61 @@ describe("workspace artifact staging", () => {
     try {
       await gateway.start();
       await transport.emit("create artifact report");
+      expect((await lstat(outboundDir)).isDirectory()).toBe(true);
       expect(agent.results).toHaveLength(2);
       expect(agent.results[0]).toMatchObject({ status: "registered" });
       expect(agent.results[1]).toEqual({
+        status: "denied",
+        reason: "outside-run-outbound-root",
+      });
+    } finally {
+      await gateway.stop();
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it("denies registration through a symlinked project staging root", async () => {
+    const root = await mkdtemp(join(tmpdir(), "floral-workspace-artifact-link-"));
+    const projectDir = join(root, "FLORAL");
+    const otherDir = join(root, "OTHER");
+    const linkedArtifacts = join(otherDir, "artifacts");
+    const linkedOutbound = join(linkedArtifacts, "outbound");
+    await mkdir(projectDir);
+    await mkdir(linkedOutbound, { recursive: true });
+    await symlink(linkedArtifacts, join(projectDir, "artifacts"), "dir");
+    const linkedPath = join(projectDir, "artifacts", "outbound", "report.txt");
+    const outsidePath = join(otherDir, "private.txt");
+    await writeFile(outsidePath, "private", "utf8");
+
+    const workspace = new ProjectWorkspaceRoot(root);
+    await workspace.initialize();
+    const policy = new ArtifactEgressPolicy({
+      enabled: true,
+      allowedRoots: [workspace.root],
+      allowedMcpProducers: [],
+      allowedFloralCapabilities: ["files.read"],
+      maxArtifactsPerRun: 4,
+      maxBytesPerRun: 1_000_000,
+    });
+    await policy.initialize();
+    const agent = new ArtifactProbeAgent(linkedPath, outsidePath);
+    const transport = new TestTransport();
+    const gateway = new GatewayService(
+      transport,
+      agent,
+      new MemoryThreadStore(),
+      {
+        cwd: await realpath(projectDir),
+        workspace,
+        trustMockOwner: true,
+        artifactEgress: { policy },
+      },
+    );
+
+    try {
+      await gateway.start();
+      await transport.emit("send linked artifact");
+      expect(agent.results[0]).toEqual({
         status: "denied",
         reason: "outside-run-outbound-root",
       });

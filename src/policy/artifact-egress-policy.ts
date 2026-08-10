@@ -87,6 +87,10 @@ export class ArtifactEgressPolicy {
     this.#allowedFloralCapabilities = new Set(options.allowedFloralCapabilities);
   }
 
+  get enabled(): boolean {
+    return this.options.enabled;
+  }
+
   async initialize(): Promise<void> {
     if (this.#initialized) return;
     if (!this.options.enabled) {

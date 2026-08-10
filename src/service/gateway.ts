@@ -1938,7 +1938,7 @@ export class GatewayService {
       this.#scheduleNextQueuedAgentRun(resolved.conversationId);
       throw error;
     }
-
+    await this.#artifactEgress.prepareProjectStaging(resolved, this.options.workspace, projectContext?.project);
     const runCwd = projectContext?.project.path ?? this.options.cwd;
     let agentMessage = message;
     if (message.attachments?.length) {

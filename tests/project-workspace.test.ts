@@ -1,4 +1,4 @@
-import { mkdtemp, mkdir, rm } from "node:fs/promises";
+import { lstat, mkdtemp, mkdir, realpath, rm, symlink } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
@@ -60,6 +60,44 @@ describe("ProjectWorkspaceRoot", () => {
     expect(first).toMatch(/^[a-f0-9]{24}$/u);
     expect(same).toBe(first);
     expect(other).not.toBe(first);
+  });
+
+  it("lazily creates a private artifact staging root only for a managed project", async () => {
+    const root = await mkdtemp(join(tmpdir(), "floral-workspace-artifacts-"));
+    const outside = await mkdtemp(join(tmpdir(), "floral-workspace-outside-"));
+    try {
+      await mkdir(join(root, "Managed"));
+      const workspace = new ProjectWorkspaceRoot(root);
+      await workspace.initialize();
+
+      const outbound = await workspace.ensureProjectArtifactOutboundRoot(
+        join(root, "Managed"),
+      );
+      expect(outbound).toBe(await realpath(join(root, "Managed", "artifacts", "outbound")));
+      expect((await lstat(outbound)).isDirectory()).toBe(true);
+      await expect(workspace.ensureProjectArtifactOutboundRoot(outside))
+        .rejects.toThrow(/managed direct-child project/ui);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+      await rm(outside, { recursive: true, force: true });
+    }
+  });
+
+  it("refuses symlinked artifact staging directories", async () => {
+    const root = await mkdtemp(join(tmpdir(), "floral-workspace-artifact-link-"));
+    const outside = await mkdtemp(join(tmpdir(), "floral-workspace-artifact-target-"));
+    try {
+      await mkdir(join(root, "Managed"));
+      await symlink(outside, join(root, "Managed", "artifacts"), "dir");
+      const workspace = new ProjectWorkspaceRoot(root);
+      await workspace.initialize();
+
+      await expect(workspace.ensureProjectArtifactOutboundRoot(join(root, "Managed")))
+        .rejects.toThrow(/real directory/ui);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+      await rm(outside, { recursive: true, force: true });
+    }
   });
 
   it("rejects hidden, relative, and separator-bearing project names", () => {

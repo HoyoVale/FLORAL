@@ -114,6 +114,36 @@ export class ProjectWorkspaceRoot {
     return normalizeProjectName(name);
   }
 
+  /**
+   * Lazily prepare the private artifact staging root for one managed project.
+   *
+   * The caller decides whether artifact egress is enabled. This method only
+   * accepts a real direct-child project and refuses to traverse symlinked
+   * staging directories.
+   */
+  async ensureProjectArtifactOutboundRoot(projectPath: string): Promise<string> {
+    this.#ensureInitialized();
+    const projectName = await this.projectNameForPath(projectPath);
+    if (!projectName) {
+      throw new Error("Artifact staging requires a managed direct-child project");
+    }
+    const project = await this.resolveExistingProject(projectName);
+    const artifacts = resolve(project.path, "artifacts");
+    await ensurePrivateDirectory(artifacts);
+    const outbound = resolve(artifacts, "outbound");
+    await ensurePrivateDirectory(outbound);
+
+    const canonicalArtifacts = await realpath(artifacts);
+    const canonicalOutbound = await realpath(outbound);
+    if (dirname(canonicalArtifacts) !== project.path) {
+      throw new Error("Artifact staging directory resolves outside the project");
+    }
+    if (dirname(canonicalOutbound) !== canonicalArtifacts) {
+      throw new Error("Artifact outbound directory resolves outside the staging root");
+    }
+    return canonicalOutbound;
+  }
+
   contains(path: string): boolean {
     this.#ensureInitialized();
     const rel = relative(this.#canonicalRoot!, resolve(path));
@@ -125,6 +155,26 @@ export class ProjectWorkspaceRoot {
       throw new Error("ProjectWorkspaceRoot.initialize() must complete first");
     }
   }
+}
+
+async function ensurePrivateDirectory(path: string): Promise<void> {
+  const current = await lstat(path).catch(() => undefined);
+  if (!current) {
+    await mkdir(path, { recursive: false, mode: 0o700 }).catch((error: unknown) => {
+      if (!isAlreadyExistsError(error)) throw error;
+    });
+  }
+  const prepared = await lstat(path);
+  if (prepared.isSymbolicLink() || !prepared.isDirectory()) {
+    throw new Error("Artifact staging path must be a real directory");
+  }
+}
+
+function isAlreadyExistsError(error: unknown): boolean {
+  return typeof error === "object"
+    && error !== null
+    && "code" in error
+    && error.code === "EEXIST";
 }
 
 export function normalizeProjectName(value: string): string {

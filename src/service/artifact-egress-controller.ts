@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
-import { realpath } from "node:fs/promises";
-import { isAbsolute, relative, resolve, sep } from "node:path";
+import { lstat, realpath } from "node:fs/promises";
+import { dirname, isAbsolute, relative, resolve, sep } from "node:path";
 import {
   supportsMediaTransport,
   type ChatTransport,
@@ -16,6 +16,10 @@ import type {
   ArtifactEgressPolicy,
   ArtifactEgressRunBudget,
 } from "../policy/artifact-egress-policy.js";
+import type {
+  ProjectWorkspaceRoot,
+  WorkspaceProject,
+} from "../workspace/project-workspace.js";
 import type { DeliveryOutboxCoordinator } from "./delivery-outbox-coordinator.js";
 
 interface ArtifactCatalogEntry {
@@ -42,6 +46,27 @@ export class ArtifactEgressController {
 
   clearConversation(conversationId: string): void {
     this.#catalogs.delete(conversationId);
+  }
+
+  async prepareProjectStaging(
+    resolved: ResolvedGatewayIdentity,
+    workspace?: ProjectWorkspaceRoot,
+    project?: WorkspaceProject,
+  ): Promise<void> {
+    if (!this.policy?.enabled || !workspace || !project) return;
+    try {
+      await workspace.ensureProjectArtifactOutboundRoot(project.path);
+    } catch (error) {
+      await this.store.appendAudit({
+        userId: resolved.userId,
+        conversationId: resolved.conversationId,
+        eventType: "artifact.staging_prepare_failed",
+        payload: {
+          projectName: project.name,
+          errorType: error instanceof Error ? error.name : "Error",
+        },
+      }).catch(() => undefined);
+    }
   }
 
   async registerOutboundFile(
@@ -288,7 +313,24 @@ async function isWithinRunOutboundRoot(
 ): Promise<boolean> {
   if (!isAbsolute(localPath)) return false;
   try {
-    const outboundRoot = await realpath(resolve(runCwd, "artifacts", "outbound"));
+    const runRoot = await realpath(runCwd);
+    const artifactsPath = resolve(runRoot, "artifacts");
+    const outboundPath = resolve(artifactsPath, "outbound");
+    const [artifactsStat, outboundStat] = await Promise.all([
+      lstat(artifactsPath),
+      lstat(outboundPath),
+    ]);
+    if (
+      artifactsStat.isSymbolicLink()
+      || !artifactsStat.isDirectory()
+      || outboundStat.isSymbolicLink()
+      || !outboundStat.isDirectory()
+    ) return false;
+    const artifactsRoot = await realpath(artifactsPath);
+    const outboundRoot = await realpath(outboundPath);
+    if (dirname(artifactsRoot) !== runRoot || dirname(outboundRoot) !== artifactsRoot) {
+      return false;
+    }
     const candidate = await realpath(localPath);
     const rel = relative(outboundRoot, candidate);
     return rel === "" || (!rel.startsWith(`..${sep}`) && rel !== "..");

@@ -192,6 +192,8 @@ describe("Gateway project/chat lifecycle", () => {
       expect(agent.runs).toHaveLength(1);
       expect(agent.runs[0]?.cwd).toBe(await realpath(join(root, "NewProject")));
       expect(agent.runs[0]?.threadId).toBeUndefined();
+      expect(await lstat(join(root, "NewProject", "artifacts")).catch(() => undefined))
+        .toBeUndefined();
       expect(store.audits).toContainEqual(expect.objectContaining({
         eventType: "command.project_created",
         payload: { projectName: "NewProject" },
