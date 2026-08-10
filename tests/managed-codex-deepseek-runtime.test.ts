@@ -125,6 +125,7 @@ async function createEmptyMcpRegistry() {
 
 function setup(options: {
   runtimeStartError?: Error;
+  dataDir?: string;
   externalSkillRoots?: string[];
   externalSkillRootsAfterMutation?: string[];
   manageExternalSkill?: ManagedCodexDeepSeekDependencies["manageExternalSkill"];
@@ -143,6 +144,7 @@ function setup(options: {
   }
   const managed = new ManagedCodexDeepSeekRuntime(loadEnv({
     DEEPSEEK_API_KEY: "secret",
+    ...(options.dataDir ? { DATA_DIR: options.dataDir } : {}),
   }), {
     createToken: () => "token",
     checkSearch: async () => {
@@ -246,86 +248,97 @@ describe("ManagedCodexDeepSeekRuntime", () => {
 
 
   it("hot-refreshes Codex extraRoots after an approved shared External Skill mutation", async () => {
-    const externalRoot = resolve(
-      process.cwd(),
-      "data",
-      "external-skills",
-      "packages",
-      "superpowers",
-      "repository",
-      "skills",
-    );
-    const { managed, runtime, getCreatedRuntimeOptions } = setup({
-      externalSkillRoots: [],
-      externalSkillRootsAfterMutation: [externalRoot],
-      manageExternalSkill: async (request) => {
-        expect(request).toEqual({
-          action: "install",
-          id: "superpowers",
-        });
-        return {
-          changed: true,
-          message: "external_skills.install=ok\nid=superpowers",
-        };
-      },
-    });
+    const dataDir = await mkdtemp(join(tmpdir(), "floral-managed-runtime-"));
+    try {
+      const externalRoot = join(
+        dataDir,
+        "external-skills",
+        "packages",
+        "superpowers",
+        "repository",
+        "skills",
+      );
+      const { managed, runtime, getCreatedRuntimeOptions } = setup({
+        dataDir,
+        externalSkillRoots: [],
+        externalSkillRootsAfterMutation: [externalRoot],
+        manageExternalSkill: async (request) => {
+          expect(request).toEqual({
+            action: "install",
+            id: "superpowers",
+          });
+          return {
+            changed: true,
+            message: "external_skills.install=ok\nid=superpowers",
+          };
+        },
+      });
 
-    await managed.start();
-    const control = getCreatedRuntimeOptions();
-    expect(control?.protectedSkillRoots).toEqual([
-      resolve(process.cwd(), "skills"),
-    ]);
-    const result = await control!.manageExternalSkill({
-      action: "install",
-      id: "superpowers",
-    });
-    expect(result.message).toContain("hot_reload=scheduled");
-    expect(result.message).toContain("restart_required=false");
-    await new Promise<void>((resolvePromise) => setImmediate(resolvePromise));
-    expect(runtime.skillRootUpdates.at(-1)).toEqual([
-      resolve(process.cwd(), "skills"),
-      externalRoot,
-    ]);
-    await managed.stop();
+      await managed.start();
+      const control = getCreatedRuntimeOptions();
+      expect(control?.protectedSkillRoots).toEqual([
+        resolve(process.cwd(), "skills"),
+      ]);
+      const result = await control!.manageExternalSkill({
+        action: "install",
+        id: "superpowers",
+      });
+      expect(result.message).toContain("hot_reload=scheduled");
+      expect(result.message).toContain("restart_required=false");
+      await new Promise<void>((resolvePromise) => setImmediate(resolvePromise));
+      expect(runtime.skillRootUpdates.at(-1)).toEqual([
+        resolve(process.cwd(), "skills"),
+        externalRoot,
+      ]);
+      await managed.stop();
+    } finally {
+      await rm(dataDir, { recursive: true, force: true });
+    }
   });
 
   it("hot-reloads a curated External MCP overlay through native config reload", async () => {
-    const workspaceConfigs: string[] = [];
-    const { managed, runtime, getCreatedRuntimeOptions } = setup({
-      workspaceConfigs,
-      manageExternalMcp: async (request) => {
-        expect(request).toEqual({ action: "install", id: "chrome-devtools" });
-        return {
-          changed: true,
-          message: "external_mcp.install=ok\nid=chrome-devtools",
-          registry: {
-            version: 1,
-            packages: [{
-              id: "chrome-devtools",
-              enabled: true,
-              installedAt: "2026-08-10T00:00:00.000Z",
-              updatedAt: "2026-08-10T00:00:00.000Z",
-            }],
-          },
-        };
-      },
-    });
+    const dataDir = await mkdtemp(join(tmpdir(), "floral-managed-runtime-"));
+    try {
+      const workspaceConfigs: string[] = [];
+      const { managed, runtime, getCreatedRuntimeOptions } = setup({
+        dataDir,
+        workspaceConfigs,
+        manageExternalMcp: async (request) => {
+          expect(request).toEqual({ action: "install", id: "chrome-devtools" });
+          return {
+            changed: true,
+            message: "external_mcp.install=ok\nid=chrome-devtools",
+            registry: {
+              version: 1,
+              packages: [{
+                id: "chrome-devtools",
+                enabled: true,
+                installedAt: "2026-08-10T00:00:00.000Z",
+                updatedAt: "2026-08-10T00:00:00.000Z",
+              }],
+            },
+          };
+        },
+      });
 
-    await managed.start();
-    expect(workspaceConfigs[0]).not.toContain("[mcp_servers.chrome-devtools]");
-    const control = getCreatedRuntimeOptions();
-    const result = await control!.manageExternalMcp({
-      action: "install",
-      id: "chrome-devtools",
-    });
-    expect(result.message).toContain("hot_reload=scheduled");
-    await new Promise<void>((resolvePromise) => setImmediate(resolvePromise));
-    await new Promise<void>((resolvePromise) => setImmediate(resolvePromise));
-    expect(workspaceConfigs.at(-1)).toContain("[mcp_servers.chrome-devtools]");
-    expect(workspaceConfigs.at(-1)).toContain("chrome-devtools-mcp@1.6.0");
-    expect(workspaceConfigs.at(-1)).toContain('default_tools_approval_mode = "writes"');
-    expect(runtime.mcpReloads).toBe(1);
-    await managed.stop();
+      await managed.start();
+      expect(workspaceConfigs[0]).not.toContain("[mcp_servers.chrome-devtools]");
+      const control = getCreatedRuntimeOptions();
+      const result = await control!.manageExternalMcp({
+        action: "install",
+        id: "chrome-devtools",
+      });
+      expect(result.message).toContain("hot_reload=scheduled");
+      await new Promise<void>((resolvePromise) => setImmediate(resolvePromise));
+      await new Promise<void>((resolvePromise) => setImmediate(resolvePromise));
+      expect(workspaceConfigs.at(-1)).toContain("[mcp_servers.chrome-devtools]");
+      expect(workspaceConfigs.at(-1)).toContain("chrome-devtools-mcp@1.6.0");
+      expect(workspaceConfigs.at(-1)).toContain('default_tools_approval_mode = "writes"');
+      expect(runtime.mcpReloads).toBe(1);
+      await managed.stop();
+    } finally {
+      await rm(dataDir, { recursive: true, force: true });
+    }
   });
 
   it("passes the FLORAL turn-scoped approval profile to Codex runtime creation", async () => {
