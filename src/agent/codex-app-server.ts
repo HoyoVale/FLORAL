@@ -64,6 +64,10 @@ import {
   type SystemReadModel,
   type SystemSnapshot,
 } from "../system-awareness/index.js";
+import {
+  FloralContextToolController,
+  FLORAL_CONTEXT_DYNAMIC_TOOLS,
+} from "./floral-context-tools.js";
 
 interface ThreadResponse {
   thread: { id: string };
@@ -270,6 +274,7 @@ export const FLORAL_AGENT_DEVELOPER_INSTRUCTIONS = [
   "- Only call floral_extensions/apply_extension when plan_extension returns action-required and the requested exact action matches recommended_action. External MCP/Skill mutation remains one-shot software.install policy-gated. In paired-owner full mode the host may auto-approve that chat-confirmation after AuthorizationAuthority accepts the exact curated action; this does not widen the catalog or let the model bypass plan/apply/verify. If the plan says no-op, prerequisite-required, diagnose-first, unknown, or unsupported, do not mutate merely to try. Apps are upstream/user-owned: use prepare_app_install only when the plan returns user-handoff; never silently install or authenticate an App.",
   "- Extension control-plane routing overrides terminal-first application routing. After any controlled extension mutation or App install handoff, the current turn's extension/System Awareness snapshot predates the change and cannot verify adoption. End the current turn with verification pending. On a fresh next turn use floral_extensions/verify_extension; use mcp_status or system diagnostics only as supporting read-only views. Do not inspect ~/.codex, process tables, package storage, data/external-* registries, or run shell/git/npm/pnpm/codex extension commands to compensate.",
   "- Legacy manage_mcp/manage_external remain compatibility routes but do not authorize bypassing the Phase 8E plan/apply/verify contract. Extension operations not exposed by FLORAL are unsupported for this Agent turn. Never use shell, direct Codex config edits, undocumented RPCs, arbitrary package sources, or package managers as an extension-install workaround; consult floral_system/capabilities for the current management contract.",
+  "- Manage shared project memory through floral_context only. Read current context before relying on it; create a turn-bound proposal before applying an update. Applying an update is host approval-gated and writes only the selected managed .floral document with a provenance receipt. Never edit AGENTS.md, .floral files, or the provenance ledger through shell or direct file tools. Automatic compaction is deferred until FLORAL has a durable transaction journal.",
 ].join("\n");
 
 const FLORAL_SYSTEM_DEVELOPER_INSTRUCTIONS = [
@@ -729,6 +734,7 @@ const FLORAL_DYNAMIC_TOOLS = [
   ...FLORAL_DELIVERY_DYNAMIC_TOOLS,
   ...FLORAL_SKILLS_DYNAMIC_TOOLS,
   ...FLORAL_EXTENSIONS_DYNAMIC_TOOLS,
+  ...FLORAL_CONTEXT_DYNAMIC_TOOLS,
 ] as const;
 
 export class CodexAppServerRuntime implements AgentRuntime {
@@ -772,6 +778,7 @@ export class CodexAppServerRuntime implements AgentRuntime {
   readonly #systemSnapshots = new Map<string, SystemSnapshot>();
   readonly #extensionMutationPendingVerification = new Set<string>();
   readonly #extensionVerificationShellSoftBlocked = new Set<string>();
+  readonly #contextTools = new FloralContextToolController();
   readonly #approvalItemSummaries = new Map<string, string>();
   readonly #inFlightMcpToolCalls = new Map<string, InFlightMcpToolCall>();
   #skillsDirty = false;
@@ -1175,6 +1182,7 @@ export class CodexAppServerRuntime implements AgentRuntime {
     this.#artifactRegistrationHandlers.delete(normalized);
     this.#artifactDeliveryHandlers.delete(normalized);
     this.#threadCwds.delete(normalized);
+    this.#contextTools.clearThread(normalized);
     this.#extensionSnapshots.delete(normalized);
     this.#systemSnapshots.delete(normalized);
     this.#extensionMutationPendingVerification.delete(normalized);
@@ -1546,6 +1554,7 @@ export class CodexAppServerRuntime implements AgentRuntime {
       this.#artifactRegistrationHandlers.delete(threadId);
       this.#artifactDeliveryHandlers.delete(threadId);
       this.#threadCwds.delete(threadId);
+      this.#contextTools.clearThread(threadId);
       this.#extensionSnapshots.delete(threadId);
       this.#systemSnapshots.delete(threadId);
       this.#extensionMutationPendingVerification.delete(threadId);
@@ -1586,6 +1595,7 @@ export class CodexAppServerRuntime implements AgentRuntime {
     this.#systemSnapshots.clear();
     this.#extensionMutationPendingVerification.clear();
     this.#extensionVerificationShellSoftBlocked.clear();
+    this.#contextTools.clear();
     this.#approvalItemSummaries.clear();
     this.#inFlightMcpToolCalls.clear();
     await this.#client.stop();
@@ -1682,6 +1692,10 @@ export class CodexAppServerRuntime implements AgentRuntime {
       }
       if (namespace === "floral_extensions") {
         await this.#handleExtensionDynamicToolCall(request);
+        return;
+      }
+      if (namespace === "floral_context") {
+        await this.#handleContextDynamicToolCall(request);
         return;
       }
       if (namespace === "floral_system") {
@@ -2523,6 +2537,53 @@ export class CodexAppServerRuntime implements AgentRuntime {
     this.#respondSafely(
       request.id,
       dynamicToolResponse(false, "system_awareness=denied\nreason=unsupported-tool"),
+    );
+  }
+
+  async #handleContextDynamicToolCall(
+    request: CodexServerRequest,
+  ): Promise<void> {
+    const params = asPlainRecord(request.params);
+    const threadId = readString(params?.threadId);
+    const turnId = readString(params?.turnId);
+    const tool = readString(params?.tool);
+    const activeTurnId = threadId ? this.#activeTurns.get(threadId) : undefined;
+    const cwd = threadId ? this.#threadCwds.get(threadId) : undefined;
+    if (!threadId || !turnId || activeTurnId !== turnId || !tool || !cwd) {
+      this.#respondSafely(
+        request.id,
+        dynamicToolResponse(false, "context_management=denied\nreason=invalid-context"),
+      );
+      return;
+    }
+    const argumentsValue = asPlainRecord(params?.arguments);
+    if (!argumentsValue) {
+      this.#respondSafely(
+        request.id,
+        dynamicToolResponse(false, "context_management=denied\nreason=invalid-arguments"),
+      );
+      return;
+    }
+    const result = await this.#contextTools.handle({
+      threadId,
+      cwd,
+      tool,
+      callId: readString(params?.callId) ?? String(request.id),
+      arguments: argumentsValue,
+      approvalHandler: this.#approvalHandlers.get(threadId),
+      onApprovalRequested: (approval) => {
+        this.#eventHandlers.get(threadId)?.({
+          type: "approval.requested",
+          requestId: approval.requestId,
+          capability: approval.capability,
+          kind: approval.kind,
+          detail: { summary: approval.summary },
+        });
+      },
+    });
+    this.#respondSafely(
+      request.id,
+      dynamicToolResponse(result.success, result.text),
     );
   }
 

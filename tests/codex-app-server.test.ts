@@ -1,4 +1,6 @@
-import { resolve } from "node:path";
+import { mkdir, mkdtemp, realpath, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 import {
@@ -13,6 +15,10 @@ import {
   SystemSnapshotBuilder,
   createDefaultSystemDefinitionRegistry,
 } from "../src/system-awareness/index.js";
+import {
+  bootstrapProjectContext,
+  readProjectMemoryDocument,
+} from "../src/workspace/project-context.js";
 
 const fixture = fileURLToPath(new URL("./fixtures/fake-codex-app-server.mjs", import.meta.url));
 
@@ -63,6 +69,40 @@ function createRuntime(
 }
 
 describe("CodexAppServerRuntime", () => {
+  it("writes governed project context only after a turn-bound proposal and host approval", async () => {
+    const root = await mkdtemp(join(tmpdir(), "floral-codex-context-"));
+    const projectDir = join(root, "Project");
+    await mkdir(projectDir);
+    const cwd = await realpath(projectDir);
+    const project = { name: "Project", path: cwd };
+    await bootstrapProjectContext(project);
+    const runtime = createRuntime("context-propose-apply");
+    let approvals = 0;
+    try {
+      await runtime.start();
+      const result = await runtime.run({
+        text: "Record the governed context fact.",
+        cwd,
+        approvalHandler: async (request) => {
+          approvals += 1;
+          expect(request).toMatchObject({
+            kind: "file-change",
+            capability: "files.write",
+            source: "floral",
+          });
+          return "approve";
+        },
+      });
+      expect(result.finalText).toBe("context update applied");
+      expect(approvals).toBe(1);
+      await expect(readProjectMemoryDocument(project, "context"))
+        .resolves.toContain("governed context interface requires host approval");
+    } finally {
+      await runtime.stop();
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
   it("runs a new thread and trusts item/completed as final text", async () => {
     const runtime = createRuntime("normal");
     const events: AgentEvent[] = [];

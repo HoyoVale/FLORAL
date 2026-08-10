@@ -8,6 +8,11 @@ import {
 } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
 import type { WorkspaceProject } from "./project-workspace.js";
+import {
+  listProjectContextLedgerEntries,
+  recordProjectContextLedgerEntry,
+  type ProjectContextLedgerSource,
+} from "./project-context-ledger.js";
 
 const CONTEXT_DIRECTORY = ".floral";
 const CONTEXT_FILE = "CONTEXT.md";
@@ -43,6 +48,18 @@ export interface ProjectMemoryRecordResult {
   fingerprint: string;
   entryCount: number;
   fileBytes: number;
+  ledgerEntryId: string;
+}
+
+export interface ProjectMemoryProvenance {
+  source: ProjectContextLedgerSource;
+  evidenceRefs?: readonly string[] | undefined;
+}
+
+export interface ProjectMemoryVerification {
+  present: boolean;
+  target: ProjectMemoryKind;
+  ledgerEntryId: string;
 }
 
 export interface ProjectContextStatus {
@@ -284,6 +301,7 @@ export async function recordProjectMemory(
   kind: ProjectMemoryKind,
   text: string,
   now: Date = new Date(),
+  provenance: ProjectMemoryProvenance = { source: "owner-command" },
 ): Promise<ProjectMemoryRecordResult> {
   const normalized = normalizeMemoryText(text);
   const status = await inspectProjectContext(project);
@@ -304,6 +322,13 @@ export async function recordProjectMemory(
   const marker = `<!-- FLORAL:MEM:${fingerprint.slice(0, 16)} -->`;
   const currentCount = countManagedMemoryEntries(current);
   if (current.includes(marker)) {
+    const ledger = await recordProjectContextLedgerEntry(project, {
+      target: kind,
+      contentHash: fingerprint,
+      source: provenance.source,
+      evidenceRefs: provenance.evidenceRefs,
+      now,
+    });
     return {
       changed: false,
       duplicate: true,
@@ -311,6 +336,7 @@ export async function recordProjectMemory(
       fingerprint,
       entryCount: currentCount,
       fileBytes: Buffer.byteLength(current, "utf8"),
+      ledgerEntryId: ledger.id,
     };
   }
   if (currentCount >= MAX_MEMORY_ENTRIES_PER_FILE) {
@@ -342,6 +368,14 @@ export async function recordProjectMemory(
     await file.close();
   }
 
+  const ledger = await recordProjectContextLedgerEntry(project, {
+    target: kind,
+    contentHash: fingerprint,
+    source: provenance.source,
+    evidenceRefs: provenance.evidenceRefs,
+    now,
+  });
+
   return {
     changed: true,
     duplicate: false,
@@ -349,6 +383,37 @@ export async function recordProjectMemory(
     fingerprint,
     entryCount: currentCount + 1,
     fileBytes: nextBytes,
+    ledgerEntryId: ledger.id,
+  };
+}
+
+export async function readProjectMemoryDocument(
+  project: WorkspaceProject,
+  kind: ProjectMemoryKind,
+): Promise<string> {
+  const status = await inspectProjectContext(project);
+  if (!status.initialized) {
+    throw new Error("Project shared context is not initialized");
+  }
+  const canonicalProject = await canonicalProjectDirectory(project);
+  const contextDirectory = await canonicalContextDirectory(canonicalProject);
+  return await readMemoryFile(contextDirectory, memoryFileForKind(kind));
+}
+
+export async function verifyProjectMemoryLedgerEntry(
+  project: WorkspaceProject,
+  ledgerEntryId: string,
+): Promise<ProjectMemoryVerification | undefined> {
+  const entries = await listProjectContextLedgerEntries(project);
+  const entry = entries.find((candidate) => candidate.id === ledgerEntryId);
+  if (!entry || entry.target === "agents") return undefined;
+  const kind = entry.target;
+  const document = await readProjectMemoryDocument(project, kind);
+  const marker = `<!-- FLORAL:MEM:${entry.contentHash.slice(0, 16)} -->`;
+  return {
+    present: document.includes(marker),
+    target: kind,
+    ledgerEntryId: entry.id,
   };
 }
 
@@ -571,7 +636,7 @@ function renderManagedInstructionBlock(projectName: string): string {
     "- `.floral/KNOWN_ISSUES.md` — active known issues and constraints.",
     "",
     "Treat these files as shared across Codex chats in this project.",
-    "Phase 7.3A does not maintain them automatically; do not modify them unless the user explicitly asks to update project context.",
+    "Use floral_context for governed reads and updates. An Agent must create a proposal first; FLORAL applies it only after host authorization and records provenance. Do not edit these files or this managed instruction block directly through shell/file tools.",
     "These files are project guidance, not an authorization boundary. FLORAL/Codex runtime permissions remain authoritative.",
     FLORAL_CONTEXT_END,
   ].join("\n");
@@ -582,7 +647,7 @@ function renderContextTemplate(projectName: string): string {
     "# Project Context",
     "",
     "> Shared project-level facts for Codex chats in this directory.",
-    "> Phase 7.3A does not update this file automatically.",
+    "> Governed updates use FLORAL proposal, authorization, and provenance receipts.",
     "",
     `- Project: ${markdownInline(projectName)}`,
     "- Workspace managed by FLORAL: yes",
@@ -599,7 +664,7 @@ function renderDecisionsTemplate(): string {
     "# Project Decisions",
     "",
     "> Durable decisions shared across Codex chats.",
-    "> Add concise decisions only when the user explicitly asks to update project context.",
+    "> Governed updates use FLORAL proposal, authorization, and provenance receipts.",
     "",
     "No durable decisions recorded yet.",
     "",
@@ -611,7 +676,7 @@ function renderKnownIssuesTemplate(): string {
     "# Known Issues",
     "",
     "> Active known issues and constraints shared across Codex chats.",
-    "> Add concise items only when the user explicitly asks to update project context.",
+    "> Governed updates use FLORAL proposal, authorization, and provenance receipts.",
     "",
     "No known issues recorded yet.",
     "",

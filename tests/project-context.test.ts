@@ -35,7 +35,7 @@ describe("project shared context bootstrap", () => {
       expect(agents).toContain("FLORAL project: ScratchProbe");
       expect(agents).toContain("FLORAL:PROJECT-CONTEXT:BEGIN");
       expect(agents).toContain(".floral/CONTEXT.md");
-      expect(agents).toContain("do not modify them unless the user explicitly asks");
+      expect(agents).toContain("Use floral_context for governed reads and updates");
 
       const context = await readFile(
         join(project.path, ".floral", "CONTEXT.md"),

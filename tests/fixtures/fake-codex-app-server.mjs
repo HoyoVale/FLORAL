@@ -109,6 +109,25 @@ function hasFloralDeliveryTools(params) {
   ]);
 }
 
+function hasFloralContextTools(params) {
+  const dynamicTools = params?.dynamicTools;
+  if (!Array.isArray(dynamicTools)) return false;
+  const namespace = dynamicTools.find((entry) =>
+    entry?.type === "namespace" && entry?.name === "floral_context"
+  );
+  if (!namespace || !Array.isArray(namespace.tools)) return false;
+  const names = namespace.tools.map((tool) => tool?.name).sort();
+  return JSON.stringify(names) === JSON.stringify([
+    "apply_update",
+    "compact",
+    "history",
+    "propose_update",
+    "read",
+    "status",
+    "verify",
+  ]);
+}
+
 function sendSuccess(threadId = activeThreadId, turnId = activeTurnId, finalText = "authoritative final") {
   send({
     method: "item/agentMessage/delta",
@@ -490,6 +509,10 @@ lines.on("line", (line) => {
     }
     if (scenario === "delivery-dynamic-tools" && !hasFloralDeliveryTools(message.params)) {
       send({ id: message.id, error: { code: -32602, message: "missing FLORAL delivery dynamic tools" } });
+      return;
+    }
+    if (scenario === "context-propose-apply" && !hasFloralContextTools(message.params)) {
+      send({ id: message.id, error: { code: -32602, message: "missing FLORAL context dynamic tools" } });
       return;
     }
     if (
@@ -922,6 +945,26 @@ lines.on("line", (line) => {
             namespace: "floral_system",
             tool: "system_summary",
             arguments: {},
+          },
+        });
+        return;
+      }
+
+      if (scenario === "context-propose-apply") {
+        send({
+          id: "dynamic_1",
+          method: "item/tool/call",
+          params: {
+            threadId: activeThreadId,
+            turnId: activeTurnId,
+            callId: "call_context_propose_1",
+            namespace: "floral_context",
+            tool: "propose_update",
+            arguments: {
+              target: "context",
+              text: "The governed context interface requires host approval for writes.",
+              evidence_refs: ["tests:context-propose-apply"],
+            },
           },
         });
         return;
@@ -1466,6 +1509,17 @@ lines.on("line", (line) => {
     const success = message.result?.success;
     const text = message.result?.contentItems?.[0]?.text ?? "";
     if (
+      scenario === "context-propose-apply"
+      && success === true
+      && text.includes("context_update=applied")
+      && text.includes("target=context")
+      && text.includes("ledger_entry_id=")
+      && text.includes("verification_tool=floral_context/verify")
+    ) {
+      sendSuccess(activeThreadId, activeTurnId, "context update applied");
+      return;
+    }
+    if (
       scenario === "extension-mcp-install-status-pending"
       && success === true
       && text.includes("codex_mcp.verification=pending")
@@ -1493,6 +1547,24 @@ lines.on("line", (line) => {
   if (message.id === "dynamic_1" && "result" in message) {
     const success = message.result?.success;
     const text = message.result?.contentItems?.[0]?.text ?? "";
+    if (scenario === "context-propose-apply" && success === true) {
+      const proposalId = /^proposal_id=(ctx-[a-f0-9]{20})$/mu.exec(text)?.[1];
+      if (proposalId && text.includes("context_proposal=created") && text.includes("next=apply_update")) {
+        send({
+          id: "dynamic_2",
+          method: "item/tool/call",
+          params: {
+            threadId: activeThreadId,
+            turnId: activeTurnId,
+            callId: "call_context_apply_1",
+            namespace: "floral_context",
+            tool: "apply_update",
+            arguments: { proposal_id: proposalId },
+          },
+        });
+        return;
+      }
+    }
     if (
       scenario === "system-awareness"
       && success === true
