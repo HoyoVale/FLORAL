@@ -6,7 +6,14 @@ const root = process.cwd();
 describe("Phase 8G reliability architecture", () => {
   it("keeps orchestration modules inside frozen structure budgets", async () => {
     const budgets: Record<string, number> = {
-      "src/service/gateway.ts": 2_800,
+      // Phase 10B raised the gateway orchestration budget from 2800 to 2950:
+      // Goal auto-continuation and the live status card add thin lifecycle
+      // hooks, while the bulk of the new logic lives in the extracted
+      // gateway-goal-continuation facade (separate frozen budget below).
+      "src/service/gateway.ts": 2_950,
+      "src/service/gateway-goal-continuation.ts": 430,
+      "src/service/goal-continuation-coordinator.ts": 520,
+      "src/service/agent-status-card-controller.ts": 260,
       "src/agent/codex-app-server.ts": 3_250,
       "src/agent/codex-goals.ts": 220,
       "src/agent/codex-thread-list.ts": 60,

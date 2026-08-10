@@ -28,7 +28,7 @@ export type GatewayCommand =
   | { type: "chat-archive"; value: string | undefined }
   | {
       type: "goal";
-      action: "status" | "set" | "active" | "pause" | "complete" | "blocked" | "clear";
+      action: "status" | "set" | "continue" | "active" | "pause" | "complete" | "blocked" | "clear";
       objective: string | undefined;
       tokenBudget: number | null | undefined;
     }
@@ -127,12 +127,12 @@ export function parseGatewayCommand(text: string): GatewayCommand | undefined {
           : Number(rawBudget),
     };
   }
-  const goalAction = /^\/goal(?:\s+(status|active|pause|complete|blocked|clear))?$/i.exec(trimmed);
+  const goalAction = /^\/goal(?:\s+(status|continue|active|pause|complete|blocked|clear))?$/i.exec(trimmed);
   if (goalAction) {
     return {
       type: "goal",
       action: (goalAction[1]?.toLowerCase() || "status") as
-        | "status" | "active" | "pause" | "complete" | "blocked" | "clear",
+        | "status" | "continue" | "active" | "pause" | "complete" | "blocked" | "clear",
       objective: undefined,
       tokenBudget: undefined,
     };

@@ -58,10 +58,23 @@ export const requestedConfigSchema = z.object({
       visible_activity_fallback: z.boolean(),
       visible_activity_delay_ms: positiveInteger,
     }).strict(),
+    status_card: z.object({
+      enabled: z.boolean(),
+      update_interval_ms: positiveInteger,
+      auto_pin: z.boolean(),
+    }).strict(),
     sdk: z.object({
       expected_version: z.string().trim().min(1),
       ingress_isolation: z.literal("worker-thread"),
       logger: z.literal("redacted"),
+    }).strict(),
+  }).strict(),
+  goal: z.object({
+    continuation: z.object({
+      enabled: z.boolean(),
+      cooldown_ms: positiveInteger,
+      max_turns: nonNegativeInteger,
+      max_wall_time_ms: nonNegativeInteger,
     }).strict(),
   }).strict(),
   codex: z.object({
@@ -298,10 +311,23 @@ export interface RequestedConfig {
       visible_activity_fallback: boolean;
       visible_activity_delay_ms: number;
     };
+    status_card: {
+      enabled: boolean;
+      update_interval_ms: number;
+      auto_pin: boolean;
+    };
     sdk: {
       expected_version: string;
       ingress_isolation: "worker-thread";
       logger: "redacted";
+    };
+  };
+  goal: {
+    continuation: {
+      enabled: boolean;
+      cooldown_ms: number;
+      max_turns: number;
+      max_wall_time_ms: number;
     };
   };
   codex: {
@@ -531,10 +557,23 @@ export const DEFAULT_REQUESTED_CONFIG: RequestedConfig = {
       visible_activity_fallback: true,
       visible_activity_delay_ms: 6_000,
     },
+    status_card: {
+      enabled: true,
+      update_interval_ms: 5_000,
+      auto_pin: true,
+    },
     sdk: {
       expected_version: "1.36.0",
       ingress_isolation: "worker-thread",
       logger: "redacted",
+    },
+  },
+  goal: {
+    continuation: {
+      enabled: true,
+      cooldown_ms: 30_000,
+      max_turns: 0,
+      max_wall_time_ms: 0,
     },
   },
   codex: {

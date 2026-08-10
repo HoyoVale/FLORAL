@@ -84,6 +84,49 @@ export function supportsInteractiveApproval(
     .sendInteractiveApprovalPrompt === "function";
 }
 
+export type AgentStatusCardState = "idle" | "running" | "cooldown" | "stopped";
+
+export const STATUS_CONTROL_MESSAGE_PREFIX = "__floral_status_control__";
+
+export interface AgentStatusSnapshot {
+  state: AgentStatusCardState;
+  projectName?: string | undefined;
+  turnNumber: number;
+  elapsedMs: number;
+  lastActivity?: string | undefined;
+  cooldownRemainingMs?: number | undefined;
+  goal?: {
+    status: AgentGoalStatus;
+    objective: string;
+    tokensUsed: number;
+    tokenBudget: number | null;
+    timeUsedSeconds: number;
+  } | undefined;
+}
+
+export interface StatusCardTransport {
+  sendStatusCard(
+    conversationId: string,
+    snapshot: AgentStatusSnapshot,
+  ): Promise<{ messageId: string }>;
+  updateStatusCard(
+    messageId: string,
+    snapshot: AgentStatusSnapshot,
+  ): Promise<void>;
+  pinStatusCard(messageId: string): Promise<void>;
+  unpinStatusCard(messageId: string): Promise<void>;
+}
+
+export function supportsStatusCardTransport(
+  transport: ChatTransport,
+): transport is ChatTransport & StatusCardTransport {
+  const candidate = transport as Partial<StatusCardTransport>;
+  return typeof candidate.sendStatusCard === "function"
+    && typeof candidate.updateStatusCard === "function"
+    && typeof candidate.pinStatusCard === "function"
+    && typeof candidate.unpinStatusCard === "function";
+}
+
 export interface InboundAttachmentMaterializer {
   materializeInboundAttachments(
     message: IncomingMessage,
@@ -298,14 +341,15 @@ export interface AgentGoal {
 }
 
 export interface AgentGoalRuntime {
-  getGoal(threadId: string): Promise<AgentGoal | undefined>;
+  getGoal(threadId: string, options?: { cwd?: string }): Promise<AgentGoal | undefined>;
   setGoal(input: {
     threadId: string;
+    cwd?: string;
     objective?: string | null | undefined;
     status?: AgentGoalStatus | null | undefined;
     tokenBudget?: number | null | undefined;
   }): Promise<AgentGoal>;
-  clearGoal(threadId: string): Promise<boolean>;
+  clearGoal(threadId: string, options?: { cwd?: string }): Promise<boolean>;
 }
 
 export function supportsAgentGoals(
@@ -315,6 +359,43 @@ export function supportsAgentGoals(
   return typeof candidate.getGoal === "function"
     && typeof candidate.setGoal === "function"
     && typeof candidate.clearGoal === "function";
+}
+
+export interface GoalContinuationRecord {
+  conversationId: string;
+  deliveryConversationId: string;
+  userId: string;
+  role: "owner";
+  threadId: string;
+  projectCwd: string;
+  projectName: string;
+  authorized: boolean;
+  enabled: boolean;
+  pending: boolean;
+  nextRunAt: number | null;
+  turnCount: number;
+  lastRunAt: number | null;
+  createdAt: number;
+  updatedAt: number;
+}
+
+export interface GoalContinuationStore {
+  loadGoalContinuation(
+    conversationId: string,
+  ): Promise<GoalContinuationRecord | undefined>;
+  saveGoalContinuation(record: GoalContinuationRecord): Promise<void>;
+  deleteGoalContinuation(conversationId: string): Promise<void>;
+  listGoalContinuations(): Promise<GoalContinuationRecord[]>;
+}
+
+export function supportsGoalContinuationStore(
+  store: GatewayStore,
+): store is GatewayStore & GoalContinuationStore {
+  const candidate = store as Partial<GoalContinuationStore>;
+  return typeof candidate.loadGoalContinuation === "function"
+    && typeof candidate.saveGoalContinuation === "function"
+    && typeof candidate.deleteGoalContinuation === "function"
+    && typeof candidate.listGoalContinuations === "function";
 }
 
 export function supportsAgentThreadManagement(

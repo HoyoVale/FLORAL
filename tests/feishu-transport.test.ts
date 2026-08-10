@@ -62,6 +62,9 @@ class FakeWorker implements FeishuWorkerLike {
 function options(input: {
   worker: FakeWorker;
   create?: (request: unknown) => Promise<unknown>;
+  messagePatch?: (request: unknown) => Promise<unknown>;
+  pinCreate?: (request: unknown) => Promise<unknown>;
+  pinDelete?: (request: unknown) => Promise<unknown>;
   imageCreate?: (request: unknown) => Promise<unknown>;
   fileCreate?: (request: unknown) => Promise<unknown>;
   resourceGet?: (request: unknown) => Promise<{ getReadableStream(): AsyncIterable<unknown> & { destroy?: ((error?: Error) => void) | undefined } }>;
@@ -91,6 +94,11 @@ function options(input: {
         v1: {
           message: {
             create: input.create ?? (async () => ({ code: 0 })),
+            patch: input.messagePatch ?? (async () => ({ code: 0 })),
+          },
+          pin: {
+            create: input.pinCreate ?? (async () => ({ code: 0 })),
+            delete: input.pinDelete ?? (async () => ({ code: 0 })),
           },
           image: {
             create: input.imageCreate ?? (async () => ({

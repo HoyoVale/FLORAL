@@ -479,14 +479,16 @@ lines.on("line", (line) => {
       threadId,
       objective: message.params.objective ?? previous?.objective,
       status: message.params.status ?? previous?.status ?? "active",
-      tokenBudget: message.params.tokenBudget !== undefined
-        ? message.params.tokenBudget
-        : previous?.tokenBudget ?? null,
       tokensUsed: previous?.tokensUsed ?? 0,
       timeUsedSeconds: previous?.timeUsedSeconds ?? 0,
       createdAt: previous?.createdAt ?? now,
       updatedAt: now + 1,
     };
+    if (message.params.tokenBudget !== undefined) {
+      goal.tokenBudget = message.params.tokenBudget;
+    } else if (previous && previous.tokenBudget !== undefined) {
+      goal.tokenBudget = previous.tokenBudget;
+    }
     if (typeof goal.objective !== "string" || !goal.objective) {
       send({ id: message.id, error: { code: -32602, message: "objective required" } });
       return;

@@ -2,6 +2,8 @@ import { randomUUID } from "node:crypto";
 import { mkdir } from "node:fs/promises";
 import { dirname } from "node:path";
 import type {
+  GoalContinuationRecord,
+  GoalContinuationStore,
   GatewayStore,
   WorkspaceStateStore,
   ConversationControlStateStore,
@@ -49,7 +51,9 @@ export interface GatewayStorageDiagnostics {
   durableRecoverable: number;
 }
 
-export class SqliteGatewayStore implements GatewayStore, WorkspaceStateStore, ConversationControlStateStore {
+export class SqliteGatewayStore
+  implements GatewayStore, WorkspaceStateStore, ConversationControlStateStore, GoalContinuationStore
+{
   #closed = false;
   readonly durability: DurableStateStore;
   readonly outbox: DurableOutboxStore;
@@ -441,6 +445,84 @@ export class SqliteGatewayStore implements GatewayStore, WorkspaceStateStore, Co
     );
   }
 
+  async loadGoalContinuation(
+    conversationId: string,
+  ): Promise<GoalContinuationRecord | undefined> {
+    this.#assertOpen();
+    assertStoredConversationId(conversationId);
+    const row = asRecord(this.db.prepare(`
+      SELECT
+        conversation_id, delivery_conversation_id, user_id, role, thread_id, project_cwd, project_name,
+        authorized, enabled, pending, next_run_at, turn_count, last_run_at,
+        created_at, updated_at
+      FROM goal_continuation
+      WHERE conversation_id = ?
+      LIMIT 1
+    `).get(conversationId));
+    return row ? parseGoalContinuationRow(row) : undefined;
+  }
+
+  async saveGoalContinuation(record: GoalContinuationRecord): Promise<void> {
+    this.#assertOpen();
+    const normalized = normalizeGoalContinuationRecord(record);
+    this.db.prepare(`
+      INSERT INTO goal_continuation (
+        conversation_id, delivery_conversation_id, user_id, role, thread_id, project_cwd, project_name,
+        authorized, enabled, pending, next_run_at, turn_count, last_run_at,
+        created_at, updated_at
+      )
+      VALUES (?, ?, ?, 'owner', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(conversation_id) DO UPDATE SET
+        delivery_conversation_id = excluded.delivery_conversation_id,
+        thread_id = excluded.thread_id,
+        project_cwd = excluded.project_cwd,
+        project_name = excluded.project_name,
+        authorized = excluded.authorized,
+        enabled = excluded.enabled,
+        pending = excluded.pending,
+        next_run_at = excluded.next_run_at,
+        turn_count = excluded.turn_count,
+        last_run_at = excluded.last_run_at,
+        updated_at = excluded.updated_at
+    `).run(
+      normalized.conversationId,
+      normalized.deliveryConversationId,
+      normalized.userId,
+      normalized.threadId,
+      normalized.projectCwd,
+      normalized.projectName,
+      intFlag(normalized.authorized),
+      intFlag(normalized.enabled),
+      intFlag(normalized.pending),
+      normalized.nextRunAt,
+      normalized.turnCount,
+      normalized.lastRunAt,
+      normalized.createdAt,
+      normalized.updatedAt,
+    );
+  }
+
+  async deleteGoalContinuation(conversationId: string): Promise<void> {
+    this.#assertOpen();
+    assertStoredConversationId(conversationId);
+    this.db.prepare(`
+      DELETE FROM goal_continuation WHERE conversation_id = ?
+    `).run(conversationId);
+  }
+
+  async listGoalContinuations(): Promise<GoalContinuationRecord[]> {
+    this.#assertOpen();
+    return this.db.prepare(`
+      SELECT
+        conversation_id, delivery_conversation_id, user_id, role, thread_id, project_cwd, project_name,
+        authorized, enabled, pending, next_run_at, turn_count, last_run_at,
+        created_at, updated_at
+      FROM goal_continuation
+      ORDER BY updated_at DESC
+    `).all().map(asRecord).filter((row) => row !== undefined)
+      .map((row) => parseGoalContinuationRow(row));
+  }
+
   diagnostics(): GatewayStorageDiagnostics {
     this.#assertOpen();
     const durable = this.durability.diagnostics();
@@ -550,6 +632,25 @@ function migrateGatewaySchema(db: SqliteDatabase): void {
       received_at INTEGER NOT NULL,
       PRIMARY KEY(provider, bot_id, external_message_id)
     );
+
+    CREATE TABLE IF NOT EXISTS goal_continuation (
+      conversation_id TEXT PRIMARY KEY,
+      delivery_conversation_id TEXT NOT NULL,
+      user_id TEXT NOT NULL,
+      role TEXT NOT NULL CHECK(role IN ('owner')),
+      thread_id TEXT NOT NULL,
+      project_cwd TEXT NOT NULL,
+      project_name TEXT NOT NULL DEFAULT '',
+      authorized INTEGER NOT NULL DEFAULT 0,
+      enabled INTEGER NOT NULL DEFAULT 0,
+      pending INTEGER NOT NULL DEFAULT 0,
+      next_run_at INTEGER,
+      turn_count INTEGER NOT NULL DEFAULT 0,
+      last_run_at INTEGER,
+      created_at INTEGER NOT NULL,
+      updated_at INTEGER NOT NULL,
+      FOREIGN KEY(conversation_id) REFERENCES conversations(id) ON DELETE CASCADE
+    );
   `);
 
   ensureColumn(
@@ -609,7 +710,7 @@ function migrateGatewaySchema(db: SqliteDatabase): void {
     CREATE INDEX IF NOT EXISTS audit_events_user_created_idx
       ON audit_events(user_id, created_at);
 
-    PRAGMA user_version = 6;
+    PRAGMA user_version = 7;
   `);
 }
 
@@ -729,6 +830,103 @@ function assertExternalIdentity(identity: ExternalIdentity): void {
       throw new Error(`External identity ${label} exceeds 512 characters`);
     }
   }
+}
+
+function assertStoredConversationId(conversationId: string): void {
+  if (!conversationId.trim() || conversationId.length > 128) {
+    throw new Error("Stored conversation id is invalid");
+  }
+}
+
+function normalizeGoalContinuationRecord(
+  record: GoalContinuationRecord,
+): GoalContinuationRecord {
+  const conversationId = record.conversationId.trim();
+  const deliveryConversationId = record.deliveryConversationId.trim();
+  const userId = record.userId.trim();
+  const threadId = record.threadId.trim();
+  const projectCwd = record.projectCwd.trim();
+  const projectName = record.projectName.trim();
+  if (!conversationId || !deliveryConversationId || !userId || !threadId || !projectCwd) {
+    throw new Error("Goal continuation record is missing required identifiers");
+  }
+  if (record.role !== "owner") {
+    throw new Error("Goal continuation requires an owner record");
+  }
+  if (!Number.isSafeInteger(record.turnCount) || record.turnCount < 0) {
+    throw new Error("Goal continuation turn count is invalid");
+  }
+  const createdAt = Number.isFinite(record.createdAt) ? record.createdAt : Date.now();
+  const updatedAt = Number.isFinite(record.updatedAt) ? record.updatedAt : Date.now();
+  return {
+    conversationId,
+    deliveryConversationId,
+    userId,
+    role: "owner",
+    threadId,
+    projectCwd,
+    projectName,
+    authorized: Boolean(record.authorized),
+    enabled: Boolean(record.enabled),
+    pending: Boolean(record.pending),
+    nextRunAt: record.nextRunAt === null
+      ? null : finiteNumber(record.nextRunAt) ?? null,
+    turnCount: record.turnCount,
+    lastRunAt: record.lastRunAt === null
+      ? null : finiteNumber(record.lastRunAt) ?? null,
+    createdAt,
+    updatedAt,
+  };
+}
+
+function parseGoalContinuationRow(row: Record<string, unknown>): GoalContinuationRecord {
+  const role = row.role;
+  const turnCount = row.turn_count;
+  const created = finiteNumber(row.created_at);
+  const updated = finiteNumber(row.updated_at);
+  if (
+    role !== "owner"
+    || !Number.isSafeInteger(turnCount)
+    || Number(turnCount) < 0
+    || created === undefined
+    || updated === undefined
+  ) {
+    throw new Error("Stored goal continuation row is invalid");
+  }
+  return {
+    conversationId: requireString(row.conversation_id, "goal continuation conversation_id"),
+    deliveryConversationId: requireString(
+      row.delivery_conversation_id,
+      "goal continuation delivery_conversation_id",
+    ),
+    userId: requireString(row.user_id, "goal continuation user_id"),
+    role,
+    threadId: requireString(row.thread_id, "goal continuation thread_id"),
+    projectCwd: requireString(row.project_cwd, "goal continuation project_cwd"),
+    projectName: readOptionalString(row.project_name) ?? "",
+    authorized: readBool(row.authorized),
+    enabled: readBool(row.enabled),
+    pending: readBool(row.pending),
+    nextRunAt: row.next_run_at === null || row.next_run_at === undefined
+      ? null : finiteNumber(row.next_run_at) ?? null,
+    turnCount: Number(turnCount),
+    lastRunAt: row.last_run_at === null || row.last_run_at === undefined
+      ? null : finiteNumber(row.last_run_at) ?? null,
+    createdAt: created,
+    updatedAt: updated,
+  };
+}
+
+function finiteNumber(value: unknown): number | undefined {
+  return typeof value === "number" && Number.isFinite(value) ? value : undefined;
+}
+
+function readBool(value: unknown): boolean {
+  return value === 1 || value === true;
+}
+
+function intFlag(value: boolean): number {
+  return value ? 1 : 0;
 }
 
 function asRecord(value: unknown): Record<string, unknown> | undefined {

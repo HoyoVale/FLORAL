@@ -19,6 +19,7 @@ import { loadEnv } from "../src/config/env.js";
 import type {
   AgentAppReadResult,
   AgentAppSummary,
+  AgentGoal,
   AgentMcpServerSummary,
   AgentNativeFeatureSummary,
   AgentRuntime,
@@ -36,6 +37,7 @@ class FakeRuntime implements AgentRuntime {
   appQueries: Array<{ cwd: string; threadId?: string | undefined }> = [];
   mcpQueries: Array<{ cwd: string; threadId?: string | undefined }> = [];
   mcpReloads = 0;
+  goalCalls: string[] = [];
   async start(): Promise<void> { this.starts += 1; }
   async run(request: AgentRunRequest): Promise<AgentRunResult> {
     return { threadId: request.threadId ?? "thread-1", finalText: "ok" };
@@ -108,6 +110,36 @@ class FakeRuntime implements AgentRuntime {
     }];
   }
   async reloadMcpServers(): Promise<void> { this.mcpReloads += 1; }
+  async getGoal(threadId: string): Promise<AgentGoal | undefined> {
+    this.goalCalls.push(`get:${threadId}`);
+    return {
+      threadId,
+      objective: "test goal",
+      status: "active",
+      tokenBudget: null,
+      tokensUsed: 0,
+      timeUsedSeconds: 0,
+      createdAt: 1,
+      updatedAt: 1,
+    };
+  }
+  async setGoal(input: { threadId: string; objective?: string | null | undefined; status?: string | null | undefined; tokenBudget?: number | null | undefined; }): Promise<AgentGoal> {
+    this.goalCalls.push(`set:${input.threadId}`);
+    return {
+      threadId: input.threadId,
+      objective: input.objective ?? "test goal",
+      status: (input.status ?? "active") as AgentGoal["status"],
+      tokenBudget: input.tokenBudget ?? null,
+      tokensUsed: 0,
+      timeUsedSeconds: 0,
+      createdAt: 1,
+      updatedAt: 2,
+    };
+  }
+  async clearGoal(threadId: string): Promise<boolean> {
+    this.goalCalls.push(`clear:${threadId}`);
+    return true;
+  }
   async stop(): Promise<void> { this.stops += 1; }
 }
 
@@ -126,6 +158,10 @@ async function createEmptyMcpRegistry() {
 function setup(options: {
   runtimeStartError?: Error;
   dataDir?: string;
+  workspaceRoot?: string;
+  runtimeFactory?: (
+    creationOptions: Parameters<NonNullable<ManagedCodexDeepSeekDependencies["createRuntime"]>>[0],
+  ) => AgentRuntime;
   externalSkillRoots?: string[];
   externalSkillRootsAfterMutation?: string[];
   manageExternalSkill?: ManagedCodexDeepSeekDependencies["manageExternalSkill"];
@@ -145,6 +181,7 @@ function setup(options: {
   const managed = new ManagedCodexDeepSeekRuntime(loadEnv({
     DEEPSEEK_API_KEY: "secret",
     ...(options.dataDir ? { DATA_DIR: options.dataDir } : {}),
+    ...(options.workspaceRoot ? { FLORAL_WORKSPACE_ROOT: options.workspaceRoot } : {}),
   }), {
     createToken: () => "token",
     checkSearch: async () => {
@@ -179,7 +216,7 @@ function setup(options: {
       if (options.externalSkillRoots) {
         calls.push(`skillRoots=${skillRoots.join("|")}`);
       }
-      return runtime;
+      return options.runtimeFactory?.(creationOptions) ?? runtime;
     },
     prepareCodexConfig: async ({ legacyConfig }) => ({
       mode: "legacy",
@@ -226,6 +263,41 @@ describe("ManagedCodexDeepSeekRuntime", () => {
     ]);
     expect(runtime.starts).toBe(1);
     await managed.stop();
+  });
+
+  it("routes Goal RPCs to the project runtime slot by cwd before any turn", async () => {
+    const workspaceRoot = await mkdtemp(join(tmpdir(), "floral-workspace-"));
+    const projectPath = join(workspaceRoot, "debug");
+    await mkdir(projectPath);
+    const globalRuntime = new FakeRuntime();
+    const projectRuntime = new FakeRuntime();
+    const { managed } = setup({
+      workspaceRoot,
+      runtimeFactory: (creationOptions) =>
+        creationOptions.permissionProfileCwd ? projectRuntime : globalRuntime,
+    });
+    try {
+      await managed.start();
+      const goal = await managed.getGoal("thr_project_only", { cwd: projectPath });
+      expect(goal?.threadId).toBe("thr_project_only");
+      const updated = await managed.setGoal({
+        threadId: "thr_project_only",
+        cwd: projectPath,
+        objective: "persisted goal",
+        status: "active",
+      });
+      expect(updated.objective).toBe("persisted goal");
+      expect(await managed.clearGoal("thr_project_only", { cwd: projectPath })).toBe(true);
+      expect(projectRuntime.goalCalls).toEqual([
+        "get:thr_project_only",
+        "set:thr_project_only",
+        "clear:thr_project_only",
+      ]);
+      expect(globalRuntime.goalCalls).toEqual([]);
+    } finally {
+      await managed.stop();
+      await rm(workspaceRoot, { recursive: true, force: true });
+    }
   });
 
   it("shares validated external Skill roots through Codex native extraRoots", async () => {

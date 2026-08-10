@@ -229,6 +229,23 @@ const gateway = new GatewayService(
     deliveryOutbox,
     durableRuns,
     startupRecovery,
+    goalContinuation: {
+      enabled: authority.effective.goal.continuation.enabled,
+      cooldownMs: authority.effective.goal.continuation.cooldown_ms,
+      maxTurns: authority.effective.goal.continuation.max_turns,
+      maxWallTimeMs: authority.effective.goal.continuation.max_wall_time_ms,
+    },
+    ...(chatTransport === "feishu"
+      && authority.effective.feishu.status_card.enabled
+      ? {
+          statusCard: {
+            enabled: true,
+            updateIntervalMs:
+              authority.effective.feishu.status_card.update_interval_ms,
+            autoPin: authority.effective.feishu.status_card.auto_pin,
+          },
+        }
+      : {}),
     ...(systemMaintenance ? { systemMaintenance: { controller: systemMaintenance } } : {}),
     runtimeStatusLines: async (cwd) => {
       const managedHome = await runtimeManagedHomeForCwd(cwd);

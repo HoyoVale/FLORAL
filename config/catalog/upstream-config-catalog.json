@@ -1334,6 +1334,18 @@
       "component": "feishu-sdk",
       "classification": "floral-owned"
     },
+    "FEISHU_STATUS_CARD_AUTO_PIN": {
+      "component": "feishu-sdk",
+      "classification": "floral-owned"
+    },
+    "FEISHU_STATUS_CARD_ENABLED": {
+      "component": "feishu-sdk",
+      "classification": "floral-owned"
+    },
+    "FEISHU_STATUS_CARD_UPDATE_INTERVAL_MS": {
+      "component": "feishu-sdk",
+      "classification": "floral-owned"
+    },
     "FLORAL_BRIDGE_HOST": {
       "component": "floral",
       "classification": "floral-owned"
@@ -1377,6 +1389,22 @@
     "GITHUB_PAT_TOKEN": {
       "component": "mcp",
       "classification": "locked"
+    },
+    "GOAL_CONTINUATION_COOLDOWN_MS": {
+      "component": "floral",
+      "classification": "floral-owned"
+    },
+    "GOAL_CONTINUATION_ENABLED": {
+      "component": "floral",
+      "classification": "floral-owned"
+    },
+    "GOAL_CONTINUATION_MAX_TURNS": {
+      "component": "floral",
+      "classification": "floral-owned"
+    },
+    "GOAL_CONTINUATION_MAX_WALL_TIME_MS": {
+      "component": "floral",
+      "classification": "floral-owned"
     },
     "HOST": {
       "component": "floral",

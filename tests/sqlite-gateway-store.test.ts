@@ -37,7 +37,7 @@ describe("SqliteGatewayStore", () => {
         payload: { count: 1 },
       });
       expect(first.diagnostics()).toMatchObject({
-        schemaVersion: 6,
+        schemaVersion: 7,
         users: 1,
         identities: 1,
         conversations: 1,

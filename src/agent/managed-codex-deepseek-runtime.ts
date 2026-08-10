@@ -366,16 +366,16 @@ export class ManagedCodexDeepSeekRuntime implements AgentRuntime {
     this.#threadRuntimeKeys.delete(threadId);
   }
 
-  async getGoal(threadId: string): Promise<AgentGoal | undefined> {
-    return await requireGoalRuntime(this.#runtimeForThread(threadId)).getGoal(threadId);
+  async getGoal(threadId: string, options?: { cwd?: string }): Promise<AgentGoal | undefined> {
+    return requireGoalRuntime(options?.cwd ? (await this.#runtimeSlotForCwd(options.cwd)).runtime : this.#runtimeForThread(threadId)).getGoal(threadId);
   }
 
   async setGoal(input: Parameters<AgentGoalRuntime["setGoal"]>[0]): Promise<AgentGoal> {
-    return await requireGoalRuntime(this.#runtimeForThread(input.threadId)).setGoal(input);
+    return requireGoalRuntime(input.cwd ? (await this.#runtimeSlotForCwd(input.cwd)).runtime : this.#runtimeForThread(input.threadId)).setGoal(input);
   }
 
-  async clearGoal(threadId: string): Promise<boolean> {
-    return await requireGoalRuntime(this.#runtimeForThread(threadId)).clearGoal(threadId);
+  async clearGoal(threadId: string, options?: { cwd?: string }): Promise<boolean> {
+    return requireGoalRuntime(options?.cwd ? (await this.#runtimeSlotForCwd(options.cwd)).runtime : this.#runtimeForThread(threadId)).clearGoal(threadId);
   }
 
   async resolveRuntimeHome(input: { cwd: string }): Promise<string> {

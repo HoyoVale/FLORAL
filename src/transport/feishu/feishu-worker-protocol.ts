@@ -29,8 +29,17 @@ export interface SerializedFeishuApprovalAction {
   receivedAtMs: number;
 }
 
+export interface SerializedFeishuStatusControlAction {
+  eventId: string;
+  externalUserId: string;
+  conversationId: string;
+  action: "pause" | "stop";
+  receivedAtMs: number;
+}
+
 export type FeishuWorkerMessage =
   | { type: "started" }
   | { type: "message"; message: SerializedFeishuIncomingMessage }
   | { type: "card-action"; action: SerializedFeishuApprovalAction }
+  | { type: "status-control"; action: SerializedFeishuStatusControlAction }
   | { type: "fatal"; errorType: string };

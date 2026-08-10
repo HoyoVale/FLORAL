@@ -8,6 +8,7 @@ import {
 
 export interface GoalSetInput {
   threadId: string;
+  cwd?: string;
   objective?: string | null | undefined;
   status?: AgentGoalStatus | null | undefined;
   tokenBudget?: number | null | undefined;
@@ -114,7 +115,10 @@ export function parseGoalResponse(
   const threadId = typeof goal?.threadId === "string" ? goal.threadId.trim() : "";
   const objective = typeof goal?.objective === "string" ? goal.objective.trim() : "";
   const status = goal?.status;
-  const tokenBudget = goal?.tokenBudget;
+  // The real app-server schema marks tokenBudget optional and omits it when no
+  // budget was ever set. Normalize that absence to null so a valid goal without
+  // a budget is not rejected as malformed.
+  const tokenBudget = goal?.tokenBudget ?? null;
   const tokensUsed = finiteNonNegative(goal?.tokensUsed);
   const timeUsedSeconds = finiteNonNegative(goal?.timeUsedSeconds);
   const createdAt = finiteNonNegative(goal?.createdAt);

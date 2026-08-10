@@ -89,6 +89,10 @@ import {
 } from "./gateway-presentation.js";
 import { handleGatewayGoalCommand } from "./gateway-goals.js";
 import { listGatewayChats } from "./gateway-chats.js";
+import {
+  GoalContinuationFacade,
+  parseStatusControlAction,
+} from "./gateway-goal-continuation.js";
 export interface GatewayOptions {
   cwd: string;
   workspace?: ProjectWorkspaceRoot | undefined;
@@ -119,6 +123,17 @@ export interface GatewayOptions {
   deliveryOutbox?: DeliveryOutboxCoordinator | undefined;
   durableRuns?: DurableRunCoordinator | undefined;
   startupRecovery?: StartupRecoveryCoordinator | undefined;
+  goalContinuation?: {
+    enabled: boolean;
+    cooldownMs: number;
+    maxTurns: number;
+    maxWallTimeMs: number;
+  } | undefined;
+  statusCard?: {
+    enabled: boolean;
+    updateIntervalMs: number;
+    autoPin: boolean;
+  } | undefined;
 }
 
 interface ChatListCache {
@@ -142,6 +157,7 @@ const MAX_QUEUED_AGENT_RUNS_PER_CONVERSATION = 3;
 
 interface ActiveRun {
   threadId?: string;
+  resolved: ResolvedGatewayIdentity;
   stopRequested: boolean;
   interruptSent: boolean;
   visibleActivityTimer?: ReturnType<typeof setTimeout> | undefined;
@@ -167,6 +183,7 @@ export class GatewayService {
   readonly #inflightMessageHandlers = new Set<Promise<void>>();
   readonly #pairingLimiter = new PairingAttemptLimiter();
   readonly #approvalBroker: QqApprovalBroker | undefined;
+  readonly #goalFacade: GoalContinuationFacade | undefined = undefined;
   #started = false;
   #stopped = false;
 
@@ -222,6 +239,41 @@ export class GatewayService {
           audit: (event) => this.store.appendAudit(event),
         })
       : undefined;
+
+    if (options.goalContinuation?.enabled) {
+      this.#goalFacade = new GoalContinuationFacade({
+        agent: this.agent,
+        store: this.store,
+        transport: this.transport,
+        audit: (event) => this.store.appendAudit(event),
+        send: (conversationId, text) => this.#send(conversationId, text),
+        isConversationBusy: (conversationId) => this.#conversationBusy(conversationId),
+        runContinuation: (input) =>
+          this.#runAgent(input.message, input.resolved),
+        resolveProjectContext: (_delivery, conversationId) =>
+          this.#resolveSelectedProjectContext(conversationId).then((context) =>
+            context?.threadId
+              ? {
+                  threadId: context.threadId,
+                  projectName: context.project.name,
+                  projectCwd: context.project.path,
+                }
+              : undefined,
+          ),
+        stopConversation: (conversationId) => this.#stopConversationRuns(conversationId),
+        goalContinuation: {
+          enabled: true,
+          cooldownMs: options.goalContinuation.cooldownMs,
+          maxTurns: options.goalContinuation.maxTurns,
+          maxWallTimeMs: options.goalContinuation.maxWallTimeMs,
+        },
+        statusCard: {
+          enabled: options.statusCard?.enabled ?? false,
+          updateIntervalMs: options.statusCard?.updateIntervalMs ?? 5_000,
+          autoPin: options.statusCard?.autoPin ?? true,
+        },
+      });
+    }
   }
 
   async start(): Promise<void> {
@@ -239,6 +291,7 @@ export class GatewayService {
       }
       this.options.startupRecovery?.recover();
       await this.agent.start();
+      await this.#goalFacade?.start();
       await this.transport.start((message) => this.#trackMessage(message));
       await this.options.deliveryOutbox?.start();
       this.#started = true;
@@ -260,6 +313,7 @@ export class GatewayService {
     if (this.#stopped) return;
     this.#stopped = true;
     this.#approvalBroker?.cancelAll();
+    await this.#goalFacade?.stop();
     await this.agent.stop().catch(() => undefined);
     const handlersDrained = await waitForInflightHandlers(this.#inflightMessageHandlers, 30_000);
     await this.options.deliveryOutbox?.stop();
@@ -346,6 +400,16 @@ export class GatewayService {
 
     await this.#loadPersistedControlMode(resolved);
 
+    const statusControlAction = parseStatusControlAction(message.text);
+    if (message.id.startsWith("feishu-status-control:") && statusControlAction) {
+      await this.#goalFacade?.handleStatusControl(
+        resolved,
+        message.identity.conversationId,
+        statusControlAction,
+      );
+      return;
+    }
+
     if (resolved.role === "owner" && this.options.systemMaintenance) {
       await this.options.systemMaintenance.controller
         .recordOwnerDeliveryTarget(message.identity.conversationId)
@@ -357,6 +421,10 @@ export class GatewayService {
       return;
     }
 
+    await this.#goalFacade?.onUserMessage(
+      resolved.conversationId,
+      message.identity.conversationId,
+    );
     await this.#runAgent(message, resolved);
   }
 
@@ -1419,6 +1487,13 @@ export class GatewayService {
         return;
       }
       case "goal": {
+        if (command.action === "continue") {
+          await this.#goalFacade?.handleContinue(
+            resolved,
+            message.identity.conversationId,
+          );
+          return;
+        }
         const projectContext = await this.#requireProjectContext(
           message.identity.conversationId, resolved.conversationId,
         );
@@ -1430,13 +1505,15 @@ export class GatewayService {
         }
         await handleGatewayGoalCommand({
           agent: this.agent, command,
-          threadId: projectContext.threadId,
+          threadId: projectContext.threadId, projectCwd: projectContext.project.path,
           projectName: projectContext.project.name,
+          deliveryConversationId: message.identity.conversationId,
           userId: resolved.userId, conversationId: resolved.conversationId,
           role: resolved.role,
           busy: this.#conversationBusy(resolved.conversationId),
           audit: async (event) => this.store.appendAudit(event),
           send: async (text) => this.#send(message.identity.conversationId, text),
+          continuation: this.#goalFacade?.coordinator,
         });
         return;
       }
@@ -1773,54 +1850,84 @@ export class GatewayService {
       }
 
       case "stop": {
-        const active = this.#activeRuns.get(resolved.conversationId);
-        const starting = this.#startingAgentRuns.has(resolved.conversationId);
-        const queuedCount = this.#queuedRunCount(resolved.conversationId);
-        if (!active && !starting && queuedCount === 0) {
+        const outcome = await this.#stopConversationRuns(resolved.conversationId);
+        const continuationStopped = await this.#goalFacade?.stopContinuation(
+          resolved.conversationId,
+          "stop-command",
+        ) ?? false;
+        await this.#goalFacade?.onStopped(
+          resolved.conversationId,
+          message.identity.conversationId,
+        );
+        await this.store.appendAudit({
+          userId: resolved.userId,
+          conversationId: resolved.conversationId,
+          eventType: "command.stop",
+          payload: {
+            interruptDispatched: outcome.interruptSent,
+            preflightCancelled: outcome.starting,
+            queuedCancelled: outcome.queuedCount,
+            continuationStopped,
+          },
+        });
+        if (
+          !outcome.active
+          && !outcome.starting
+          && outcome.queuedCount === 0
+          && !continuationStopped
+        ) {
           await this.#send(
             message.identity.conversationId,
             "当前没有正在运行或排队的任务。",
           );
           return;
         }
-
-        this.#queuedAgentRuns.delete(resolved.conversationId);
-        this.options.durableRuns?.cancelPending(resolved.conversationId);
-        if (starting) this.#cancelledStartingRuns.add(resolved.conversationId);
-        this.#approvalBroker?.cancelConversation(resolved.conversationId);
-
-        if (active) {
-          active.stopRequested = true;
-          this.#cancelVisibleActivityFallback(active);
-          this.#setConversationActivity(message.identity.conversationId, "idle");
-          if (active.threadId && !active.interruptSent) {
-            await this.#interruptRun(resolved, active);
-          }
-        }
-        await this.store.appendAudit({
-          userId: resolved.userId,
-          conversationId: resolved.conversationId,
-          eventType: "command.stop",
-          payload: {
-            interruptDispatched: active?.interruptSent ?? false,
-            preflightCancelled: starting,
-            queuedCancelled: queuedCount,
-          },
-        });
         await this.#send(
           message.identity.conversationId,
           [
-            active
-              ? active.interruptSent
+            outcome.active
+              ? outcome.interruptSent
                 ? "已向当前任务发送停止请求。"
                 : "停止请求已记录，任务线程建立后会立即中断。"
               : "已取消正在准备中的任务。",
-            ...(queuedCount > 0 ? [`已同时取消 ${String(queuedCount)} 条排队消息。`] : []),
+            ...(outcome.queuedCount > 0
+              ? [`已同时取消 ${String(outcome.queuedCount)} 条排队消息。`]
+              : []),
+            ...(continuationStopped ? ["已停止 Goal 自动续跑。"] : []),
           ].join("\n"),
         );
         return;
       }
     }
+  }
+
+  async #stopConversationRuns(conversationId: string): Promise<{
+    active: boolean;
+    starting: boolean;
+    queuedCount: number;
+    interruptSent: boolean;
+  }> {
+    const active = this.#activeRuns.get(conversationId);
+    const starting = this.#startingAgentRuns.has(conversationId);
+    const queuedCount = this.#queuedRunCount(conversationId);
+    this.#queuedAgentRuns.delete(conversationId);
+    this.options.durableRuns?.cancelPending(conversationId);
+    if (starting) this.#cancelledStartingRuns.add(conversationId);
+    this.#approvalBroker?.cancelConversation(conversationId);
+    if (active) {
+      active.stopRequested = true;
+      this.#cancelVisibleActivityFallback(active);
+      this.#setConversationActivity(conversationId, "idle");
+      if (active.threadId && !active.interruptSent) {
+        await this.#interruptRun(active.resolved, active);
+      }
+    }
+    return {
+      active: Boolean(active),
+      starting,
+      queuedCount,
+      interruptSent: active?.interruptSent ?? false,
+    };
   }
 
   async #runAgent(
@@ -1994,6 +2101,7 @@ export class GatewayService {
     }
 
     const active: ActiveRun = {
+      resolved,
       stopRequested: false,
       interruptSent: false,
       visibleActivitySatisfied: false,
@@ -2008,6 +2116,12 @@ export class GatewayService {
     };
     this.#activeRuns.set(resolved.conversationId, active);
     this.#startingAgentRuns.delete(resolved.conversationId);
+
+    await this.#goalFacade?.onRunStarted(
+      resolved.conversationId,
+      message.identity.conversationId,
+      projectContext?.project.name,
+    );
 
     const controlMode = this.#controlMode(resolved.conversationId);
     const executionPolicy = executionPolicyForMode(controlMode);
@@ -2207,6 +2321,13 @@ export class GatewayService {
           }
         }
       }
+      await this.#goalFacade?.onRunCompleted({
+        conversationId: resolved.conversationId,
+        deliveryConversationId: message.identity.conversationId,
+        threadId: result.threadId,
+        projectCwd: runCwd,
+        projectName: projectContext?.project.name ?? "",
+      });
     } catch (error) {
       if (active.maintenanceTransactions.length > 0 && this.options.systemMaintenance) {
         for (const transactionId of active.maintenanceTransactions) {
@@ -2243,6 +2364,11 @@ export class GatewayService {
         resolved,
         "agent_failure",
         `agent-failure:${message.identity.transport}:${message.id}`,
+      );
+      await this.#goalFacade?.onRunFailed(
+        resolved.conversationId,
+        message.identity.conversationId,
+        error,
       );
     } finally {
       this.#cancelVisibleActivityFallback(active);
@@ -2407,6 +2533,7 @@ export class GatewayService {
 
     if (event.type === "tool.started" || event.type === "tool.completed") {
       if (event.type === "tool.started") active.latestToolName = event.name;
+      void this.#goalFacade?.onRunEvent(deliveryConversationId, event);
       process.stderr.write(`agent.${event.type}=${safeLogToken(event.name)}\n`);
       void this.store.appendAudit({
         userId: resolved.userId,
