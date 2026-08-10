@@ -156,6 +156,7 @@ export class GoalContinuationCoordinator {
         turnCount: record.turnCount,
       },
     });
+    if (input.enable) await this.#scheduleNext(record);
   }
 
   async setEnabled(conversationId: string, enabled: boolean): Promise<void> {
@@ -172,6 +173,7 @@ export class GoalContinuationCoordinator {
         : "goal.continuation_disabled",
       payload: { threadId: record.threadId },
     });
+    if (enabled) await this.#scheduleNext(record);
   }
 
   async syncCommand(input: {
@@ -290,6 +292,7 @@ export class GoalContinuationCoordinator {
 
   async #scheduleNext(record: GoalContinuationRecord): Promise<void> {
     if (!record.enabled || !record.authorized) return;
+    if (record.pending && record.nextRunAt !== null) return;
     const goal = await this.#getGoal(record);
     if (!goal || goal.status !== "active") return;
     if (goal.tokenBudget !== null && goal.tokensUsed >= goal.tokenBudget) {

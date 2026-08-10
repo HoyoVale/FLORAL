@@ -177,6 +177,34 @@ describe("GoalContinuationCoordinator", () => {
     expect(record?.pending).toBe(false);
   });
 
+  it("schedules the first continuation immediately after authorization", async () => {
+    const h = harness();
+    await h.coordinator.start();
+    h.agent.goal = makeGoal("thread-1", "active");
+
+    await h.coordinator.authorize({ ...authorizeInput, enable: true });
+    expect(h.timers).toHaveLength(1);
+    await h.advance(30);
+    expect(h.agent.runCount).toBe(1);
+    expect((await h.store.loadGoalContinuation("conv-1"))?.turnCount).toBe(1);
+  });
+
+  it("re-arms continuation after /goal active", async () => {
+    const h = harness();
+    await h.coordinator.start();
+    h.agent.goal = makeGoal("thread-1", "active");
+
+    await h.coordinator.authorize({ ...authorizeInput, enable: true });
+    await h.advance(30);
+    expect(h.agent.runCount).toBe(1);
+    await h.coordinator.stopContinuation("conv-1", "stop-command");
+    expect(h.timers).toHaveLength(0);
+    await h.coordinator.setEnabled("conv-1", true);
+    expect(h.timers).toHaveLength(1);
+    await h.advance(30);
+    expect(h.agent.runCount).toBe(2);
+  });
+
   it("keeps scheduling while the goal stays active", async () => {
     const h = harness();
     await h.coordinator.start();

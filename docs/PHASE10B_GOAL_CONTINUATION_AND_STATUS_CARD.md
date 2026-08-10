@@ -39,6 +39,11 @@ running, which turn it is on, how long it has been running, and the Goal state.
 6. The turn's final text is delivered as a normal message, then the loop
    repeats.
 
+Authorizing a Goal (`/goal set`, `/goal continue`, or `/goal active` on an
+already-authorized record) **immediately schedules the first continuation** —
+no user turn is required to start the loop. This is why `/goal set` alone makes
+the Agent start working after the cooldown.
+
 ### Limits and safety
 
 - Defaults follow the owner decision: cooldown 30s; max turns, wall time and
