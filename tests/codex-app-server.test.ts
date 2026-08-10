@@ -553,6 +553,63 @@ describe("CodexAppServerRuntime", () => {
     }
   });
 
+  it("exposes deterministic read-only FLORAL self-diagnostics from the frozen snapshot", async () => {
+    const registry = createDefaultSystemDefinitionRegistry();
+    let snapshotReads = 0;
+    const runtime = createRuntime("self-diagnostics", 5_000, {
+      systemAwareness: {
+        definitions: registry.list(),
+        snapshotProvider: async () => {
+          snapshotReads += 1;
+          return {
+            schemaVersion: SYSTEM_AWARENESS_SCHEMA_VERSION,
+            generatedAt: "2026-08-10T00:00:00.000Z",
+            definitionFingerprint: registry.fingerprint(),
+            components: registry.list().map((definition) => ({
+              componentId: definition.id,
+              observed: definition.id === "floral.service",
+              facts: definition.id === "floral.service"
+                ? [
+                    {
+                      fact: "recorded.phase",
+                      resolution: "resolved" as const,
+                      confidence: "authoritative" as const,
+                      value: "ready",
+                      evidence: [],
+                    },
+                    {
+                      fact: "process.alive",
+                      resolution: "resolved" as const,
+                      confidence: "observed" as const,
+                      value: false,
+                      evidence: [],
+                    },
+                  ]
+                : [],
+            })),
+            observers: [{
+              observerId: "fixture",
+              status: "ok" as const,
+              observedAt: "2026-08-10T00:00:00.000Z",
+              evidenceCount: 2,
+            }],
+          };
+        },
+      },
+    });
+    try {
+      await runtime.start();
+      const result = await runtime.run({
+        text: "Diagnose the FLORAL service without changing anything.",
+        cwd: process.cwd(),
+      });
+      expect(result.finalText).toBe("self diagnostics complete");
+      expect(snapshotReads).toBe(1);
+    } finally {
+      await runtime.stop();
+    }
+  });
+
   it("exposes read-only FLORAL extension discovery as client-hosted dynamic tools", async () => {
     const runtime = createRuntime("extension-installed-apps");
     try {

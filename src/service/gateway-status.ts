@@ -285,6 +285,8 @@ export function gatewayHelpText(): string {
     "/mcp      查看当前 Codex MCP server 启动/认证/工具状态",
     "/system   查看 FLORAL 只读系统地图",
     "/system <component> 查看组件所有权、状态与证据",
+    "/diagnose 查看证据驱动的只读系统诊断",
+    "/diagnose <component> 诊断单个组件并给出只读检查顺序",
     "/memory   查看 Codex Native Memory 生命周期",
     "/memory diagnose 只读诊断 Native Memory Phase 2（owner）",
     "/projects 列出 Workspace Root 下的项目",

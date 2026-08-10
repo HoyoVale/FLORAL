@@ -28,12 +28,21 @@ describe("gateway command parsing and pairing security", () => {
       type: "system",
       componentId: "codex.apps",
     });
+    expect(parseGatewayCommand("/diagnose")).toEqual({
+      type: "diagnose",
+      componentId: undefined,
+    });
+    expect(parseGatewayCommand("/diagnose FLORAL.Service")).toEqual({
+      type: "diagnose",
+      componentId: "floral.service",
+    });
     expect(parseGatewayCommand("/memory")).toEqual({ type: "native-memory-status" });
     expect(parseGatewayCommand("/memory status")).toEqual({ type: "native-memory-status" });
     expect(parseGatewayCommand("/memory diagnose")).toEqual({ type: "native-memory-diagnose" });
     expect(parseGatewayCommand("/stop")).toEqual({ type: "stop" });
     expect(parseGatewayCommand("/status now")).toBeUndefined();
     expect(parseGatewayCommand("/system not a component")).toBeUndefined();
+    expect(parseGatewayCommand("/diagnose not a component")).toBeUndefined();
     expect(parseGatewayCommand("hello")).toBeUndefined();
   });
 

@@ -10,6 +10,7 @@ export type GatewayCommand =
   | { type: "apps" }
   | { type: "mcp" }
   | { type: "system"; componentId: string | undefined }
+  | { type: "diagnose"; componentId: string | undefined }
   | { type: "stop" }
   | { type: "mode"; value: string | undefined }
   | { type: "projects" }
@@ -50,6 +51,13 @@ export function parseGatewayCommand(text: string): GatewayCommand | undefined {
     return {
       type: "system",
       componentId: system[1]?.trim().toLowerCase() || undefined,
+    };
+  }
+  const diagnose = /^\/diagnose(?:\s+([a-z][a-z0-9]*(?:[._-][a-z0-9]+)*))?$/i.exec(trimmed);
+  if (diagnose) {
+    return {
+      type: "diagnose",
+      componentId: diagnose[1]?.trim().toLowerCase() || undefined,
     };
   }
   if (/^\/memory(?:\s+status)?$/i.test(trimmed)) return { type: "native-memory-status" };

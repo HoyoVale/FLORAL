@@ -987,6 +987,74 @@ describe("GatewayService identity and commands", () => {
     await gateway.stop();
   });
 
+  it("runs evidence-backed /diagnose without starting an agent turn", async () => {
+    const transport = new TestTransport();
+    const agent = new TestAgent();
+    const registry = createDefaultSystemDefinitionRegistry();
+    let reads = 0;
+    const systemAwareness: SystemAwarenessReadProvider = {
+      read: async (context) => {
+        reads += 1;
+        expect(context?.execution?.gateway?.controlMode).toBe("ask");
+        return {
+          definitions: registry.list(),
+          snapshot: {
+            schemaVersion: SYSTEM_AWARENESS_SCHEMA_VERSION,
+            generatedAt: "2026-08-10T00:00:00.000Z",
+            definitionFingerprint: registry.fingerprint(),
+            components: [{
+              componentId: "floral.service",
+              observed: true,
+              facts: [
+                {
+                  fact: "recorded.phase",
+                  resolution: "resolved" as const,
+                  confidence: "authoritative" as const,
+                  value: "ready",
+                  evidence: [],
+                },
+                {
+                  fact: "process.alive",
+                  resolution: "resolved" as const,
+                  confidence: "observed" as const,
+                  value: false,
+                  evidence: [],
+                },
+              ],
+            }],
+            observers: [{
+              observerId: "fixture",
+              status: "ok" as const,
+              observedAt: "2026-08-10T00:00:00.000Z",
+              evidenceCount: 2,
+            }],
+          },
+        };
+      },
+    };
+    const gateway = new GatewayService(
+      transport,
+      agent,
+      new MemoryThreadStore(),
+      { cwd: ".", trustMockOwner: true, systemAwareness },
+    );
+    await gateway.start();
+
+    await transport.receive(incoming({
+      id: "diagnose-1",
+      transport: "mock",
+      text: "/diagnose floral.service",
+    }));
+    const reply = transport.sent.at(-1)?.text ?? "";
+    expect(reply).toContain("FLORAL Self-Diagnostics");
+    expect(reply).toContain("finding=floral.service.ready-but-process-dead");
+    expect(reply).toContain("execution_performed=false");
+    expect(reply).toContain("maintenance_enabled=false");
+    expect(reads).toBe(1);
+    expect(agent.requests).toHaveLength(0);
+    await gateway.stop();
+  });
+
   it("provides compact QQ-style help without running the agent", async () => {
     const transport = new TestTransport();
     const agent = new TestAgent();
@@ -1012,6 +1080,7 @@ describe("GatewayService identity and commands", () => {
     expect(help).toContain("/plugins  查看 Codex Plugin 功能状态");
     expect(help).toContain("/mcp      查看当前 Codex MCP server");
     expect(help).toContain("/system   查看 FLORAL 只读系统地图");
+    expect(help).toContain("/diagnose 查看证据驱动的只读系统诊断");
     expect(help).not.toContain("/approve");
     expect(agent.requests).toHaveLength(0);
     await gateway.stop();

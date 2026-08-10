@@ -43,6 +43,7 @@ import {
   SystemDefinitionRegistry,
   formatSystemCapabilities,
   formatSystemComponentStatus,
+  formatSystemDiagnostics,
   formatSystemRuntimeContext,
   formatSystemSummary,
   type SystemDefinition,
@@ -243,7 +244,7 @@ export const FLORAL_AGENT_DEVELOPER_INSTRUCTIONS = [
   "- Terminal-first does not authorize synthetic GUI automation. Never use direct Peekaboo CLI mutation, osascript/AppleScript/System Events, cliclick, coordinate automation, or ad-hoc accessibility scripts to synthesize clicks or keystrokes.",
   "- For macOS screen observation, use floral_peekaboo/image or floral_peekaboo/see. Use floral_vision only for pixel semantics or OCR. After a terminal/native action that should change visible state, verify with see when the command result alone is insufficient.",
   "- When a step has no reliable terminal/native CLI route and requires GUI interaction, floral_peekaboo/see is mandatory immediately before the action. Select the target only from the fresh Snapshot ID and opaque element ID returned by see. Do not infer an actionable target from visual coordinates, arrow direction, OCR, or a screenshot.",
-  "- For GUI mutation, use only FLORAL-exposed controlled GUI tools. If current availability matters, consult floral_system; if the required governed route is unavailable, state the limitation instead of bypassing FLORAL.",
+  "- For GUI mutation, use only FLORAL-exposed controlled GUI tools such as floral_peekaboo/click when it is currently available. Availability is runtime state: consult floral_system when it matters; if the required governed route is unavailable, state the limitation instead of bypassing FLORAL.",
   "- If the requested UI is already in the desired state, do not mutate it and do not request approval.",
   "- After every successful click, call floral_peekaboo/see again before evaluating state or doing another GUI action.",
   "- A local filesystem path or Markdown link/image is not a delivered chat attachment.",
@@ -256,13 +257,14 @@ export const FLORAL_AGENT_DEVELOPER_INSTRUCTIONS = [
 ].join("\n");
 
 const FLORAL_SYSTEM_DEVELOPER_INSTRUCTIONS = [
-  "FLORAL runtime self-awareness policy:",
+  "FLORAL runtime self-awareness and diagnostics policy:",
   "- Developer instructions are routing and safety invariants, not evidence of current system state. When a claim depends on current FLORAL availability, ownership, health, permissions, or management authority, query floral_system instead of relying on memorized architecture prose.",
   "- Use floral_system/current_context before claiming the current FLORAL control mode, requested sandbox, effective Codex permission selector, approval policy, or reviewer. turn.* facts under floral.execution are the FLORAL authority for what this host actually sent to Codex for the current turn.",
   "- Configured defaults are intent, not the effective turn selector. Generic Codex/model environment or sandbox prose is not a FLORAL evidence source and must not be presented as a competing FLORAL authority. If such context disagrees with floral.execution, report the FLORAL evidence and do not invent a reconciliation.",
-  "- system_summary, component_status, current_context, and capabilities are read-only views of a snapshot captured before the current turn. Treat unknown and conflict as valid states; never use shell, config files, or guesswork to upgrade them into certainty.",
+  "- system_summary, component_status, current_context, capabilities, and diagnose are read-only views or deterministic derivations of a snapshot captured before the current turn. Treat unknown and conflict as valid states; never use shell, config files, or guesswork to upgrade them into certainty.",
+  "- Use floral_system/diagnose when the user asks why a FLORAL component is unavailable, degraded, conflicting, or not exposing an expected capability. Diagnostic findings are derived hypotheses over evidence, not new authoritative facts; preserve their confidence, failure-domain ordering, limitations, and read-only check sequence.",
   "- The per-turn snapshot is frozen. A mutation performed later in the same turn does not refresh floral_system; use a fresh next turn or an owner-facing status command for post-mutation verification.",
-  "- floral_system/capabilities describes declared ownership, management disposition, approval requirements, and verification contracts only. It grants no authorization and performs no maintenance action. Self-maintenance remains disabled in Phase 8B.",
+  "- floral_system/capabilities describes declared ownership, management disposition, approval requirements, and verification contracts only. It grants no authorization and performs no maintenance action. Self-maintenance remains disabled in Phase 8C; diagnostics may propose read-only checks but must not execute repair actions.",
 ].join("\n");
 
 const FLORAL_DELIVERY_DYNAMIC_TOOLS = [
@@ -550,7 +552,7 @@ const FLORAL_SYSTEM_DYNAMIC_TOOLS = [
   {
     type: "namespace",
     name: "floral_system",
-    description: "Read-only FLORAL system awareness. Facts come from a bounded per-turn snapshot with explicit authority, evidence, unknown, and conflict semantics. This namespace never performs maintenance or grants authorization.",
+    description: "Read-only FLORAL system awareness and deterministic self-diagnostics. Facts come from a bounded per-turn snapshot with explicit authority, evidence, unknown, and conflict semantics. Diagnostics are derived hypotheses only. This namespace never performs maintenance or grants authorization.",
     tools: [
       {
         type: "function",
@@ -588,6 +590,23 @@ const FLORAL_SYSTEM_DYNAMIC_TOOLS = [
             },
           },
           required: ["component_id"],
+          additionalProperties: false,
+        },
+        deferLoading: false,
+      },
+      {
+        type: "function",
+        name: "diagnose",
+        description: "Derive bounded evidence-backed diagnostic findings, likely failure domains, limitations, and an ordered read-only check plan for the whole system or one component. This never executes maintenance or grants authorization.",
+        inputSchema: {
+          type: "object",
+          properties: {
+            component_id: {
+              type: "string",
+              pattern: "^[a-z][a-z0-9]*(?:[._-][a-z0-9]+)*$",
+              maxLength: 96,
+            },
+          },
           additionalProperties: false,
         },
         deferLoading: false,
@@ -2213,6 +2232,28 @@ export class CodexAppServerRuntime implements AgentRuntime {
           dynamicToolResponse(
             true,
             boundedDynamicToolText(formatSystemComponentStatus(model, componentId)),
+          ),
+        );
+        return;
+      }
+
+      if (tool === "diagnose") {
+        const rawComponentId = argumentsValue.component_id;
+        const componentId = rawComponentId === undefined
+          ? undefined
+          : readString(rawComponentId);
+        if (rawComponentId !== undefined && (!componentId || !registry.has(componentId))) {
+          this.#respondSafely(
+            request.id,
+            dynamicToolResponse(false, "system_awareness=denied\nreason=unknown-component"),
+          );
+          return;
+        }
+        this.#respondSafely(
+          request.id,
+          dynamicToolResponse(
+            true,
+            boundedDynamicToolText(formatSystemDiagnostics(model, componentId)),
           ),
         );
         return;

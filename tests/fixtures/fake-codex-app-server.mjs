@@ -75,6 +75,7 @@ function hasFloralSystemTools(params) {
     "capabilities",
     "component_status",
     "current_context",
+    "diagnose",
     "system_summary",
   ]);
 }
@@ -461,15 +462,15 @@ lines.on("line", (line) => {
       send({ id: message.id, error: { code: -32602, message: "missing FLORAL developer instructions" } });
       return;
     }
-    if ((scenario === "system-awareness" || scenario === "runtime-self-awareness") && !hasFloralSystemTools(message.params)) {
+    if ((scenario === "system-awareness" || scenario === "runtime-self-awareness" || scenario === "self-diagnostics") && !hasFloralSystemTools(message.params)) {
       send({ id: message.id, error: { code: -32602, message: "missing FLORAL system dynamic tools" } });
       return;
     }
     if (
-      (scenario === "system-awareness" || scenario === "runtime-self-awareness")
+      (scenario === "system-awareness" || scenario === "runtime-self-awareness" || scenario === "self-diagnostics")
       && (typeof message.params?.developerInstructions !== "string"
-        || !message.params.developerInstructions.includes("FLORAL runtime self-awareness policy")
-        || !message.params.developerInstructions.includes("Self-maintenance remains disabled in Phase 8B"))
+        || !message.params.developerInstructions.includes("FLORAL runtime self-awareness and diagnostics policy")
+        || !message.params.developerInstructions.includes("Self-maintenance remains disabled in Phase 8C"))
     ) {
       send({ id: message.id, error: { code: -32602, message: "missing FLORAL system awareness policy" } });
       return;
@@ -918,6 +919,22 @@ lines.on("line", (line) => {
             namespace: "floral_system",
             tool: "current_context",
             arguments: {},
+          },
+        });
+        return;
+      }
+
+      if (scenario === "self-diagnostics") {
+        send({
+          id: "dynamic_1",
+          method: "item/tool/call",
+          params: {
+            threadId: activeThreadId,
+            turnId: activeTurnId,
+            callId: "call_diagnose_1",
+            namespace: "floral_system",
+            tool: "diagnose",
+            arguments: { component_id: "floral.service" },
           },
         });
         return;
@@ -1426,6 +1443,17 @@ lines.on("line", (line) => {
       && text.includes("precedence=turn-effective-selector-over-gateway-request-over-configured-default")
     ) {
       sendSuccess(activeThreadId, activeTurnId, "runtime self awareness complete");
+      return;
+    }
+    if (
+      scenario === "self-diagnostics"
+      && success === true
+      && text.includes("FLORAL Self-Diagnostics")
+      && text.includes("scope=floral.service")
+      && text.includes("execution_performed=false")
+      && text.includes("maintenance_enabled=false")
+    ) {
+      sendSuccess(activeThreadId, activeTurnId, "self diagnostics complete");
       return;
     }
     if (

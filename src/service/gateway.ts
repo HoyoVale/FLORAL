@@ -37,6 +37,7 @@ import { QqApprovalBroker } from "../policy/qq-approval-broker.js";
 import type { LocalConfirmationBroker } from "../policy/local-confirmation-broker.js";
 import {
   formatSystemComponentStatus,
+  formatSystemDiagnostics,
   formatSystemSummary,
   type SystemAwarenessReadProvider,
 } from "../system-awareness/index.js";
@@ -602,6 +603,77 @@ export class GatewayService {
             command.componentId
               ? `系统组件不存在或状态读取失败：${command.componentId}`
               : "FLORAL System Awareness 状态读取失败，请检查服务日志。",
+          );
+        }
+        return;
+      }
+
+      case "diagnose": {
+        const provider = this.options.systemAwareness;
+        if (!provider) {
+          await this.store.appendAudit({
+            userId: resolved.userId,
+            conversationId: resolved.conversationId,
+            eventType: "command.diagnose_unavailable",
+          });
+          await this.#send(
+            message.identity.conversationId,
+            "FLORAL Self-Diagnostics 只读接口当前不可用。",
+          );
+          return;
+        }
+        const projectContext = await this.#resolveSelectedProjectContext(
+          resolved.conversationId,
+        );
+        const cwd = projectContext?.project.path ?? this.options.cwd;
+        const threadId = projectContext?.threadId
+          ?? (!this.options.workspace
+            ? await this.store.getActiveThread(resolved.conversationId)
+            : undefined);
+        try {
+          const controlMode = this.#controlMode(resolved.conversationId);
+          const executionPolicy = executionPolicyForMode(controlMode);
+          const model = await provider.read({
+            cwd,
+            ...(threadId ? { threadId } : {}),
+            execution: {
+              gateway: {
+                controlMode,
+                sandboxMode: executionPolicy.sandboxMode,
+                approvalPolicy: executionPolicy.approvalPolicy,
+                approvalsReviewer: executionPolicy.approvalsReviewer,
+                approvalRoute: executionPolicy.approvalRoute,
+              },
+            },
+          });
+          const text = formatSystemDiagnostics(model, command.componentId);
+          await this.store.appendAudit({
+            userId: resolved.userId,
+            conversationId: resolved.conversationId,
+            eventType: "command.diagnose",
+            payload: {
+              componentId: command.componentId ?? null,
+              observerFailureCount: model.snapshot.observers.filter(
+                (observer) => observer.status === "failed",
+              ).length,
+            },
+          });
+          await this.#send(message.identity.conversationId, text);
+        } catch (error) {
+          await this.store.appendAudit({
+            userId: resolved.userId,
+            conversationId: resolved.conversationId,
+            eventType: "command.diagnose_failed",
+            payload: {
+              componentId: command.componentId ?? null,
+              errorType: error instanceof Error ? error.name : "Error",
+            },
+          });
+          await this.#send(
+            message.identity.conversationId,
+            command.componentId
+              ? `系统组件不存在或诊断失败：${command.componentId}`
+              : "FLORAL Self-Diagnostics 读取失败，请检查服务日志。",
           );
         }
         return;
