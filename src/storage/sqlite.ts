@@ -4,6 +4,7 @@ import { dirname } from "node:path";
 import type {
   GatewayStore,
   WorkspaceStateStore,
+  ConversationControlStateStore,
 } from "../core/contracts.js";
 import type {
   AuditEventInput,
@@ -12,19 +13,22 @@ import type {
   ResolvedGatewayIdentity,
   TransportKind,
 } from "../core/types.js";
+import { DurableStateStore } from "./durable-state.js";
+import { DurableOutboxStore } from "./durable-outbox.js";
+import { DurableRunQueueStore } from "./durable-run-queue.js";
 
-interface SqliteRunResult {
+export interface SqliteRunResult {
   changes: number;
   lastInsertRowid: number | bigint;
 }
 
-interface SqliteStatement {
+export interface SqliteStatement {
   get(...params: unknown[]): unknown;
   all(...params: unknown[]): unknown[];
   run(...params: unknown[]): SqliteRunResult;
 }
 
-interface SqliteDatabase {
+export interface SqliteDatabase {
   exec(sql: string): unknown;
   prepare(sql: string): SqliteStatement;
   transaction<T>(fn: () => T): () => T;
@@ -40,12 +44,22 @@ export interface GatewayStorageDiagnostics {
   messageReceipts: number;
   auditEvents: number;
   owners: number;
+  durableTransactions: number;
+  durableEvents: number;
+  durableRecoverable: number;
 }
 
-export class SqliteGatewayStore implements GatewayStore, WorkspaceStateStore {
+export class SqliteGatewayStore implements GatewayStore, WorkspaceStateStore, ConversationControlStateStore {
   #closed = false;
+  readonly durability: DurableStateStore;
+  readonly outbox: DurableOutboxStore;
+  readonly runQueue: DurableRunQueueStore;
 
-  private constructor(private readonly db: SqliteDatabase) {}
+  private constructor(private readonly db: SqliteDatabase) {
+    this.durability = new DurableStateStore(db);
+    this.outbox = new DurableOutboxStore(db, this.durability);
+    this.runQueue = new DurableRunQueueStore(db, this.durability);
+  }
 
   static async open(path: string): Promise<SqliteGatewayStore> {
     const db = await openApplicationDatabase(path);
@@ -266,6 +280,37 @@ export class SqliteGatewayStore implements GatewayStore, WorkspaceStateStore {
     }
   }
 
+  async getConversationControlMode(
+    conversationId: string,
+  ): Promise<"ask" | "auto" | "full" | undefined> {
+    this.#assertOpen();
+    const row = asRecord(this.db.prepare(`
+      SELECT control_mode FROM conversation_control_state
+      WHERE conversation_id = ? LIMIT 1
+    `).get(conversationId));
+    const mode = readOptionalString(row?.control_mode);
+    return mode === "ask" || mode === "auto" || mode === "full" ? mode : undefined;
+  }
+
+  async setConversationControlMode(
+    conversationId: string,
+    mode: "ask" | "auto" | "full",
+  ): Promise<void> {
+    this.#assertOpen();
+    if (mode === "ask") {
+      this.db.prepare("DELETE FROM conversation_control_state WHERE conversation_id = ?")
+        .run(conversationId);
+      return;
+    }
+    this.db.prepare(`
+      INSERT INTO conversation_control_state (conversation_id, control_mode, updated_at)
+      VALUES (?, ?, ?)
+      ON CONFLICT(conversation_id) DO UPDATE SET
+        control_mode = excluded.control_mode,
+        updated_at = excluded.updated_at
+    `).run(conversationId, mode, Date.now());
+  }
+
   async getSelectedProject(conversationId: string): Promise<string | undefined> {
     this.#assertOpen();
     const row = asRecord(this.db.prepare(`
@@ -390,6 +435,7 @@ export class SqliteGatewayStore implements GatewayStore, WorkspaceStateStore {
 
   diagnostics(): GatewayStorageDiagnostics {
     this.#assertOpen();
+    const durable = this.durability.diagnostics();
     return {
       schemaVersion: readPragmaUserVersion(this.db),
       users: countRows(this.db, "users"),
@@ -399,6 +445,9 @@ export class SqliteGatewayStore implements GatewayStore, WorkspaceStateStore {
       messageReceipts: countRows(this.db, "message_receipts"),
       auditEvents: countRows(this.db, "audit_events"),
       owners: countRows(this.db, "owner_bindings"),
+      durableTransactions: durable.transactions,
+      durableEvents: durable.events,
+      durableRecoverable: durable.recoverable,
     };
   }
 
@@ -512,6 +561,13 @@ function migrateGatewaySchema(db: SqliteDatabase): void {
       PRIMARY KEY(conversation_id, project_name),
       FOREIGN KEY(conversation_id) REFERENCES conversations(id) ON DELETE CASCADE
     );
+
+    CREATE TABLE IF NOT EXISTS conversation_control_state (
+      conversation_id TEXT PRIMARY KEY,
+      control_mode TEXT NOT NULL CHECK(control_mode IN ('auto', 'full')),
+      updated_at INTEGER NOT NULL,
+      FOREIGN KEY(conversation_id) REFERENCES conversations(id) ON DELETE CASCADE
+    );
   `);
 
   db.exec(`
@@ -533,7 +589,7 @@ function migrateGatewaySchema(db: SqliteDatabase): void {
     CREATE INDEX IF NOT EXISTS audit_events_user_created_idx
       ON audit_events(user_id, created_at);
 
-    PRAGMA user_version = 4;
+    PRAGMA user_version = 6;
   `);
 }
 

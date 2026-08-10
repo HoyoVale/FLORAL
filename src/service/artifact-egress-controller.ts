@@ -16,6 +16,7 @@ import type {
   ArtifactEgressPolicy,
   ArtifactEgressRunBudget,
 } from "../policy/artifact-egress-policy.js";
+import type { DeliveryOutboxCoordinator } from "./delivery-outbox-coordinator.js";
 
 interface ArtifactCatalogEntry {
   artifact: AgentArtifact;
@@ -32,6 +33,7 @@ export class ArtifactEgressController {
     private readonly transport: ChatTransport,
     private readonly store: GatewayStore,
     private readonly policy?: ArtifactEgressPolicy | undefined,
+    private readonly deliveryOutbox?: DeliveryOutboxCoordinator | undefined,
   ) {}
 
   clear(): void {
@@ -184,10 +186,22 @@ export class ArtifactEgressController {
       return { status: "denied", artifactId: artifact.id, reason: decision.reason };
     }
     try {
-      await mediaTransport.sendMedia({
+      const message = {
         conversationId: deliveryConversationId,
         ...decision.media,
-      });
+      };
+      if (this.deliveryOutbox) {
+        const delivery = await this.deliveryOutbox.sendMedia({
+          message,
+          idempotencyKey: `artifact:${resolved.conversationId}:${artifact.id}`,
+          correlationId: artifact.id,
+        });
+        if (delivery.transaction.status !== "completed") {
+          throw new Error(`Durable media delivery not acknowledged: ${delivery.transaction.status}`);
+        }
+      } else {
+        await mediaTransport.sendMedia(message);
+      }
       await this.store.appendAudit({
         userId: resolved.userId,
         conversationId: resolved.conversationId,

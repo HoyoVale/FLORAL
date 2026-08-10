@@ -40,14 +40,14 @@ function createRuntime(
     externalMcpCatalog?: () => Promise<string>;
     manageExternalMcp?: (request: {
       action: "install" | "enable" | "disable" | "remove";
-      id: "github-readonly" | "chrome-devtools";
+      id: "github-readonly" | "github-owner" | "chrome-devtools";
     }) => Promise<{
       changed: boolean;
       message: string;
       registry: {
         version: 1;
         packages: Array<{
-          id: "github-readonly" | "chrome-devtools";
+          id: "github-readonly" | "github-owner" | "chrome-devtools";
           enabled: boolean;
           installedAt: string;
           updatedAt: string;

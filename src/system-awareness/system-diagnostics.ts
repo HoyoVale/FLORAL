@@ -197,6 +197,48 @@ export function formatSystemDiagnostics(
   return boundedText(lines.join("\n"), MAX_DIAGNOSTIC_LENGTH);
 }
 
+export function formatSystemDiagnosticsSummary(
+  model: SystemReadModel,
+  componentId?: string | undefined,
+): string {
+  const report = buildSystemDiagnosticReport(model, componentId);
+  const errors = report.findings.filter((finding) => finding.severity === "error").length;
+  const warnings = report.findings.filter((finding) => finding.severity === "warning").length;
+  const lines = [
+    "FLORAL 只读诊断",
+    `范围：${report.scope === "all" ? "全部组件" : report.scope}`,
+    `结论：${diagnosticStatusLabel(report.overallStatus)}`,
+    `发现：${String(errors)} 个错误，${String(warnings)} 个警告`,
+    `受控维护接口：${report.maintenanceEnabled ? "可用" : "不可用"}`,
+  ];
+
+  if (report.findings.length === 0) {
+    lines.push("当前证据没有发现需要处理的问题。");
+  } else {
+    lines.push("", "优先项：");
+    for (const finding of report.findings.slice(0, 5)) {
+      lines.push(`- [${finding.severity}] ${finding.componentId ?? finding.subjectId ?? "system"}：${finding.summary}`);
+      const check = finding.checks[0];
+      if (check) lines.push(`  下一步（只读）：${check.description}`);
+    }
+    if (report.findings.length > 5) {
+      lines.push(`- 另有 ${String(report.findings.length - 5)} 项未展开。`);
+    }
+  }
+
+  lines.push("", "本命令不会执行修复。使用 /diagnose --debug 查看完整证据。");
+  return boundedText(lines.join("\n"), MAX_DIAGNOSTIC_LENGTH);
+}
+
+function diagnosticStatusLabel(
+  status: SystemDiagnosticReport["overallStatus"],
+): string {
+  if (status === "healthy") return "健康";
+  if (status === "degraded") return "降级";
+  if (status === "unavailable") return "不可用";
+  return "证据冲突";
+}
+
 function appendObserverFailures(
   model: SystemReadModel,
   findings: SystemDiagnosticFinding[],

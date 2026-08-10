@@ -12,6 +12,7 @@ import {
   type ConversationActivityState,
   type GatewayStore,
   supportsInboundAttachmentMaterializer,
+  supportsConversationControlState,
 } from "../core/contracts.js";
 import type {
   AgentApprovalDecision,
@@ -34,6 +35,7 @@ import { isExplicitOwnerServiceRestartRequest, type MaintenanceAutonomyMode } fr
 import {
   formatSystemComponentStatus,
   formatSystemDiagnostics,
+  formatSystemDiagnosticsSummary,
   formatSystemSummary,
   type SystemAwarenessReadProvider,
 } from "../system-awareness/index.js";
@@ -63,6 +65,11 @@ import {
   recordProjectMemory,
 } from "../workspace/project-context.js";
 import { ArtifactEgressController } from "./artifact-egress-controller.js";
+import { assertDurableAttachmentsAvailable } from "./durable-attachment-spool.js";
+import type { DeliveryOutboxCoordinator } from "./delivery-outbox-coordinator.js";
+import type { DurableRunCoordinator } from "./durable-run-coordinator.js";
+import type { DurableAgentRunRecord } from "../storage/durable-run-queue.js";
+import type { StartupRecoveryCoordinator } from "./startup-recovery-coordinator.js";
 import {
   agentFailureUserMessage,
   approvalCommandReply,
@@ -108,6 +115,9 @@ export interface GatewayOptions {
   systemMaintenance?: {
     controller: SystemMaintenanceController;
   } | undefined;
+  deliveryOutbox?: DeliveryOutboxCoordinator | undefined;
+  durableRuns?: DurableRunCoordinator | undefined;
+  startupRecovery?: StartupRecoveryCoordinator | undefined;
 }
 
 interface ChatListCache {
@@ -149,9 +159,11 @@ export class GatewayService {
   readonly #artifactEgress: ArtifactEgressController;
   readonly #chatListCaches = new Map<string, ChatListCache>();
   readonly #controlModes = new Map<string, AgentControlMode>();
+  readonly #loadedControlModes = new Set<string>();
   readonly #queuedAgentRuns = new Map<string, QueuedAgentRun[]>();
   readonly #startingAgentRuns = new Set<string>();
   readonly #cancelledStartingRuns = new Set<string>();
+  readonly #inflightMessageHandlers = new Set<Promise<void>>();
   readonly #pairingLimiter = new PairingAttemptLimiter();
   readonly #approvalBroker: QqApprovalBroker | undefined;
   #started = false;
@@ -167,6 +179,7 @@ export class GatewayService {
       transport,
       store,
       options.artifactEgress?.policy,
+      options.deliveryOutbox,
     );
     const authorization = options.authorization;
     const interactiveTransport = supportsInteractiveApproval(this.transport)
@@ -224,10 +237,16 @@ export class GatewayService {
         }
       }
       await this.agent.start();
-      await this.transport.start((message) => this.#handle(message));
+      await this.transport.start((message) => this.#trackMessage(message));
+      this.options.startupRecovery?.recover();
+      await this.options.deliveryOutbox?.start();
       this.#started = true;
+      for (const conversationId of this.options.durableRuns?.recover() ?? []) {
+        this.#scheduleNextQueuedAgentRun(conversationId);
+      }
     } catch (error) {
       await Promise.allSettled([
+        this.options.deliveryOutbox?.stop(),
         this.transport.stop(),
         this.agent.stop(),
         this.store.close(),
@@ -240,28 +259,43 @@ export class GatewayService {
     if (this.#stopped) return;
     this.#stopped = true;
     this.#approvalBroker?.cancelAll();
-    await Promise.allSettled([this.transport.stop(), this.agent.stop()]);
+    await this.agent.stop().catch(() => undefined);
+    const handlersDrained = await waitForInflightHandlers(this.#inflightMessageHandlers, 30_000);
+    await this.options.deliveryOutbox?.stop();
+    await this.transport.stop().catch(() => undefined);
     this.#activeRuns.clear();
     this.#artifactEgress.clear();
     this.#chatListCaches.clear();
     this.#controlModes.clear();
+    this.#loadedControlModes.clear();
     this.#queuedAgentRuns.clear();
     this.#startingAgentRuns.clear();
     this.#cancelledStartingRuns.clear();
-    await this.store.close();
+    if (handlersDrained) await this.store.close();
+  }
+
+  async #trackMessage(message: IncomingMessage): Promise<void> {
+    if (this.#stopped) return;
+    const operation = this.#handle(message);
+    this.#inflightMessageHandlers.add(operation);
+    try {
+      await operation;
+    } finally {
+      this.#inflightMessageHandlers.delete(operation);
+    }
   }
 
   async #handle(message: IncomingMessage): Promise<void> {
     if (!message.text.trim() && !(message.attachments?.length)) return;
 
-    const accepted = await this.store.acceptMessage(
-      message.identity,
-      message.id,
-      message.receivedAt,
-    );
-    if (!accepted) return;
+    const command = parseGatewayCommand(message.text);
+    const durableAgentMessage = !command && Boolean(this.options.durableRuns);
+    if (!durableAgentMessage
+      && !await this.store.acceptMessage(message.identity, message.id, message.receivedAt)) return;
 
     if (message.text.length > 32_000) {
+      if (durableAgentMessage
+        && !await this.store.acceptMessage(message.identity, message.id, message.receivedAt)) return;
       await this.store.appendAudit({
         eventType: "input.rejected_too_large",
         payload: {
@@ -277,7 +311,6 @@ export class GatewayService {
     }
 
     let resolved = await this.store.resolveIdentity(message.identity);
-    const command = parseGatewayCommand(message.text);
 
     if (!resolved && message.identity.transport === "mock" && this.options.trustMockOwner) {
       resolved = await this.store.claimOwner(message.identity);
@@ -290,6 +323,8 @@ export class GatewayService {
     }
 
     if (!resolved) {
+      if (durableAgentMessage
+        && !await this.store.acceptMessage(message.identity, message.id, message.receivedAt)) return;
       if (command?.type === "pair") {
         await this.#handlePairing(message, command);
       } else {
@@ -307,6 +342,8 @@ export class GatewayService {
       }
       return;
     }
+
+    await this.#loadPersistedControlMode(resolved);
 
     if (resolved.role === "owner" && this.options.systemMaintenance) {
       await this.options.systemMaintenance.controller
@@ -451,7 +488,7 @@ export class GatewayService {
             workspaceEnabled: Boolean(this.options.workspace),
             ...(projectContext ? { selectedProject: projectContext.project.name } : {}),
             pendingApprovals: this.#approvalBroker?.pendingCount(resolved.conversationId) ?? 0,
-            queuedRuns: this.#queuedAgentRuns.get(resolved.conversationId)?.length ?? 0,
+            queuedRuns: this.#queuedRunCount(resolved.conversationId),
             runtimeLines,
           }, command.debug),
         );
@@ -699,13 +736,16 @@ export class GatewayService {
               },
             },
           });
-          const text = formatSystemDiagnostics(model, command.componentId);
+          const text = command.debug
+            ? formatSystemDiagnostics(model, command.componentId)
+            : formatSystemDiagnosticsSummary(model, command.componentId);
           await this.store.appendAudit({
             userId: resolved.userId,
             conversationId: resolved.conversationId,
             eventType: "command.diagnose",
             payload: {
               componentId: command.componentId ?? null,
+              debug: command.debug,
               observerFailureCount: model.snapshot.observers.filter(
                 (observer) => observer.status === "failed",
               ).length,
@@ -1673,6 +1713,12 @@ export class GatewayService {
         } else {
           this.#controlModes.set(resolved.conversationId, requestedMode);
         }
+        if (supportsConversationControlState(this.store)) {
+          await this.store.setConversationControlMode(
+            resolved.conversationId,
+            requestedMode,
+          );
+        }
         await this.store.appendAudit({
           userId: resolved.userId,
           conversationId: resolved.conversationId,
@@ -1729,7 +1775,7 @@ export class GatewayService {
       case "stop": {
         const active = this.#activeRuns.get(resolved.conversationId);
         const starting = this.#startingAgentRuns.has(resolved.conversationId);
-        const queuedCount = this.#queuedAgentRuns.get(resolved.conversationId)?.length ?? 0;
+        const queuedCount = this.#queuedRunCount(resolved.conversationId);
         if (!active && !starting && queuedCount === 0) {
           await this.#send(
             message.identity.conversationId,
@@ -1739,6 +1785,7 @@ export class GatewayService {
         }
 
         this.#queuedAgentRuns.delete(resolved.conversationId);
+        this.options.durableRuns?.cancelPending(resolved.conversationId);
         if (starting) this.#cancelledStartingRuns.add(resolved.conversationId);
         this.#approvalBroker?.cancelConversation(resolved.conversationId);
 
@@ -1779,10 +1826,62 @@ export class GatewayService {
   async #runAgent(
     message: IncomingMessage,
     resolved: ResolvedGatewayIdentity,
+    durableRun?: DurableAgentRunRecord,
   ): Promise<void> {
+    const durableRuns = this.options.durableRuns;
+    if (durableRuns && !durableRun) {
+      const durableMessage = await this.#materializeDurableRunMessage(message, resolved);
+      if (!durableMessage) return;
+      const busy = this.#activeRuns.has(resolved.conversationId)
+        || this.#startingAgentRuns.has(resolved.conversationId)
+        || durableRuns.pendingCount(resolved.conversationId) > 0;
+      const queuedCount = durableRuns.pendingCount(resolved.conversationId);
+      if (busy && queuedCount >= MAX_QUEUED_AGENT_RUNS_PER_CONVERSATION) {
+        if (!await this.store.acceptMessage(message.identity, message.id, message.receivedAt)) return;
+        await this.#send(
+          message.identity.conversationId,
+          `上一任务仍在运行，待处理队列已满（${String(MAX_QUEUED_AGENT_RUNS_PER_CONVERSATION)} 条）。请等待、使用 /stop 清空，或稍后重发。`,
+        );
+        return;
+      }
+      const queued = durableRuns.enqueue(durableMessage, resolved);
+      if (!await this.store.acceptMessage(message.identity, message.id, message.receivedAt)) {
+        return;
+      }
+      if (["executing", "completed", "failed", "cancelled"].includes(queued.transaction.status)) {
+        return;
+      }
+      if (busy) {
+        const depth = durableRuns.pendingCount(resolved.conversationId);
+        await this.store.appendAudit({
+          userId: resolved.userId,
+          conversationId: resolved.conversationId,
+          eventType: "agent.run_queued",
+          payload: { queueDepth: depth, durable: true, transactionId: queued.id },
+        }).catch(() => undefined);
+        await this.#send(
+          message.identity.conversationId,
+          `上一任务仍在运行；这条消息已持久化排队（${String(depth)}/${String(MAX_QUEUED_AGENT_RUNS_PER_CONVERSATION)}），服务重启后也会继续。使用 /stop 可停止当前任务并清空队列。`,
+        );
+        return;
+      }
+      const claimed = durableRuns.claim(queued.id);
+      if (!claimed) {
+        this.#scheduleNextQueuedAgentRun(resolved.conversationId);
+        return;
+      }
+      await durableRuns.execute(
+        claimed,
+        () => this.#runAgent(claimed.message, claimed.resolved, claimed),
+      );
+      return;
+    }
+
     if (
-      this.#activeRuns.has(resolved.conversationId)
+      !durableRun
+      && (this.#activeRuns.has(resolved.conversationId)
       || this.#startingAgentRuns.has(resolved.conversationId)
+      )
     ) {
       const queue = this.#queuedAgentRuns.get(resolved.conversationId) ?? [];
       if (queue.length >= MAX_QUEUED_AGENT_RUNS_PER_CONVERSATION) {
@@ -1842,14 +1941,20 @@ export class GatewayService {
 
     const runCwd = projectContext?.project.path ?? this.options.cwd;
     let agentMessage = message;
-    if (message.attachments?.length && supportsInboundAttachmentMaterializer(this.transport)) {
+    if (message.attachments?.length) {
       try {
-        agentMessage = await this.transport.materializeInboundAttachments(
-          message,
-          projectContext
-            ? { projectNamespace: projectRuntimeNamespace(projectContext.project.path) }
-            : undefined,
-        );
+        if (message.attachments.some((attachment) => !attachment.localPath)) {
+          if (!supportsInboundAttachmentMaterializer(this.transport)) {
+            throw new Error("Inbound attachment materializer is unavailable");
+          }
+          agentMessage = await this.transport.materializeInboundAttachments(
+            message,
+            projectContext
+              ? { projectNamespace: projectRuntimeNamespace(projectContext.project.path) }
+              : undefined,
+          );
+        }
+        await assertDurableAttachmentsAvailable(agentMessage);
       } catch (error) {
         await this.store.appendAudit({
           userId: resolved.userId,
@@ -1864,7 +1969,7 @@ export class GatewayService {
         this.#startingAgentRuns.delete(resolved.conversationId);
         this.#cancelledStartingRuns.delete(resolved.conversationId);
         this.#scheduleNextQueuedAgentRun(resolved.conversationId);
-        await this.#send(message.identity.conversationId, "附件下载失败，请重新发送该图片或文件。");
+        await this.#send(message.identity.conversationId, "排队附件已丢失、变化或下载失败，请重新发送该图片或文件。");
         return;
       }
     }
@@ -2055,6 +2160,7 @@ export class GatewayService {
         result.finalText,
         resolved,
         "agent_reply",
+        `agent-reply:${message.identity.transport}:${message.id}`,
       );
       if (active.maintenanceTransactions.length > 0 && this.options.systemMaintenance) {
         if (!replyDelivered) {
@@ -2136,6 +2242,7 @@ export class GatewayService {
           : agentFailureUserMessage(error),
         resolved,
         "agent_failure",
+        `agent-failure:${message.identity.transport}:${message.id}`,
       );
     } finally {
       this.#cancelVisibleActivityFallback(active);
@@ -2153,6 +2260,34 @@ export class GatewayService {
       || this.#activeRuns.has(conversationId)
       || this.#startingAgentRuns.has(conversationId)
     ) return;
+    const durableRuns = this.options.durableRuns;
+    if (durableRuns) {
+      const next = durableRuns.claimNext(conversationId);
+      if (!next) return;
+      // Reserve the event-loop gap between durable claim and turn startup.
+      this.#startingAgentRuns.add(conversationId);
+      setImmediate(() => {
+        if (this.#stopped) return;
+        void durableRuns.execute(
+          next,
+          () => this.#runAgent(next.message, next.resolved, next),
+        ).catch(async (error) => {
+          this.#startingAgentRuns.delete(conversationId);
+          process.stderr.write(
+            `agent.durable_run_failed=${safeLogToken(error instanceof Error ? error.name : "Error")}\n`,
+          );
+          await this.#deliverWithAudit(
+            next.message.identity.conversationId,
+            agentFailureUserMessage(error),
+            next.resolved,
+            "agent_failure",
+            `agent-failure:${next.message.identity.transport}:${next.message.id}`,
+          ).catch(() => undefined);
+          this.#scheduleNextQueuedAgentRun(conversationId);
+        });
+      });
+      return;
+    }
     const queue = this.#queuedAgentRuns.get(conversationId);
     const next = queue?.shift();
     if (!next) {
@@ -2176,6 +2311,50 @@ export class GatewayService {
         ).catch(() => undefined);
       });
     });
+  }
+
+  async #materializeDurableRunMessage(
+    message: IncomingMessage,
+    resolved: ResolvedGatewayIdentity,
+  ): Promise<IncomingMessage | undefined> {
+    const attachments = message.attachments ?? [];
+    if (attachments.length === 0 || attachments.every((attachment) => attachment.localPath)) {
+      return message;
+    }
+    if (!supportsInboundAttachmentMaterializer(this.transport)) {
+      await this.store.appendAudit({
+        userId: resolved.userId,
+        conversationId: resolved.conversationId,
+        eventType: "input.attachment_spool_unavailable",
+        payload: { transport: message.identity.transport },
+      }).catch(() => undefined);
+      await this.#send(message.identity.conversationId, "附件无法写入持久化私有队列，请重新发送。");
+      return undefined;
+    }
+    try {
+      const project = this.options.workspace
+        ? await this.#resolveSelectedProjectContext(resolved.conversationId)
+        : undefined;
+      return await this.transport.materializeInboundAttachments(
+        message,
+        project
+          ? { projectNamespace: projectRuntimeNamespace(project.project.path) }
+          : undefined,
+      );
+    } catch (error) {
+      await this.store.appendAudit({
+        userId: resolved.userId,
+        conversationId: resolved.conversationId,
+        eventType: "input.attachment_spool_failed",
+        payload: {
+          transport: message.identity.transport,
+          attachmentCount: attachments.length,
+          errorType: error instanceof Error ? error.name : "Error",
+        },
+      }).catch(() => undefined);
+      await this.#send(message.identity.conversationId, "附件持久化失败，请重新发送该图片或文件。");
+      return undefined;
+    }
   }
 
   async #requestRemoteApproval(
@@ -2379,9 +2558,10 @@ export class GatewayService {
     text: string,
     resolved: ResolvedGatewayIdentity,
     kind: "agent_reply" | "agent_failure",
+    idempotencyKey?: string,
   ): Promise<boolean> {
     try {
-      await this.#send(conversationId, text);
+      await this.#send(conversationId, text, idempotencyKey);
       return true;
     } catch (error) {
       await this.store.appendAudit({
@@ -2546,18 +2726,74 @@ export class GatewayService {
   #conversationBusy(conversationId: string): boolean {
     return this.#activeRuns.has(conversationId)
       || this.#startingAgentRuns.has(conversationId)
-      || (this.#queuedAgentRuns.get(conversationId)?.length ?? 0) > 0;
+      || this.#queuedRunCount(conversationId) > 0;
+  }
+
+  #queuedRunCount(conversationId: string): number {
+    return this.options.durableRuns?.pendingCount(conversationId)
+      ?? this.#queuedAgentRuns.get(conversationId)?.length
+      ?? 0;
   }
 
   #controlMode(conversationId: string): AgentControlMode {
     return this.#controlModes.get(conversationId) ?? "ask";
   }
 
+  async #loadPersistedControlMode(resolved: ResolvedGatewayIdentity): Promise<void> {
+    if (this.#loadedControlModes.has(resolved.conversationId)) return;
+    this.#loadedControlModes.add(resolved.conversationId);
+    if (!supportsConversationControlState(this.store) || resolved.role !== "owner") return;
+    const persisted = await this.store.getConversationControlMode(resolved.conversationId);
+    if (persisted === "auto") {
+      this.#controlModes.set(resolved.conversationId, "auto");
+    } else if (persisted === "full" && this.#remoteModeCeiling() === "full") {
+      this.#controlModes.set(resolved.conversationId, "full");
+    }
+  }
+
   #remoteModeCeiling(): "auto" | "full" {
     return this.options.authorization?.remoteModeCeiling ?? "auto";
   }
 
-  async #send(conversationId: string, text: string): Promise<void> {
+  async #send(
+    conversationId: string,
+    text: string,
+    idempotencyKey?: string,
+  ): Promise<void> {
+    if (this.options.deliveryOutbox) {
+      const delivery = await this.options.deliveryOutbox.sendText({
+        conversationId,
+        text,
+        ...(idempotencyKey ? { idempotencyKey } : {}),
+      });
+      if (delivery.transaction.status !== "completed") {
+        throw new Error(`Durable delivery not acknowledged: ${delivery.transaction.status}`);
+      }
+      return;
+    }
     await this.transport.send({ conversationId, text });
   }
+}
+
+async function waitForInflightHandlers(
+  handlers: ReadonlySet<Promise<void>>,
+  timeoutMs: number,
+): Promise<boolean> {
+  const active = [...handlers];
+  if (active.length === 0) return true;
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const timeout = new Promise<void>((resolve) => {
+    timer = setTimeout(resolve, timeoutMs);
+    timer.unref?.();
+  });
+  await Promise.race([
+    Promise.allSettled(active).then(() => undefined),
+    timeout,
+  ]);
+  if (timer) clearTimeout(timer);
+  if ([...handlers].length > 0) {
+    process.stderr.write(`gateway.shutdown.inflight_timeout=${String(handlers.size)}\n`);
+    return false;
+  }
+  return true;
 }

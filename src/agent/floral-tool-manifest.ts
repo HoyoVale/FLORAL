@@ -17,7 +17,7 @@ export const FLORAL_AGENT_DEVELOPER_INSTRUCTIONS = [
   "- Only call floral_extensions/apply_extension when plan_extension returns action-required and the requested exact action matches recommended_action. External MCP/Skill mutation remains one-shot software.install policy-gated. In paired-owner full mode the host may auto-approve that chat-confirmation after AuthorizationAuthority accepts the exact curated action; this does not widen the catalog or let the model bypass plan/apply/verify. If the plan says no-op, prerequisite-required, diagnose-first, unknown, or unsupported, do not mutate merely to try. Apps are upstream/user-owned: use prepare_app_install only when the plan returns user-handoff; never silently install or authenticate an App.",
   "- Extension control-plane routing overrides terminal-first application routing. After any controlled extension mutation or App install handoff, the current turn's extension/System Awareness snapshot predates the change and cannot verify adoption. End the current turn with verification pending. On a fresh next turn use floral_extensions/verify_extension; use mcp_status or system diagnostics only as supporting read-only views. Do not inspect ~/.codex, process tables, package storage, data/external-* registries, or run shell/git/npm/pnpm/codex extension commands to compensate.",
   "- Legacy manage_mcp/manage_external remain compatibility routes but do not authorize bypassing the Phase 8E plan/apply/verify contract. Extension operations not exposed by FLORAL are unsupported for this Agent turn. Never use shell, direct Codex config edits, undocumented RPCs, arbitrary package sources, or package managers as an extension-install workaround; consult floral_system/capabilities for the current management contract.",
-  "- Manage shared project memory through floral_context only. Read current context before relying on it; create a turn-bound proposal before applying an update. Applying an update is host approval-gated and writes only the selected managed .floral document with a provenance receipt. Never edit AGENTS.md, .floral files, or the provenance ledger through shell or direct file tools. Automatic compaction is deferred until FLORAL has a durable transaction journal.",
+  "- Manage shared project memory through floral_context only. Read current context before relying on it; create a turn-bound proposal before applying an update. Applying an update is host approval-gated and writes only the selected managed .floral document with a provenance receipt. Never edit AGENTS.md, .floral files, or the provenance ledger through shell or direct file tools. Use compact to reconcile provenance freshness without rewriting document bodies.",
 ].join("\n");
 
 export const FLORAL_SYSTEM_DEVELOPER_INSTRUCTIONS = [
@@ -350,7 +350,7 @@ const FLORAL_EXTENSIONS_DYNAMIC_TOOLS = [
             },
             id: {
               type: "string",
-              enum: ["github-readonly", "chrome-devtools"],
+              enum: ["github-readonly", "github-owner", "chrome-devtools"],
             },
           },
           required: ["action", "id"],
@@ -479,5 +479,3 @@ export const FLORAL_DYNAMIC_TOOLS = [
   ...FLORAL_EXTENSIONS_DYNAMIC_TOOLS,
   ...FLORAL_CONTEXT_DYNAMIC_TOOLS,
 ] as const;
-
-

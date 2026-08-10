@@ -200,6 +200,27 @@ describe("AuthorizationAuthority", () => {
     })).toMatchObject({ status: "deny", reason: "mcp-tool-not-allowlisted" });
   });
 
+  it("keeps the GitHub owner control plane owner-only", () => {
+    expect(authority("danger-full-access").evaluate({
+      role: "owner",
+      capability: "files.write",
+      source: "mcp-tool",
+      mcpServerId: "github-owner",
+      mcpToolName: "issue_write",
+    })).toEqual({
+      status: "approval-required",
+      approvalLevel: "chat-confirmation",
+      reason: "policy",
+    });
+    expect(authority("danger-full-access").evaluate({
+      role: "operator",
+      capability: "files.write",
+      source: "mcp-tool",
+      mcpServerId: "github-owner",
+      mcpToolName: "issue_write",
+    })).toMatchObject({ status: "deny", reason: "role-capability-denied" });
+  });
+
   it("lets only bounded FLORAL maintenance reach Mac-local restart confirmation across a Codex sandbox", () => {
     expect(authority("read-only").evaluate({
       role: "owner",

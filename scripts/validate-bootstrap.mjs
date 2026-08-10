@@ -97,6 +97,7 @@ for (const script of [
   "codex:deepseek:probe",
   "codex:deepseek:web-search:probe",
   "bridge:faults:check",
+  "reliability:check",
   "config:inventory",
   "config:inventory:check",
   "config:validate",

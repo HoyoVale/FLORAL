@@ -123,6 +123,7 @@ function hasFloralContextTools(params) {
     "history",
     "propose_update",
     "read",
+    "refresh_agents",
     "status",
     "verify",
   ]);

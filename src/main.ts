@@ -34,6 +34,9 @@ import { ArtifactEgressPolicy } from "./policy/artifact-egress-policy.js";
 import { LocalConfirmationBroker } from "./policy/local-confirmation-broker.js";
 import { resolveLocalConfirmationDirectory } from "./policy/local-confirmation-paths.js";
 import { GatewayService } from "./service/gateway.js";
+import { DeliveryOutboxCoordinator } from "./service/delivery-outbox-coordinator.js";
+import { DurableRunCoordinator } from "./service/durable-run-coordinator.js";
+import { StartupRecoveryCoordinator } from "./service/startup-recovery-coordinator.js";
 import { createDefaultSystemAwarenessReader } from "./system-awareness/index.js";
 import { SqliteGatewayStore } from "./storage/sqlite.js";
 import { FeishuTransport } from "./transport/feishu/feishu-transport.js";
@@ -96,6 +99,17 @@ const agent: AgentRuntime = env.CODEX_MODE === "real"
   : new MockAgentRuntime();
 
 const store = await SqliteGatewayStore.open(resolve(env.DATABASE_PATH));
+const deliveryOutbox = new DeliveryOutboxCoordinator(transport, store.outbox, {
+  instanceId: `gateway-${lock.instanceId}`,
+});
+const durableRuns = new DurableRunCoordinator(store.runQueue, {
+  instanceId: `gateway-${lock.instanceId}`,
+});
+const startupRecovery = new StartupRecoveryCoordinator(
+  store.durability,
+  store.outbox,
+  store.runQueue,
+);
 const authorizationAuthority = new AuthorizationAuthority({
   enabled: authority.effective.runtime.authorization.enabled,
   sandboxMode: authority.effective.codex.sandbox.mode,
@@ -208,6 +222,9 @@ const gateway = new GatewayService(
       policy: artifactEgressPolicy,
     },
     systemAwareness,
+    deliveryOutbox,
+    durableRuns,
+    startupRecovery,
     ...(systemMaintenance ? { systemMaintenance: { controller: systemMaintenance } } : {}),
     runtimeStatusLines: async (cwd) => {
       const managedHome = await runtimeManagedHomeForCwd(cwd);
@@ -223,12 +240,21 @@ const gateway = new GatewayService(
         }),
       ]);
       const maintenancePolicy = await systemMaintenance?.autonomyStatus().catch(() => undefined);
+      const outboxStatus = store.outbox.diagnostics();
+      const runQueueStatus = store.runQueue.diagnostics();
+      const recoveryStatus = startupRecovery.latest();
       return [
         ...renderCodexNativeMemoryRuntimeLines(nativeMemory),
         `cost_guard=${snapshot.blockedReason ? `blocked:${snapshot.blockedReason}` : "ready"}`,
         `cost_24h=¥${snapshot.estimatedCostCny.day.toFixed(3)}/${authority.effective.runtime.cost_guard.max_cost_cny_per_day.toFixed(2)}`,
         `tokens_24h=${String(snapshot.tokens.day)}/${String(authority.effective.runtime.cost_guard.max_tokens_per_day)}`,
         `requests_hour=${String(snapshot.requests.hour)}/${String(authority.effective.runtime.cost_guard.max_requests_per_hour)}`,
+        `delivery_pending=${String(outboxStatus.pending)}`,
+        `delivery_failed=${String(outboxStatus.failed)}`,
+        `run_queue_pending=${String(runQueueStatus.pending)}`,
+        `run_queue_failed=${String(runQueueStatus.failed)}`,
+        `last_recovery=${recoveryStatus ? new Date(recoveryStatus.completedAt).toISOString() : "none"}`,
+        `last_recovery_leases=${String(recoveryStatus?.recoveredLeases ?? 0)}`,
         ...(maintenancePolicy ? [
           `maintenance_mode=${maintenancePolicy.effectiveMode}`,
           `maintenance_ceiling=${maintenancePolicy.ceiling}`,
@@ -262,7 +288,10 @@ const maintenanceAutonomy = systemMaintenance
       cwd: env.CODEX_CWD,
       store,
       notify: async (conversationId, text) => {
-        await transport.send({ conversationId, text });
+        const delivery = await deliveryOutbox.sendText({ conversationId, text });
+        if (delivery.transaction.status !== "completed") {
+          throw new Error(`Maintenance notification not acknowledged: ${delivery.transaction.status}`);
+        }
       },
     })
   : undefined;

@@ -75,6 +75,19 @@ export function formatGatewayStatus(
     lines.push(`今日成本：${humanizeCost(cost24h)}`);
   }
 
+  const deliveryPending = values.get("delivery_pending");
+  const deliveryFailed = values.get("delivery_failed");
+  if (deliveryPending || deliveryFailed) {
+    lines.push(
+      `可靠投递：${deliveryPending ?? "0"} 条待发送，${deliveryFailed ?? "0"} 条需处理`,
+    );
+  }
+
+  const lastRecovery = values.get("last_recovery");
+  if (lastRecovery) {
+    lines.push(`最近恢复：${lastRecovery === "none" ? "本次启动尚无记录" : lastRecovery}`);
+  }
+
   return lines.join("\n");
 }
 
@@ -289,6 +302,7 @@ export function gatewayHelpText(): string {
     "/system   查看 FLORAL 只读系统地图",
     "/system <component> 查看组件所有权、状态与证据",
     "/diagnose 查看证据驱动的只读系统诊断",
+    "/diagnose --debug 查看完整诊断证据",
     "/diagnose <component> 诊断单个组件并给出只读检查顺序",
     "/maintenance 查看维护自治模式与机器 ceiling",
     "/maintenance manual|owner-auto|self-heal 切换维护自治模式（owner，不能超过机器 ceiling）",

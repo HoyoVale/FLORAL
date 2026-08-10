@@ -49,6 +49,26 @@ describe("External MCP registry", () => {
     expect(config).toContain("--no-usage-statistics");
   });
 
+  it("renders a bounded GitHub owner profile while excluding repository commit and ref mutations", () => {
+    const config = renderExternalMcpOverlay("model = \"fake\"\n", {
+      version: EXTERNAL_MCP_REGISTRY_VERSION,
+      packages: [{
+        id: "github-owner",
+        enabled: true,
+        installedAt: "2026-08-10T00:00:00.000Z",
+        updatedAt: "2026-08-10T00:00:00.000Z",
+      }],
+    });
+    expect(config).toContain("[mcp_servers.github-owner]");
+    expect(config).toContain('url = "https://api.githubcopilot.com/mcp/"');
+    expect(config).toContain('default_tools_approval_mode = "writes"');
+    expect(config).toContain("X-MCP-Toolsets");
+    expect(config).toContain("actions");
+    expect(config).toContain("X-MCP-Exclude-Tools");
+    expect(config).toContain("create_or_update_file,push_files,delete_file");
+    expect(config).not.toContain("secret-never-return-this");
+  });
+
   it("keeps authentication metadata outside the machine-local registry", async () => {
     const root = await mkdtemp(join(tmpdir(), "floral-external-mcp-"));
     const paths = resolveExternalMcpRegistryPaths(root, "./data");
@@ -127,6 +147,7 @@ describe("External MCP registry", () => {
   it("keeps the curated sources fixed", () => {
     expect(CURATED_EXTERNAL_MCP["github-readonly"].supplyChain)
       .toContain("github/github-mcp-server");
+    expect(CURATED_EXTERNAL_MCP["github-owner"].strictReadOnly).toBe(false);
     expect(CURATED_EXTERNAL_MCP["chrome-devtools"].supplyChain)
       .toContain("chrome-devtools-mcp@1.6.0");
   });

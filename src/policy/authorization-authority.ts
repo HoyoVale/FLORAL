@@ -74,6 +74,16 @@ export class AuthorizationAuthority {
       };
     }
 
+    if (request.source === "mcp-tool"
+      && request.mcpServerId === "github-owner"
+      && request.role !== "owner") {
+      return {
+        status: "deny",
+        approvalLevel: defaultLevel,
+        reason: "role-capability-denied",
+      };
+    }
+
     if (request.source === "mcp-tool" && !this.#mcpToolAllowed(request)) {
       return {
         status: "deny",

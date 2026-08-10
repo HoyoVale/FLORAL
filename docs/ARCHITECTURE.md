@@ -16,7 +16,25 @@ The gateway owns business identity and policy. Codex owns agent execution. Peeka
 
 `src/agent/model-bridge.ts` reserves a protocol-conversion boundary only. Phase 1 does not enable a bridge or claim that a Chat Completions-compatible provider can be used directly by the current Codex App Server.
 
-The default implementation uses an in-memory thread store only to make the bootstrap executable. A later persistence phase replaces it with SQLite and records one active Codex thread per product conversation.
+The production implementation uses SQLite WAL storage for identity, inbound receipts, conversation/project thread pointers, the durable transaction journal, the outbound delivery outbox, and the run queue. The in-memory store remains only as a narrow test/bootstrap adapter.
+
+## Phase 8G reliability substrate
+
+```text
+Inbound receipt (dedupe)
+        ↓
+Durable run queue + private materialized attachments
+        ↓ lease / renew / recover
+Codex turn
+        ↓
+Durable delivery outbox
+        ↓ stable Feishu UUID / ACK
+Owner-visible result
+```
+
+`durable_transactions` and `durable_transaction_events` are the required lifecycle journal. Agent runs and deliveries never advance past acceptance without a persisted row. Expired execution leases are recovered at startup; attempts are bounded. Non-idempotent transports do not blindly retry ambiguous sends. Operational audit events remain best-effort telemetry and are not substitutes for this journal.
+
+Reliability orchestration is split into `DurableRunCoordinator`, `DeliveryOutboxCoordinator`, and `StartupRecoveryCoordinator`; `GatewayService` retains product routing and invokes those boundaries.
 
 ## Phase 7.2A: Codex-native project/chat control plane
 

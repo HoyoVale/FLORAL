@@ -1251,10 +1251,10 @@ describe("GatewayService identity and commands", () => {
       text: "/diagnose floral.service",
     }));
     const reply = transport.sent.at(-1)?.text ?? "";
-    expect(reply).toContain("FLORAL Self-Diagnostics");
-    expect(reply).toContain("finding=floral.service.ready-but-process-dead");
-    expect(reply).toContain("execution_performed=false");
-    expect(reply).toContain("maintenance_enabled=true");
+    expect(reply).toContain("FLORAL 只读诊断");
+    expect(reply).toContain("结论：不可用");
+    expect(reply).toContain("本命令不会执行修复");
+    expect(reply).toContain("受控维护接口：可用");
     expect(reads).toBe(1);
     expect(agent.requests).toHaveLength(0);
     await gateway.stop();

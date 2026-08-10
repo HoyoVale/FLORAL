@@ -4,6 +4,7 @@ import {
   buildSystemDiagnosticReport,
   createDefaultSystemDefinitionRegistry,
   formatSystemDiagnostics,
+  formatSystemDiagnosticsSummary,
   type SystemComponentSnapshot,
   type SystemEvidence,
   type SystemFactSnapshot,
@@ -31,6 +32,8 @@ describe("Phase 8C deterministic self-diagnostics", () => {
       candidateFailureDomains: ["host", "floral"],
     }));
     expect(formatSystemDiagnostics(model, "floral.service")).toContain("execution_performed=false");
+    expect(formatSystemDiagnosticsSummary(model, "floral.service")).toContain("结论：不可用");
+    expect(formatSystemDiagnosticsSummary(model, "floral.service")).toContain("本命令不会执行修复");
   });
 
   it("localizes enabled authenticated External MCP absence toward Codex activation/runtime", () => {

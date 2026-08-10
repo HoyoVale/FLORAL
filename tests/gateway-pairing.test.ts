@@ -31,10 +31,17 @@ describe("gateway command parsing and pairing security", () => {
     expect(parseGatewayCommand("/diagnose")).toEqual({
       type: "diagnose",
       componentId: undefined,
+      debug: false,
     });
     expect(parseGatewayCommand("/diagnose FLORAL.Service")).toEqual({
       type: "diagnose",
       componentId: "floral.service",
+      debug: false,
+    });
+    expect(parseGatewayCommand("/diagnose --debug FLORAL.Service")).toEqual({
+      type: "diagnose",
+      componentId: "floral.service",
+      debug: true,
     });
     expect(parseGatewayCommand("/maintenance")).toEqual({ type: "maintenance" });
     expect(parseGatewayCommand("/maintenance owner-auto")).toEqual({ type: "maintenance", value: "owner-auto" });

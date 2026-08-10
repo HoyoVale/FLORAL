@@ -18,6 +18,16 @@ export interface ChatTransport {
   stop(): Promise<void>;
 }
 
+export interface IdempotentTextTransport {
+  sendIdempotent(message: OutgoingMessage, idempotencyKey: string): Promise<void>;
+}
+
+export function supportsIdempotentTextDelivery(
+  transport: ChatTransport,
+): transport is ChatTransport & IdempotentTextTransport {
+  return typeof (transport as Partial<IdempotentTextTransport>).sendIdempotent === "function";
+}
+
 export type ConversationActivityState = "typing" | "idle";
 
 export interface ConversationActivityTransport {
@@ -299,4 +309,22 @@ export interface GatewayStore {
   clearActiveThread(conversationId: string): Promise<void>;
   appendAudit(event: AuditEventInput): Promise<void>;
   close(): Promise<void>;
+}
+
+export interface ConversationControlStateStore {
+  getConversationControlMode(
+    conversationId: string,
+  ): Promise<"ask" | "auto" | "full" | undefined>;
+  setConversationControlMode(
+    conversationId: string,
+    mode: "ask" | "auto" | "full",
+  ): Promise<void>;
+}
+
+export function supportsConversationControlState(
+  store: GatewayStore,
+): store is GatewayStore & ConversationControlStateStore {
+  const candidate = store as Partial<ConversationControlStateStore>;
+  return typeof candidate.getConversationControlMode === "function"
+    && typeof candidate.setConversationControlMode === "function";
 }

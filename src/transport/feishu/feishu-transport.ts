@@ -5,6 +5,7 @@ import { Worker } from "node:worker_threads";
 import * as Lark from "@larksuiteoapi/node-sdk";
 import type {
   ChatTransport,
+  IdempotentTextTransport,
   InboundAttachmentMaterializer,
   InteractiveApprovalPrompt,
   InteractiveApprovalTransport,
@@ -71,6 +72,7 @@ interface FeishuOutboundClient {
             receive_id: string;
             msg_type: "text" | "post" | "image" | "file" | "interactive";
             content: string;
+            uuid?: string | undefined;
           };
         }): Promise<unknown>;
       };
@@ -111,7 +113,7 @@ interface FeishuApprovalInteractionRoute {
 const MAX_FEISHU_CONVERSATION_USERS = 512;
 
 export class FeishuTransport
-  implements ChatTransport, InboundAttachmentMaterializer, InteractiveApprovalTransport, MediaTransport
+  implements ChatTransport, IdempotentTextTransport, InboundAttachmentMaterializer, InteractiveApprovalTransport, MediaTransport
 {
   readonly name = "feishu";
   readonly #client: FeishuOutboundClient;
@@ -252,6 +254,24 @@ export class FeishuTransport
   }
 
   async send(message: OutgoingMessage): Promise<void> {
+    await this.#enqueueText(message);
+  }
+
+  async sendIdempotent(
+    message: OutgoingMessage,
+    idempotencyKey: string,
+  ): Promise<void> {
+    const normalizedKey = idempotencyKey.trim();
+    if (!normalizedKey || Buffer.byteLength(normalizedKey, "utf8") > 240) {
+      throw new Error("Feishu idempotency key must be between 1 and 240 bytes");
+    }
+    await this.#enqueueText(message, normalizedKey);
+  }
+
+  async #enqueueText(
+    message: OutgoingMessage,
+    idempotencyKey?: string,
+  ): Promise<void> {
     if (!this.#started || this.#stopped) {
       throw new Error("Feishu transport is not ready");
     }
@@ -263,7 +283,7 @@ export class FeishuTransport
     const previous = this.#outboundTails.get(conversationId) ?? Promise.resolve();
     const current = previous
       .catch(() => undefined)
-      .then(() => this.#sendNow(message));
+      .then(() => this.#sendNow(message, idempotencyKey));
     this.#outboundTails.set(conversationId, current);
     try {
       await current;
@@ -362,7 +382,10 @@ export class FeishuTransport
     if (worker) await worker.terminate().catch(() => undefined);
   }
 
-  async #sendNow(message: OutgoingMessage): Promise<void> {
+  async #sendNow(
+    message: OutgoingMessage,
+    idempotencyKey?: string,
+  ): Promise<void> {
     const normalized = normalizeFeishuOutgoingText(message.text);
     if (hasFeishuRenderableMarkdown(normalized)) {
       const post = serializeFeishuMarkdownPostIfSafe(normalized);
@@ -372,6 +395,7 @@ export class FeishuTransport
           "post",
           post,
           "Feishu rich-text message",
+          idempotencyKey ? feishuDeliveryUuid(idempotencyKey, 0) : undefined,
         );
         return;
       }
@@ -383,12 +407,14 @@ export class FeishuTransport
       this.options.textChunkBytes,
       this.options.maxReplyChunks,
     );
-    for (const chunk of chunks) {
+    for (let index = 0; index < chunks.length; index += 1) {
+      const chunk = chunks[index]!;
       await this.#sendMessagePayload(
         message.conversationId,
         "text",
         JSON.stringify({ text: chunk }),
         "Feishu outbound message",
+        idempotencyKey ? feishuDeliveryUuid(idempotencyKey, index) : undefined,
       );
     }
   }
@@ -449,11 +475,17 @@ export class FeishuTransport
     msgType: "text" | "post" | "image" | "file" | "interactive",
     content: string,
     label: string,
+    uuid?: string,
   ): Promise<void> {
     const response = await withTimeout(
       this.#client.im.v1.message.create({
         params: { receive_id_type: "chat_id" },
-        data: { receive_id: conversationId, msg_type: msgType, content },
+        data: {
+          receive_id: conversationId,
+          msg_type: msgType,
+          content,
+          ...(uuid ? { uuid } : {}),
+        },
       }),
       this.options.outboundTimeoutMs,
       label,
@@ -834,6 +866,16 @@ function requireFeishuResponseKey(
   }
 
   throw new Error(`Feishu upload response missing ${key}`);
+}
+
+function feishuDeliveryUuid(idempotencyKey: string, part: number): string {
+  return createHash("sha256")
+    .update("floral-delivery\0", "utf8")
+    .update(idempotencyKey, "utf8")
+    .update("\0", "utf8")
+    .update(String(part), "utf8")
+    .digest("hex")
+    .slice(0, 32);
 }
 
 function normalizeFeishuOutgoingText(value: string): string {

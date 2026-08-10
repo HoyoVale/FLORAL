@@ -11,6 +11,7 @@ import type { WorkspaceProject } from "./project-workspace.js";
 import {
   listProjectContextLedgerEntries,
   recordProjectContextLedgerEntry,
+  updateProjectContextLedgerEntry,
   type ProjectContextLedgerSource,
 } from "./project-context-ledger.js";
 
@@ -58,7 +59,7 @@ export interface ProjectMemoryProvenance {
 
 export interface ProjectMemoryVerification {
   present: boolean;
-  target: ProjectMemoryKind;
+  target: ProjectMemoryKind | "agents";
   ledgerEntryId: string;
 }
 
@@ -274,6 +275,55 @@ export async function bootstrapProjectContext(
   };
 }
 
+export async function refreshProjectManagedInstructions(
+  project: WorkspaceProject,
+  now: Date = new Date(),
+): Promise<{ changed: boolean; instructionFile: string; ledgerEntryId: string }> {
+  const status = await inspectProjectContext(project);
+  if (!status.initialized || !status.activeInstructionFile) {
+    throw new Error("Project shared context is not initialized");
+  }
+  const canonicalProject = await canonicalProjectDirectory(project);
+  const instructionPath = join(canonicalProject, status.activeInstructionFile);
+  const current = await readValidatedRegularFile(instructionPath, canonicalProject);
+  validateManagedMarkers(current);
+  const expectedBlock = renderManagedInstructionBlock(project.name);
+  const existingBlock = extractManagedInstructionBlock(current);
+  if (!existingBlock) throw new Error("FLORAL managed instruction block is missing");
+  const next = current.replace(existingBlock, expectedBlock);
+  if (Buffer.byteLength(next, "utf8") > MAX_STANDARD_INSTRUCTION_BYTES) {
+    throw new Error(`${status.activeInstructionFile} exceeds the default Codex 32 KiB project instruction limit`);
+  }
+  if (next !== current) {
+    const file = await open(instructionPath, "r+");
+    try {
+      const stat = await file.stat();
+      if (!stat.isFile() || stat.nlink !== 1) {
+        throw new Error(`${status.activeInstructionFile} changed during managed refresh`);
+      }
+      const latest = await file.readFile({ encoding: "utf8" });
+      if (latest !== current) throw new Error("Project instructions changed concurrently; retry");
+      await file.truncate(0);
+      await file.write(next, 0, "utf8");
+    } finally {
+      await file.close();
+    }
+  }
+  const contentHash = createHash("sha256").update(expectedBlock, "utf8").digest("hex");
+  const ledger = await recordProjectContextLedgerEntry(project, {
+    target: "agents",
+    contentHash,
+    source: "agent-proposal",
+    evidenceRefs: ["floral:managed-instruction-contract"],
+    now,
+  });
+  return {
+    changed: next !== current,
+    instructionFile: status.activeInstructionFile,
+    ledgerEntryId: ledger.id,
+  };
+}
+
 export async function inspectProjectMemory(
   project: WorkspaceProject,
 ): Promise<ProjectMemoryStatus> {
@@ -406,15 +456,62 @@ export async function verifyProjectMemoryLedgerEntry(
 ): Promise<ProjectMemoryVerification | undefined> {
   const entries = await listProjectContextLedgerEntries(project);
   const entry = entries.find((candidate) => candidate.id === ledgerEntryId);
-  if (!entry || entry.target === "agents") return undefined;
+  if (!entry) return undefined;
+  if (entry.target === "agents") {
+    const status = await inspectProjectContext(project);
+    const canonicalProject = await canonicalProjectDirectory(project);
+    const document = status.activeInstructionFile
+      ? await readValidatedRegularFile(
+          join(canonicalProject, status.activeInstructionFile),
+          canonicalProject,
+        )
+      : "";
+    const block = extractManagedInstructionBlock(document);
+    const present = Boolean(block)
+      && createHash("sha256").update(block!, "utf8").digest("hex") === entry.contentHash;
+    await updateProjectContextLedgerEntry(project, entry.id, {
+      status: present ? "active" : "stale",
+    });
+    return { present, target: "agents", ledgerEntryId: entry.id };
+  }
   const kind = entry.target;
   const document = await readProjectMemoryDocument(project, kind);
   const marker = `<!-- FLORAL:MEM:${entry.contentHash.slice(0, 16)} -->`;
+  const present = document.includes(marker);
+  await updateProjectContextLedgerEntry(project, entry.id, {
+    status: present ? "active" : "stale",
+  });
   return {
-    present: document.includes(marker),
+    present,
     target: kind,
     ledgerEntryId: entry.id,
   };
+}
+
+export async function reconcileProjectMemoryLedger(
+  project: WorkspaceProject,
+): Promise<{ checked: number; active: number; stale: number; skipped: number }> {
+  const entries = await listProjectContextLedgerEntries(project);
+  let checked = 0;
+  let active = 0;
+  let stale = 0;
+  let skipped = 0;
+  for (const entry of entries) {
+    if (entry.target === "agents") {
+      skipped += 1;
+      continue;
+    }
+    const document = await readProjectMemoryDocument(project, entry.target);
+    const marker = `<!-- FLORAL:MEM:${entry.contentHash.slice(0, 16)} -->`;
+    const present = document.includes(marker);
+    await updateProjectContextLedgerEntry(project, entry.id, {
+      status: present ? "active" : "stale",
+    });
+    checked += 1;
+    if (present) active += 1;
+    else stale += 1;
+  }
+  return { checked, active, stale, skipped };
 }
 
 function memoryFileForKind(kind: ProjectMemoryKind): string {
@@ -589,6 +686,14 @@ function validateManagedMarkers(content: string): void {
 function hasManagedInstructionBlock(content: string): boolean {
   return content.includes(FLORAL_CONTEXT_BEGIN)
     && content.includes(FLORAL_CONTEXT_END);
+}
+
+function extractManagedInstructionBlock(content: string): string | undefined {
+  validateManagedMarkers(content);
+  const begin = content.indexOf(FLORAL_CONTEXT_BEGIN);
+  const end = content.indexOf(FLORAL_CONTEXT_END);
+  if (begin < 0 || end < begin) return undefined;
+  return content.slice(begin, end + FLORAL_CONTEXT_END.length);
 }
 
 function countOccurrences(content: string, token: string): number {

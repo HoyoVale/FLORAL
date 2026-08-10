@@ -26,7 +26,7 @@ export function readExternalMcpAction(
 export function readExternalMcpId(
   value: unknown,
 ): ExternalMcpMutationRequest["id"] | undefined {
-  return value === "github-readonly" || value === "chrome-devtools"
+  return value === "github-readonly" || value === "github-owner" || value === "chrome-devtools"
     ? value
     : undefined;
 }

@@ -37,7 +37,7 @@ describe("SqliteGatewayStore", () => {
         payload: { count: 1 },
       });
       expect(first.diagnostics()).toMatchObject({
-        schemaVersion: 4,
+        schemaVersion: 6,
         users: 1,
         identities: 1,
         conversations: 1,
@@ -45,6 +45,9 @@ describe("SqliteGatewayStore", () => {
         messageReceipts: 1,
         auditEvents: 1,
         owners: 1,
+        durableTransactions: 0,
+        durableEvents: 0,
+        durableRecoverable: 0,
       });
       await first.close();
 
@@ -138,6 +141,30 @@ describe("SqliteGatewayStore", () => {
       expect(store.diagnostics().conversations).toBe(2);
     } finally {
       await store.close();
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+
+  it("persists owner conversation control mode and removes the default ask state", async () => {
+    const directory = await mkdtemp(join(tmpdir(), "floral-mode-state-"));
+    const path = join(directory, "gateway.sqlite");
+    try {
+      const first = await SqliteGatewayStore.open(path);
+      const owner = await first.claimOwner({
+        transport: "feishu",
+        botId: "bot-mode",
+        externalUserId: "owner-mode",
+        conversationId: "chat-mode",
+      });
+      await first.setConversationControlMode(owner.conversationId, "full");
+      await first.close();
+
+      const reopened = await SqliteGatewayStore.open(path);
+      await expect(reopened.getConversationControlMode(owner.conversationId)).resolves.toBe("full");
+      await reopened.setConversationControlMode(owner.conversationId, "ask");
+      await expect(reopened.getConversationControlMode(owner.conversationId)).resolves.toBeUndefined();
+      await reopened.close();
+    } finally {
       await rm(directory, { recursive: true, force: true });
     }
   });

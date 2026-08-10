@@ -10,7 +10,7 @@ export type GatewayCommand =
   | { type: "apps" }
   | { type: "mcp" }
   | { type: "system"; componentId: string | undefined }
-  | { type: "diagnose"; componentId: string | undefined }
+  | { type: "diagnose"; componentId: string | undefined; debug: boolean }
   | { type: "maintenance"; value: string | undefined }
   | { type: "stop" }
   | { type: "mode"; value: string | undefined }
@@ -54,11 +54,12 @@ export function parseGatewayCommand(text: string): GatewayCommand | undefined {
       componentId: system[1]?.trim().toLowerCase() || undefined,
     };
   }
-  const diagnose = /^\/diagnose(?:\s+([a-z][a-z0-9]*(?:[._-][a-z0-9]+)*))?$/i.exec(trimmed);
+  const diagnose = /^\/diagnose(?:\s+(--debug|-d))?(?:\s+([a-z][a-z0-9]*(?:[._-][a-z0-9]+)*))?$/i.exec(trimmed);
   if (diagnose) {
     return {
       type: "diagnose",
-      componentId: diagnose[1]?.trim().toLowerCase() || undefined,
+      componentId: diagnose[2]?.trim().toLowerCase() || undefined,
+      debug: Boolean(diagnose[1]),
     };
   }
   const maintenance = /^\/maintenance(?:\s+([A-Za-z-]+))?$/i.exec(trimmed);

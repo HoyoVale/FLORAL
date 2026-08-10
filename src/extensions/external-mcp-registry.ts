@@ -13,7 +13,7 @@ import type { Capability } from "../core/types.js";
 export const EXTERNAL_MCP_REGISTRY_VERSION = 1 as const;
 export const CHROME_DEVTOOLS_MCP_VERSION = "1.6.0" as const;
 
-export type ExternalMcpCatalogId = "github-readonly" | "chrome-devtools";
+export type ExternalMcpCatalogId = "github-readonly" | "github-owner" | "chrome-devtools";
 export type ExternalMcpApprovalMode = "auto" | "prompt" | "writes" | "approve";
 
 export type ExternalMcpTransport =
@@ -67,6 +67,30 @@ export const CURATED_EXTERNAL_MCP: Readonly<Record<ExternalMcpCatalogId, Externa
     authentication: "bearer-env",
     authEnvVar: "GITHUB_PAT_TOKEN",
     supplyChain: "github/github-mcp-server remote endpoint",
+  },
+  "github-owner": {
+    id: "github-owner",
+    serverId: "github-owner",
+    displayName: "GitHub MCP (owner control plane)",
+    description: "Official GitHub remote MCP with owner-scoped issue, PR, review, Actions, and repository operations. Repository commit/push/ref mutation tools are excluded by host policy.",
+    transport: {
+      type: "http",
+      url: "https://api.githubcopilot.com/mcp/",
+      bearerTokenEnvVar: "GITHUB_PAT_TOKEN",
+      httpHeaders: {
+        "X-MCP-Toolsets": "issues,pull_requests,actions,repos",
+        "X-MCP-Exclude-Tools": "create_or_update_file,push_files,delete_file,merge_pull_request,update_pull_request_branch,create_branch,create_repository,fork_repository",
+      },
+    },
+    required: false,
+    startupTimeoutSec: 20,
+    toolTimeoutSec: 60,
+    defaultToolsApprovalMode: "writes",
+    capability: "files.write",
+    strictReadOnly: false,
+    authentication: "bearer-env",
+    authEnvVar: "GITHUB_PAT_TOKEN",
+    supplyChain: "github/github-mcp-server remote endpoint (bounded owner profile)",
   },
   "chrome-devtools": {
     id: "chrome-devtools",
@@ -227,12 +251,16 @@ export function renderExternalMcpOverlay(
 
 export function externalMcpCapabilityForTool(
   serverId: string,
-  _toolName: string,
+  toolName: string,
 ): Capability | undefined {
   const entry = Object.values(CURATED_EXTERNAL_MCP).find(
     (candidate) => candidate.serverId === serverId,
   );
-  return entry?.capability;
+  if (!entry) return undefined;
+  if (entry.id === "github-owner" && /^(get|list|search)_/u.test(toolName)) {
+    return "web.search";
+  }
+  return entry.capability;
 }
 
 export function isCuratedExternalMcpServer(serverId: string): boolean {

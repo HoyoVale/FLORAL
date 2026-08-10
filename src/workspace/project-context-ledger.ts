@@ -72,6 +72,17 @@ export async function recordProjectContextLedgerEntry(
     if (existing.target !== target || existing.contentHash !== contentHash) {
       throw new Error("Project context ledger entry fingerprint collision");
     }
+    if (existing.status === "stale") {
+      const timestamp = (input.now ?? new Date()).toISOString();
+      const reactivated: ProjectContextLedgerEntry = {
+        ...existing,
+        status: "active",
+        updatedAt: timestamp,
+        verifiedAt: timestamp,
+      };
+      await replacePrivateJson(path, reactivated);
+      return reactivated;
+    }
     return existing;
   }
 
@@ -113,6 +124,35 @@ export async function listProjectContextLedgerEntries(
     output.push(await readLedgerEntry(join(canonicalLedger, entry.name), canonicalLedger));
   }
   return output.sort((left, right) => left.createdAt.localeCompare(right.createdAt));
+}
+
+export async function updateProjectContextLedgerEntry(
+  project: WorkspaceProject,
+  entryId: string,
+  input: {
+    status?: ProjectContextLedgerStatus | undefined;
+    verifiedAt?: Date | undefined;
+  },
+): Promise<ProjectContextLedgerEntry> {
+  const canonicalProject = await canonicalProjectDirectory(project);
+  const canonicalContext = await canonicalContextDirectory(canonicalProject);
+  const ledgerDirectory = join(canonicalContext, LEDGER_DIRECTORY);
+  const canonicalLedger = await realpath(ledgerDirectory);
+  if (dirname(canonicalLedger) !== canonicalContext) {
+    throw new Error(".floral/context-ledger resolves outside .floral");
+  }
+  const id = readToken(entryId, "id", /^[a-f0-9]{32}$/u);
+  const path = join(canonicalLedger, `${id}.json`);
+  const current = await readLedgerEntry(path, canonicalLedger);
+  const timestamp = (input.verifiedAt ?? new Date()).toISOString();
+  const next: ProjectContextLedgerEntry = {
+    ...current,
+    status: input.status ?? current.status,
+    updatedAt: timestamp,
+    verifiedAt: timestamp,
+  };
+  await replacePrivateJson(path, next);
+  return next;
 }
 
 async function canonicalProjectDirectory(project: WorkspaceProject): Promise<string> {
@@ -173,6 +213,24 @@ async function readLedgerEntry(
 }
 
 async function writeNewPrivateJson(path: string, value: ProjectContextLedgerEntry): Promise<void> {
+  const temporary = `${path}.tmp-${String(process.pid)}-${Date.now().toString(36)}`;
+  const handle = await open(temporary, "wx", 0o600);
+  try {
+    await handle.writeFile(`${JSON.stringify(value)}\n`, "utf8");
+    await handle.sync();
+  } finally {
+    await handle.close();
+  }
+  try {
+    await chmod(temporary, 0o600).catch(() => undefined);
+    await rename(temporary, path);
+    await chmod(path, 0o600).catch(() => undefined);
+  } finally {
+    await rm(temporary, { force: true }).catch(() => undefined);
+  }
+}
+
+async function replacePrivateJson(path: string, value: ProjectContextLedgerEntry): Promise<void> {
   const temporary = `${path}.tmp-${String(process.pid)}-${Date.now().toString(36)}`;
   const handle = await open(temporary, "wx", 0o600);
   try {

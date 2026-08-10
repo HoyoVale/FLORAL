@@ -349,6 +349,36 @@ describe("FeishuTransport", () => {
     await transport.stop();
   });
 
+  it("derives stable per-chunk Feishu UUIDs for idempotent delivery", async () => {
+    const worker = new FakeWorker();
+    const requests: Array<{ data?: { uuid?: string } }> = [];
+    const transport = new FeishuTransport(options({
+      worker,
+      create: async (request) => {
+        requests.push(request as { data?: { uuid?: string } });
+        return { code: 0 };
+      },
+    }));
+    await startTransport(transport, worker);
+
+    await transport.sendIdempotent(
+      { conversationId: "oc_chat", text: "one two three four five six seven eight" },
+      "delivery:stable-key",
+    );
+    const firstAttempt = requests.map((request) => request.data?.uuid);
+    requests.length = 0;
+    await transport.sendIdempotent(
+      { conversationId: "oc_chat", text: "one two three four five six seven eight" },
+      "delivery:stable-key",
+    );
+
+    expect(firstAttempt.length).toBeGreaterThan(1);
+    expect(firstAttempt.every((uuid) => /^[a-f0-9]{32}$/u.test(uuid ?? ""))).toBe(true);
+    expect(new Set(firstAttempt).size).toBe(firstAttempt.length);
+    expect(requests.map((request) => request.data?.uuid)).toEqual(firstAttempt);
+    await transport.stop();
+  });
+
   it("renders Markdown through post/md while ordinary text stays text", async () => {
     const worker = new FakeWorker();
     const requests: unknown[] = [];

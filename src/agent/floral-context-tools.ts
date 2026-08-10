@@ -9,6 +9,8 @@ import {
   inspectProjectMemory,
   readProjectMemoryDocument,
   recordProjectMemory,
+  reconcileProjectMemoryLedger,
+  refreshProjectManagedInstructions,
   verifyProjectMemoryLedgerEntry,
   type ProjectMemoryKind,
 } from "../workspace/project-context.js";
@@ -116,7 +118,14 @@ export const FLORAL_CONTEXT_DYNAMIC_TOOLS = [
       {
         type: "function",
         name: "compact",
-        description: "Report the context-compaction lifecycle. Automatic rewriting is intentionally deferred until Phase 8G's durable transaction journal exists.",
+        description: "Reconcile context provenance freshness: verify managed markers, keep present receipts active, and mark missing receipts stale without rewriting document bodies.",
+        inputSchema: { type: "object", properties: {}, additionalProperties: false },
+        deferLoading: false,
+      },
+      {
+        type: "function",
+        name: "refresh_agents",
+        description: "Refresh only FLORAL's bounded managed block in the active AGENTS instruction file after host file-change authorization, preserving all human-authored content outside the block.",
         inputSchema: { type: "object", properties: {}, additionalProperties: false },
         deferLoading: false,
       },
@@ -153,7 +162,7 @@ export class FloralContextToolController {
           `issue_entries=${String(memory.issueEntries)}`,
           `ledger_entries=${String(ledger.length)}`,
           "agents_managed_block=bootstrap-only",
-          "compaction=deferred-durable-journal-required",
+          "compaction=reconciliation-ready",
         ].join("\n"));
       }
 
@@ -263,7 +272,38 @@ export class FloralContextToolController {
       }
 
       if (call.tool === "compact") {
-        return ok("context_compaction=deferred\nreason=durable-transaction-journal-required");
+        const result = await reconcileProjectMemoryLedger(project);
+        return ok([
+          "context_compaction=reconciled",
+          `checked=${String(result.checked)}`,
+          `active=${String(result.active)}`,
+          `stale=${String(result.stale)}`,
+          `skipped=${String(result.skipped)}`,
+          "document_rewrite=false",
+        ].join("\n"));
+      }
+
+      if (call.tool === "refresh_agents") {
+        const approval: AgentApprovalRequest = {
+          requestId: `context-agents-${safeToken(call.callId)}`,
+          kind: "file-change",
+          capability: "files.write",
+          source: "floral",
+          summary: "FLORAL Agent 请求刷新当前项目 AGENTS 文件中的 FLORAL managed block；块外人类内容保持不变。",
+        };
+        call.onApprovalRequested?.(approval);
+        const decision = await call.approvalHandler?.(approval)
+          .catch(() => "deny" as const) ?? "deny";
+        if (decision !== "approve" && decision !== "approve-session") {
+          return failed("agents_refresh=denied\nreason=user-approval");
+        }
+        const result = await refreshProjectManagedInstructions(project);
+        return ok([
+          `agents_refresh=${result.changed ? "updated" : "verified"}`,
+          `instruction_file=${result.instructionFile}`,
+          `ledger_entry_id=${result.ledgerEntryId}`,
+          "verification_tool=floral_context/verify",
+        ].join("\n"));
       }
     } catch (error) {
       return failed(
