@@ -291,6 +291,8 @@
 
 ## Phase 9 — autonomous extension governance
 
+Status: completed and accepted on Windows, macOS, and Feishu on 2026-08-11 at baseline commit `703e9c0`.
+
 - 9A: bind fine-grained extension capabilities to exact approval scopes and deterministic tool allowlists.
 - 9B: pin external Skill/MCP sources and verify immutable refs plus content/package integrity before activation.
 - 9C: make extension changes durable transactions with expiry, supersede, cancellation, fresh-turn verification, and rollback history.

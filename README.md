@@ -217,6 +217,6 @@ Phase 5F.4C adds a provenance-bound AgentArtifact outbound egress policy before 
 
 ## Autonomous extension governance
 
-Phase 9 adds governed Agent self-management for Project Skills, curated external Skills and MCP packages, and Codex-native Apps. Mutations require a frozen plan, an exact-scope approval, a durable transaction, and fresh-turn verification; validation or native readback failures roll back. App authentication and Plugin lifecycle remain user-mediated through supported Codex/ChatGPT surfaces, and production does not depend on under-development Plugin RPC methods.
+Phase 9 governed Agent self-management is complete at baseline commit `703e9c0`, with Windows, macOS, and Feishu acceptance passed. It covers Project Skills, curated external Skills and MCP packages, and Codex-native Apps. Mutations require a frozen plan, an exact-scope approval, a durable transaction, and fresh-turn verification; validation or native readback failures roll back. App authentication and Plugin lifecycle remain user-mediated through supported Codex/ChatGPT surfaces, and production does not depend on under-development Plugin RPC methods.
 
-See `docs/PHASE9_AUTONOMOUS_EXTENSION_GOVERNANCE.md` for the 9A–9F contract, failure matrix, and Windows/macOS/Feishu acceptance gates.
+See `docs/PHASE9_AUTONOMOUS_EXTENSION_GOVERNANCE.md` for the 9A–9F contract, failure matrix, completed Windows/macOS/Feishu evidence, and retained non-blocking boundaries.

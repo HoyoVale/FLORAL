@@ -1,6 +1,6 @@
 # Phase 9 — Autonomous Extension Governance
 
-Status: implementation and Windows validation complete; macOS and Feishu acceptance remain release gates.
+Status: complete. Windows, macOS, and Feishu acceptance passed on 2026-08-11 at baseline commit `703e9c0`.
 
 Phase 9 lets the Agent discover and manage capabilities without turning the language model into an authorization boundary. FLORAL owns policy, exact-scope approvals, transactions, receipts, and rollback. Codex App Server remains the source of truth for native Skills, Apps, MCP visibility, threads, turns, and sandbox execution.
 
@@ -14,6 +14,21 @@ Phase 9 lets the Agent discover and manage capabilities without turning the lang
 | 9D | Governed Project Skill draft, validation, exact-digest approval, atomic publication, Codex-native discovery/config, and rollback | `floral_skills` authoring tools and Project Skill tests |
 | 9E | Codex-native App discovery/config and supported Plugin user handoff | `app/installed`, `app/list`, `app/read`, `config/value/write`; no production plugin lifecycle RPC |
 | 9F | Structural budgets, fault injection, runtime-data Git isolation, documentation, and cross-platform acceptance | `reliability:check`, full test/build gates, Mac smoke, Feishu scenarios |
+
+## Completion evidence
+
+- Windows passed typecheck, build, 112 test files / 585 tests, 22 reliability files / 110 tests, the 95-file bootstrap structure check, configuration inventory with zero errors, `git diff --check`, and a clean worktree at the remote baseline.
+- macOS fast-forwarded the same commit and passed the same typecheck, test, reliability, and build gates. `mac:smoke` verified macOS 26.2 arm64, Node.js 22.22.3, Codex CLI 0.146.1, Peekaboo 3.10.0, and App Server schema generation. The LaunchAgent remained loaded, alive, and ready.
+- The macOS Codex process and its sandbox helper environment resolved `CODEX_COMMAND` and the leading `PATH` entry to the canonical standalone Codex release binary. A real Feishu `apply_patch` retry then succeeded, closing the symlink/sandbox regression.
+- Feishu acceptance covered current permission context, read-only diagnostics, exact-scope approval denial and approval, durable MCP remove/install transactions, fresh-turn verification, transaction history, Project Skill validation/publication/native discovery/positive and negative trigger cases/disable/history, App absence semantics, and supported Plugin handoff.
+- Final Feishu `/diagnose` reported healthy with zero errors and zero warnings. Git reported zero tracked paths under the declared runtime-data roots after Windows and macOS tests.
+
+Non-blocking boundaries retained after acceptance:
+
+- The accepted macOS runtime exposed no installed or directory Apps, so live App configuration mutation had no valid target; deterministic native config and rollback paths remain covered by the cross-platform test suite.
+- Project Skills have governed create/update publication plus native enable/disable. A dedicated governed unpublish/remove operation is not exposed; the acceptance Skill was disabled with its verified publication receipt retained.
+- Plugin lifecycle remains user-mediated through Codex CLI `/plugins` or the ChatGPT Plugin Directory.
+- The configuration inventory still warns that effective SearXNG upstream defaults are not frozen.
 
 ## Authorization model
 
