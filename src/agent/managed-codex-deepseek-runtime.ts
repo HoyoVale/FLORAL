@@ -1274,6 +1274,7 @@ function createCodexRuntime(
     command: env.CODEX_COMMAND,
     args: env.CODEX_ARGS.split(/\s+/).filter(Boolean),
     requestTimeoutMs: env.CODEX_REQUEST_TIMEOUT_MS,
+    turnTimeoutMs: env.CODEX_TURN_TIMEOUT_MS,
     defaultModel: env.DEEPSEEK_MODEL,
     approvalPolicy: execution.approvalPolicy,
     sandboxMode: execution.sandboxMode,

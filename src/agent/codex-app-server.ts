@@ -235,6 +235,7 @@ export interface CodexAppServerOptions {
   command: string;
   args: string[];
   requestTimeoutMs: number;
+  turnTimeoutMs?: number | undefined;
   defaultModel: string | undefined;
   approvalPolicy?: "never" | "on-request" | "untrusted" | undefined;
   sandboxMode?: "read-only" | "workspace-write" | undefined;
@@ -341,7 +342,7 @@ export class CodexAppServerRuntime implements AgentRuntime {
       codexProtocolError,
     );
     this.#defaultModel = options.defaultModel;
-    this.#turnTimeoutMs = options.requestTimeoutMs;
+    this.#turnTimeoutMs = options.turnTimeoutMs ?? options.requestTimeoutMs;
     this.#approvalPolicy = options.approvalPolicy ?? "never";
     this.#sandboxMode = options.sandboxMode ?? "read-only";
     this.#approvalsReviewer = options.approvalsReviewer ?? "user";
@@ -1046,11 +1047,13 @@ export class CodexAppServerRuntime implements AgentRuntime {
       this.#activeTurns.set(threadId, activeTurnId);
       if (bufferedTerminal) settleTerminal(bufferedTerminal);
 
-      const terminal = await withTimeout(
-        terminalPromise,
-        this.#turnTimeoutMs,
-        () => codexRequestTimeout("turn/completed", this.#turnTimeoutMs),
-      );
+      const terminal = this.#turnTimeoutMs > 0
+        ? await withTimeout(
+            terminalPromise,
+            this.#turnTimeoutMs,
+            () => codexRequestTimeout("turn/completed", this.#turnTimeoutMs),
+          )
+        : await terminalPromise;
       const status = terminal.params.turn.status;
 
       if (status === "interrupted") {

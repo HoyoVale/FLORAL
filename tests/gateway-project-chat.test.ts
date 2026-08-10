@@ -156,8 +156,7 @@ describe("Gateway project/chat routing", () => {
       expect(transport.sent.at(-1)?.text).toContain("FLORAL second chat");
 
       await transport.emit("/goal set --tokens 5000 Finish FLORAL hardening", "m3-goal");
-      expect(transport.sent.at(-1)?.text).toContain("状态：active");
-      expect(transport.sent.at(-1)?.text).toContain("Token：0 / 5000");
+      expect(transport.sent.at(-1)?.text).toContain("Goal 已设置并授权自动续跑");
       await transport.emit("/goal complete", "m3-goal-complete");
       expect(transport.sent.at(-1)?.text).toContain("状态：complete");
       await transport.emit("/goal clear", "m3-goal-clear");

@@ -193,6 +193,8 @@ describe("GoalContinuationCoordinator", () => {
     expect(h.agent.runCount).toBe(1);
     expect((await h.store.loadGoalContinuation("conv-1"))?.turnCount).toBe(1);
     expect(h.continuationTexts[0]).toContain("目标：test goal");
+    expect(h.continuationTexts[0]).toContain("[GOAL_COMPLETE]");
+    expect(h.continuationTexts[0]).not.toContain("请把 Goal 状态更新为 complete");
   });
 
   it("re-arms continuation after /goal active", async () => {
@@ -416,6 +418,29 @@ describe("GoalContinuationCoordinator", () => {
 
     await h.advance(30);
     expect(h.agent.runCount).toBe(1);
+  });
+
+  it("marks the native goal complete after a [GOAL_COMPLETE] reply", async () => {
+    const h = harness();
+    await h.coordinator.start();
+    await h.coordinator.authorize({ ...authorizeInput, enable: true });
+    h.agent.goal = makeGoal("thread-1", "active");
+
+    await h.coordinator.onRunCompleted({
+      conversationId: "conv-1",
+      deliveryConversationId: "chat-1",
+      threadId: "thread-1",
+      projectCwd: "/project",
+      projectName: "project",
+      finalText: "任务完成\n[GOAL_COMPLETE]",
+    });
+    expect(h.agent.setGoalInputs.some((input) => input.status === "complete"))
+      .toBe(true);
+    expect(h.timers).toHaveLength(0);
+    expect((await h.store.loadGoalContinuation("conv-1"))?.enabled).toBe(false);
+    expect(
+      h.audits.some((event) => event.eventType === "goal.continuation_completed_by_marker"),
+    ).toBe(true);
   });
 
   it("disables continuation after exhausting retries", async () => {

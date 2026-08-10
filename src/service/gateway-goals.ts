@@ -103,7 +103,7 @@ export async function handleGatewayGoalCommand(input: {
         ...(goal ? { status: goal.status, tokenBudget: goal.tokenBudget } : {}),
       },
     });
-    await input.send(goal ? formatAgentGoal(goal) : "当前会话没有 Goal。");
+    await input.send(command.action === "set" ? "Goal 已设置并授权自动续跑。目标已固定在状态卡上；30 秒后开始第一轮。" : goal ? formatAgentGoal(goal) : "当前会话没有 Goal。");
   } catch (error) {
     const message = error instanceof Error
       ? error.message.replace(/\s+/gu, " ").trim().slice(0, 300)

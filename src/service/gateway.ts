@@ -2327,6 +2327,7 @@ export class GatewayService {
         threadId: result.threadId,
         projectCwd: runCwd,
         projectName: projectContext?.project.name ?? "",
+        finalText: result.finalText,
       });
     } catch (error) {
       if (active.maintenanceTransactions.length > 0 && this.options.systemMaintenance) {

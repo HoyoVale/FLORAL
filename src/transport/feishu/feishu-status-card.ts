@@ -42,9 +42,6 @@ export function buildAgentStatusCard(
 ): Record<string, unknown> {
   const title = statusTitle(snapshot.state);
   const template = statusTemplate(snapshot.state);
-  const objective = snapshot.goal
-    ? boundedText(snapshot.goal.objective, 180)
-    : "";
 
   const lines: string[] = [];
   lines.push(`状态：${title}`);
@@ -59,14 +56,12 @@ export function buildAgentStatusCard(
   if (snapshot.goal) {
     lines.push("");
     lines.push(`**Goal 状态**：${goalStatusLabel(snapshot.goal.status)}`);
-    const truncated = truncateWithHint(objective, 120);
-    lines.push(`目标：${escapeMarkdown(truncated.text)}${truncated.hint}`);
+    lines.push(`目标：${escapeMarkdown(boundedText(snapshot.goal.objective, 4_000))}`);
     lines.push(
       `Token 用量：${String(snapshot.goal.tokensUsed)} / ${
         snapshot.goal.tokenBudget === null ? "不限" : String(snapshot.goal.tokenBudget)
       }`,
     );
-    lines.push(`Goal 已用时：${formatSeconds(snapshot.goal.timeUsedSeconds * 1_000)}`);
   }
   if (snapshot.lastActivity) {
     lines.push("");
@@ -237,17 +232,6 @@ function goalStatusLabel(status: string): string {
     case "complete": return "已完成";
     default: return status;
   }
-}
-
-function truncateWithHint(
-  value: string,
-  maxCharacters: number,
-): { text: string; hint: string } {
-  if (value.length <= maxCharacters) return { text: value, hint: "" };
-  return {
-    text: `${value.slice(0, Math.max(0, maxCharacters - 1))}…`,
-    hint: "（完整目标见 /goal status）",
-  };
 }
 
 function formatElapsed(ms: number): string {

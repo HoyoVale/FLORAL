@@ -1254,6 +1254,10 @@
       "component": "codex",
       "classification": "floral-owned"
     },
+    "CODEX_TURN_TIMEOUT_MS": {
+      "component": "codex",
+      "classification": "floral-owned"
+    },
     "DATABASE_PATH": {
       "component": "floral",
       "classification": "floral-owned"

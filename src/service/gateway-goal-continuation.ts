@@ -203,6 +203,7 @@ export class GoalContinuationFacade {
     threadId: string;
     projectCwd: string;
     projectName: string;
+    finalText?: string | undefined;
   }): Promise<void> {
     await this.statusCard?.onRunEnded(
       input.deliveryConversationId,
@@ -219,6 +220,7 @@ export class GoalContinuationFacade {
       threadId: input.threadId,
       projectCwd: input.projectCwd,
       projectName: input.projectName,
+      ...(input.finalText !== undefined ? { finalText: input.finalText } : {}),
     }).catch(() => undefined);
   }
 

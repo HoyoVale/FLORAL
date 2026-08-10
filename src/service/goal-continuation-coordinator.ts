@@ -44,6 +44,7 @@ export interface GoalContinuationCoordinatorOptions {
 
 const CONTINUATION_TRANSPORT = "feishu" as const;
 const MAX_CONTINUATION_RETRIES = 2;
+const GOAL_COMPLETE_MARKER = "[GOAL_COMPLETE]";
 
 type ResolvedGoalContinuationOptions = Omit<
   GoalContinuationCoordinatorOptions,
@@ -237,6 +238,7 @@ export class GoalContinuationCoordinator {
     threadId: string;
     projectCwd: string;
     projectName: string;
+    finalText?: string | undefined;
   }): Promise<void> {
     if (!this.#started || this.#stopped) return;
     const record = await this.#options.store.loadGoalContinuation(input.conversationId);
@@ -247,6 +249,25 @@ export class GoalContinuationCoordinator {
     record.projectName = input.projectName;
     this.#retryCounts.delete(input.conversationId);
     await this.#options.store.saveGoalContinuation(record);
+    if (input.finalText?.includes(GOAL_COMPLETE_MARKER)) {
+      const goal = await this.#getGoal(record);
+      if (goal && goal.status === "active") {
+        await this.#agent.setGoal({
+          threadId: record.threadId,
+          cwd: record.projectCwd,
+          status: "complete",
+        });
+        record.enabled = false;
+        record.updatedAt = this.#options.now();
+        await this.#options.store.saveGoalContinuation(record);
+        await this.#audit({
+          conversationId: input.conversationId,
+          eventType: "goal.continuation_completed_by_marker",
+          payload: { threadId: record.threadId },
+        });
+      }
+      return;
+    }
     await this.#scheduleNext(record);
   }
 
@@ -255,7 +276,14 @@ export class GoalContinuationCoordinator {
     if (!record?.authorized) return;
     const retryable = isRetryableError(error);
     const retries = this.#retryCounts.get(conversationId) ?? 0;
-    if (retryable && retries < MAX_CONTINUATION_RETRIES && !this.#stopped) {
+    const goal = await this.#getGoal(record);
+    if (
+      retryable
+      && retries < MAX_CONTINUATION_RETRIES
+      && !this.#stopped
+      && goal
+      && goal.status === "active"
+    ) {
       this.#retryCounts.set(conversationId, retries + 1);
       record.updatedAt = this.#options.now();
       await this.#cancelPending(record);
@@ -520,7 +548,9 @@ export class GoalContinuationCoordinator {
         `第 ${String(record.turnCount)} 轮。当前 Goal 状态：${goal.status}。`,
         `目标：${goal.objective}`,
         "请继续推进上述目标，不要重复已完成的工作。",
-        "若目标已经完成，请把 Goal 状态更新为 complete；若需要更多信息，请明确说明还缺什么。",
+        "重要：不要在本回合调用 update_goal / create_goal 等 Goal 工具；FLORAL 会在回合结束后自动处理 Goal 状态。",
+        "如果你认为目标已经完成，请在回复的最后单独一行写上 [GOAL_COMPLETE]，FLORAL 会把 Goal 置为 complete。",
+        "若需要更多信息，请明确说明还缺什么。",
         "如果目标只需要直接回答或总结，请直接完成，避免不必要的工具调用。",
       ].join("\n"),
       receivedAt: new Date(this.#options.now()),

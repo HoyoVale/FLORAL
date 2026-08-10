@@ -62,6 +62,16 @@ the Agent start working after the cooldown.
   `/goal continue`.
 - The continuation prompt always includes the full Goal objective, so the
   model never has to guess what it is working toward.
+- The continuation prompt explicitly forbids `update_goal` / `create_goal`
+  mid-turn (a native mid-turn Goal mutation hangs the app-server turn with the
+  custom provider). Completion is signaled with a `[GOAL_COMPLETE]` marker in
+  the final reply; FLORAL applies the native `complete` status **after** the
+  turn ends, which is safe.
+- Individual Codex RPC calls are bounded by `codex.request_timeout_ms`
+  (default 300s). The turn-completion wait is a separate
+  `codex.turn_timeout_ms` / `CODEX_TURN_TIMEOUT_MS` setting, default
+  **0 = unlimited**; the DeepSeek stream idle timeout and the daily cost guard
+  still apply.
 - Pending state is persisted in SQLite (`goal_continuation`). On service
   restart, any pending continuation is **quarantined** (`pending=false` + audit
   `goal.continuation_quarantined`) so a restart never silently spawns runs.
@@ -80,8 +90,10 @@ so Phase 10B uses:
   replies. Pin failures are logged and never block the run.
 
 The card shows: state (运行中/冷却中/空闲/已停止), turn number, elapsed time,
-project, native Goal status (Chinese labels)/truncated objective/token usage,
-and the last tool activity.
+project, native Goal status (Chinese labels), the **Goal objective declared
+once**, token usage, and the last tool activity. `/goal set` replies with a
+short confirmation instead of repeating the objective; `/goal status` remains
+the full on-demand view.
 It carries 暂停/停止 buttons (owner-only, routed through the existing
 card-action channel). Updates are throttled to `feishu.status_card.update_interval_ms`
 (default 5s); failures are audited as `feishu.status_card_failed` and swallowed.

@@ -12,15 +12,16 @@ describe("Phase 8G reliability architecture", () => {
       // gateway-goal-continuation facade (separate frozen budget below).
       "src/service/gateway.ts": 2_950,
       "src/service/gateway-goal-continuation.ts": 430,
-      // Retryable-failure handling (up to 2 retries) raised the coordinator
-      // budget from 520 to 560 lines.
-      "src/service/goal-continuation-coordinator.ts": 560,
+      // Retryable-failure handling and the [GOAL_COMPLETE] post-turn marker
+      // raised the coordinator budget from 520 to 580 lines.
+      "src/service/goal-continuation-coordinator.ts": 580,
       "src/service/agent-status-card-controller.ts": 260,
       "src/agent/codex-app-server.ts": 3_250,
       "src/agent/codex-goals.ts": 220,
       "src/agent/codex-thread-list.ts": 60,
       "src/agent/github-mcp-approval.ts": 50,
-      "src/agent/managed-codex-deepseek-runtime.ts": 1_300,
+      // Phase 10B added the turnTimeoutMs wiring line (1300 -> 1310).
+      "src/agent/managed-codex-deepseek-runtime.ts": 1_310,
       "src/agent/floral-native-extension-tools.ts": 240,
       "src/agent/floral-project-skill-tools.ts": 260,
       "src/skills/project-skill-authoring.ts": 680,

@@ -85,6 +85,7 @@ export const requestedConfigSchema = z.object({
     cwd: z.string().trim().min(1),
     managed_home: z.string().trim().min(1),
     request_timeout_ms: positiveInteger,
+    turn_timeout_ms: nonNegativeInteger,
     native_web_search: z.boolean(),
     sandbox: z.object({
       mode: z.enum(["read-only", "workspace-write", "danger-full-access"]),
@@ -338,6 +339,7 @@ export interface RequestedConfig {
     cwd: string;
     managed_home: string;
     request_timeout_ms: number;
+    turn_timeout_ms: number;
     native_web_search: boolean;
     sandbox: { mode: "read-only" | "workspace-write" | "danger-full-access" };
     approval: { policy: "never" | "on-request" | "on-failure" | "untrusted" };
@@ -583,7 +585,8 @@ export const DEFAULT_REQUESTED_CONFIG: RequestedConfig = {
     model: "",
     cwd: ".",
     managed_home: "./data/codex-runtime",
-    request_timeout_ms: 120_000,
+    request_timeout_ms: 300_000,
+    turn_timeout_ms: 0,
     native_web_search: false,
     sandbox: { mode: "read-only" },
     approval: { policy: "never" },

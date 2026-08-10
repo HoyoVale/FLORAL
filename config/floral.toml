@@ -88,7 +88,10 @@ args = ["app-server"]
 model = ""
 cwd = "."
 managed_home = "./data/codex-runtime"
-request_timeout_ms = 120000
+request_timeout_ms = 300000
+# 0 = no FLORAL turn-completion timeout; goal turns may run as long as the
+# provider keeps streaming. Individual RPC calls stay bounded above.
+turn_timeout_ms = 0
 # Locked until the permission authority is implemented.
 native_web_search = false
 
