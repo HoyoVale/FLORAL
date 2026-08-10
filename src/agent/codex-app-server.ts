@@ -2,6 +2,7 @@ import { isAbsolute, join, relative, resolve, sep } from "node:path";
 import type {
   AgentAppReadResult,
   AgentAppSummary,
+  AgentGoal,
   AgentMcpServerSummary,
   AgentNativeFeatureSummary,
   AgentRuntime,
@@ -27,6 +28,17 @@ import {
   codexRequestTimeout,
 } from "./codex-errors.js";
 import { capabilityForMcpTool } from "../policy/authorization-authority.js";
+import {
+  CodexGoalClient,
+  executeGoalDynamicTool,
+  readGoalDynamicCall,
+  type GoalSetInput,
+} from "./codex-goals.js";
+import { buildGithubMcpApprovalScope } from "./github-mcp-approval.js";
+import {
+  parseCodexThreadList,
+  type CodexThreadListResponse,
+} from "./codex-thread-list.js";
 import type {
   ExternalSkillManagementResult,
   ExternalSkillMutationRequest,
@@ -99,16 +111,6 @@ export type { CodexSystemAwarenessOptions } from "./floral-system-tools.js";
 
 interface ThreadResponse {
   thread: { id: string };
-}
-
-interface ThreadListResponse {
-  data?: Array<{
-    id?: unknown;
-    preview?: unknown;
-    createdAt?: unknown;
-    updatedAt?: unknown;
-  }>;
-  nextCursor?: unknown;
 }
 
 interface TurnResponse {
@@ -281,6 +283,7 @@ interface InFlightMcpToolCall {
 export class CodexAppServerRuntime implements AgentRuntime {
   readonly name = "codex-app-server";
   readonly #client: CodexRpcClient;
+  readonly #goals: CodexGoalClient;
   readonly #defaultModel: string | undefined;
   readonly #turnTimeoutMs: number;
   readonly #approvalPolicy: "never" | "on-request" | "untrusted";
@@ -333,6 +336,10 @@ export class CodexAppServerRuntime implements AgentRuntime {
       cwd: options.processCwd,
       env: options.processEnv,
     });
+    this.#goals = new CodexGoalClient(
+      async (method, params) => this.#client.request(method, params),
+      codexProtocolError,
+    );
     this.#defaultModel = options.defaultModel;
     this.#turnTimeoutMs = options.requestTimeoutMs;
     this.#approvalPolicy = options.approvalPolicy ?? "never";
@@ -709,7 +716,7 @@ export class CodexAppServerRuntime implements AgentRuntime {
     this.#ensureStarted();
     const cwd = resolve(input.cwd);
     const limit = Math.max(1, Math.min(50, input.limit ?? 20));
-    const response = await this.#client.request<ThreadListResponse>(
+    const response = await this.#client.request<CodexThreadListResponse>(
       "thread/list",
       {
         cursor: null,
@@ -717,24 +724,7 @@ export class CodexAppServerRuntime implements AgentRuntime {
         cwd,
       },
     );
-    const data = Array.isArray(response?.data) ? response.data : [];
-    const output: AgentThreadSummary[] = [];
-    for (const entry of data) {
-      const id = typeof entry?.id === "string" ? entry.id.trim() : "";
-      if (!id) continue;
-      const preview = sanitizeThreadPreview(entry.preview);
-      output.push({
-        id,
-        preview,
-        ...(readFiniteTimestamp(entry.createdAt) !== undefined
-          ? { createdAt: readFiniteTimestamp(entry.createdAt) }
-          : {}),
-        ...(readFiniteTimestamp(entry.updatedAt) !== undefined
-          ? { updatedAt: readFiniteTimestamp(entry.updatedAt) }
-          : {}),
-      });
-    }
-    return output;
+    return parseCodexThreadList(response);
   }
 
   async archiveThread(threadId: string): Promise<void> {
@@ -761,6 +751,21 @@ export class CodexAppServerRuntime implements AgentRuntime {
     this.#extensionVerificationShellSoftBlocked.delete(normalized);
     this.#deleteApprovalItemSummaries(normalized);
     this.#deleteInFlightMcpToolCalls(normalized);
+  }
+
+  async getGoal(threadId: string): Promise<AgentGoal | undefined> {
+    this.#ensureStarted();
+    return await this.#goals.get(threadId);
+  }
+
+  async setGoal(input: GoalSetInput): Promise<AgentGoal> {
+    this.#ensureStarted();
+    return await this.#goals.set(input);
+  }
+
+  async clearGoal(threadId: string): Promise<boolean> {
+    this.#ensureStarted();
+    return await this.#goals.clear(threadId);
   }
 
   async run(request: AgentRunRequest, onEvent?: (event: AgentEvent) => void): Promise<AgentRunResult> {
@@ -1264,6 +1269,10 @@ export class CodexAppServerRuntime implements AgentRuntime {
       }
       if (namespace === "floral_context") {
         await this.#handleContextDynamicToolCall(request);
+        return;
+      }
+      if (namespace === "floral_goal") {
+        await this.#handleGoalDynamicToolCall(request);
         return;
       }
       if (namespace === "floral_system") {
@@ -1774,6 +1783,26 @@ export class CodexAppServerRuntime implements AgentRuntime {
           detail: { summary: approval.summary },
         });
       },
+    });
+    this.#respondSafely(request.id, dynamicToolResponse(result.success, result.text));
+  }
+
+  async #handleGoalDynamicToolCall(request: CodexServerRequest): Promise<void> {
+    const raw = asPlainRecord(request.params);
+    const threadId = readString(raw?.threadId);
+    const call = readGoalDynamicCall(request.params, threadId ? this.#activeTurns.get(threadId) : undefined);
+    if (!call) {
+      this.#respondSafely(
+        request.id,
+        dynamicToolResponse(false, "goal=denied\nreason=invalid-context-or-arguments"),
+      );
+      return;
+    }
+    const result = await executeGoalDynamicTool({
+      ...call,
+      getGoal: async () => this.getGoal(call.threadId),
+      setGoal: async (input) => this.setGoal(input),
+      clearGoal: async () => this.clearGoal(call.threadId),
     });
     this.#respondSafely(request.id, dynamicToolResponse(result.success, result.text));
   }
@@ -2577,6 +2606,9 @@ function buildMcpToolApprovalRequest(
     source: "mcp",
     mcpServerId: serverId,
     mcpToolName: toolName,
+    ...(serverId === "github-owner"
+      ? { scope: buildGithubMcpApprovalScope(serverId, toolName, context.arguments) }
+      : {}),
   };
 }
 
@@ -2857,22 +2889,6 @@ function asRecord(value: unknown): Record<string, unknown> | undefined {
 function asPlainRecord(value: unknown): Record<string, unknown> | undefined {
   if (typeof value !== "object" || value === null || Array.isArray(value)) return undefined;
   return value as Record<string, unknown>;
-}
-
-function sanitizeThreadPreview(value: unknown): string {
-  if (typeof value !== "string") return "未命名会话";
-  const normalized = value
-    .replace(/[\u0000-\u001f\u007f]+/gu, " ")
-    .replace(/\s+/gu, " ")
-    .trim();
-  if (!normalized) return "未命名会话";
-  return Array.from(normalized).slice(0, 120).join("");
-}
-
-function readFiniteTimestamp(value: unknown): number | undefined {
-  return typeof value === "number" && Number.isFinite(value) && value >= 0
-    ? value
-    : undefined;
 }
 
 function readString(value: unknown): string | undefined {

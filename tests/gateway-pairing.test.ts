@@ -51,6 +51,30 @@ describe("gateway command parsing and pairing security", () => {
     expect(parseGatewayCommand("/memory status")).toEqual({ type: "native-memory-status" });
     expect(parseGatewayCommand("/memory diagnose")).toEqual({ type: "native-memory-diagnose" });
     expect(parseGatewayCommand("/stop")).toEqual({ type: "stop" });
+    expect(parseGatewayCommand("/goal")).toEqual({
+      type: "goal",
+      action: "status",
+      objective: undefined,
+      tokenBudget: undefined,
+    });
+    expect(parseGatewayCommand("/goal set --tokens 12000 Ship native goals")).toEqual({
+      type: "goal",
+      action: "set",
+      objective: "Ship native goals",
+      tokenBudget: 12_000,
+    });
+    expect(parseGatewayCommand("/goal set --tokens off Keep working")).toEqual({
+      type: "goal",
+      action: "set",
+      objective: "Keep working",
+      tokenBudget: null,
+    });
+    expect(parseGatewayCommand("/goal complete")).toEqual({
+      type: "goal",
+      action: "complete",
+      objective: undefined,
+      tokenBudget: undefined,
+    });
     expect(parseGatewayCommand("/status now")).toBeUndefined();
     expect(parseGatewayCommand("/system not a component")).toBeUndefined();
     expect(parseGatewayCommand("/diagnose not a component")).toBeUndefined();

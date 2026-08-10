@@ -69,9 +69,18 @@ export interface AgentSkillPublishApprovalScope {
   permissions: Capability[];
 }
 
+export interface AgentMcpToolApprovalScope {
+  type: "mcp-tool";
+  serverId: string;
+  toolName: string;
+  argumentsDigest: string;
+  target: string;
+}
+
 export type AgentApprovalScope =
   | AgentExtensionApprovalScope
-  | AgentSkillPublishApprovalScope;
+  | AgentSkillPublishApprovalScope
+  | AgentMcpToolApprovalScope;
 
 export interface AgentApprovalRequest {
   requestId: string;

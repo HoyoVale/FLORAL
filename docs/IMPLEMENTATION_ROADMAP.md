@@ -302,3 +302,19 @@ Status: completed and accepted on Windows, macOS, and Feishu on 2026-08-11 at ba
 
 The detailed contract and release matrix are in
 `docs/PHASE9_AUTONOMOUS_EXTENSION_GOVERNANCE.md`.
+
+## Phase 10 — native Goals and bounded GitHub writes
+
+Status: Windows implementation complete; macOS and Feishu acceptance pending.
+
+- 10A: mirror Codex app-server `thread/goal/get|set|clear` through
+  `AgentGoalRuntime`, owner chat commands, and the governed `floral_goal`
+  dynamic namespace.
+- 10B: bind every `github-owner` write approval to the exact tool, target, and
+  canonical-arguments digest; keep MCP approvals one-shot and fail closed for
+  unknown tools.
+- 10C: keep repository content/ref publication excluded and defer GitHub token
+  provisioning/live remote mutation until the owner explicitly enables it.
+
+The detailed contract is in
+`docs/PHASE10_NATIVE_GOALS_AND_GITHUB_WRITES.md`.

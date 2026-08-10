@@ -8,6 +8,9 @@ describe("Phase 8G reliability architecture", () => {
     const budgets: Record<string, number> = {
       "src/service/gateway.ts": 2_800,
       "src/agent/codex-app-server.ts": 3_250,
+      "src/agent/codex-goals.ts": 220,
+      "src/agent/codex-thread-list.ts": 60,
+      "src/agent/github-mcp-approval.ts": 50,
       "src/agent/managed-codex-deepseek-runtime.ts": 1_300,
       "src/agent/floral-native-extension-tools.ts": 240,
       "src/agent/floral-project-skill-tools.ts": 260,
@@ -16,6 +19,8 @@ describe("Phase 8G reliability architecture", () => {
       "src/extensions/extension-control.ts": 850,
       "src/service/delivery-outbox-coordinator.ts": 260,
       "src/service/durable-run-coordinator.ts": 150,
+      "src/service/gateway-chats.ts": 40,
+      "src/service/gateway-goals.ts": 120,
       "src/service/durable-attachment-spool.ts": 80,
       "src/service/startup-recovery-coordinator.ts": 130,
       "src/storage/durable-state.ts": 620,

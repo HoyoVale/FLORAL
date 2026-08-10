@@ -273,7 +273,8 @@ export class QqApprovalBroker {
     if (
       (pending.request.kind === "skill-management"
         || pending.request.kind === "extension-management"
-        || pending.request.kind === "system-maintenance")
+        || pending.request.kind === "system-maintenance"
+        || pending.request.kind === "mcp-tool")
       && decision === "approve-session"
     ) {
       await this.#audit(
@@ -438,6 +439,13 @@ function approvalScopeLines(request: AgentApprovalRequest): string[] {
       `动作=${scope.action}`,
       `草稿摘要=${scope.digest}`,
       `声明权限=${scope.permissions.join(",") || "none"}`,
+    ];
+  }
+  if (scope.type === "mcp-tool") {
+    return [
+      `MCP=${scope.serverId}/${scope.toolName}`,
+      `目标=${boundedSummary(scope.target)}`,
+      `参数摘要=${scope.argumentsDigest}`,
     ];
   }
   return [

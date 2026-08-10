@@ -278,6 +278,45 @@ export interface AgentThreadManagementRuntime {
   archiveThread(threadId: string): Promise<void>;
 }
 
+export type AgentGoalStatus =
+  | "active"
+  | "paused"
+  | "blocked"
+  | "usageLimited"
+  | "budgetLimited"
+  | "complete";
+
+export interface AgentGoal {
+  threadId: string;
+  objective: string;
+  status: AgentGoalStatus;
+  tokenBudget: number | null;
+  tokensUsed: number;
+  timeUsedSeconds: number;
+  createdAt: number;
+  updatedAt: number;
+}
+
+export interface AgentGoalRuntime {
+  getGoal(threadId: string): Promise<AgentGoal | undefined>;
+  setGoal(input: {
+    threadId: string;
+    objective?: string | null | undefined;
+    status?: AgentGoalStatus | null | undefined;
+    tokenBudget?: number | null | undefined;
+  }): Promise<AgentGoal>;
+  clearGoal(threadId: string): Promise<boolean>;
+}
+
+export function supportsAgentGoals(
+  runtime: AgentRuntime,
+): runtime is AgentRuntime & AgentGoalRuntime {
+  const candidate = runtime as Partial<AgentGoalRuntime>;
+  return typeof candidate.getGoal === "function"
+    && typeof candidate.setGoal === "function"
+    && typeof candidate.clearGoal === "function";
+}
+
 export function supportsAgentThreadManagement(
   runtime: AgentRuntime,
 ): runtime is AgentRuntime & AgentThreadManagementRuntime {

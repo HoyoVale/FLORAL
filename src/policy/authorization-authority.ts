@@ -109,6 +109,19 @@ export class AuthorizationAuthority {
       }
     }
 
+    if (
+      request.source === "mcp-tool"
+      && request.mcpServerId === "github-owner"
+      && request.capability !== "github.repository.read"
+      && !validGithubMcpApprovalScope(request)
+    ) {
+      return {
+        status: "deny",
+        approvalLevel: defaultLevel,
+        reason: "approval-scope-invalid",
+      };
+    }
+
     if (isExtensionMutationCapability(request.capability)
       && !validExtensionApprovalScope(request.capability, request.scope)) {
       return {
@@ -222,6 +235,16 @@ export class AuthorizationAuthority {
     return isCuratedExternalMcpServer(serverId)
       && externalMcpCapabilityForTool(serverId, toolName) !== undefined;
   }
+}
+
+function validGithubMcpApprovalScope(request: AuthorizationRequest): boolean {
+  const scope = request.scope;
+  if (!scope || scope.type !== "mcp-tool") return false;
+  return scope.serverId === request.mcpServerId
+    && scope.toolName === request.mcpToolName
+    && /^sha256:[0-9a-f]{64}$/u.test(scope.argumentsDigest)
+    && scope.target.length > 0
+    && scope.target.length <= 240;
 }
 
 export function capabilityForMcpTool(

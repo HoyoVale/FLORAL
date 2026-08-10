@@ -87,7 +87,8 @@ import {
   visibleActivityProgress,
   type AgentControlMode,
 } from "./gateway-presentation.js";
-
+import { handleGatewayGoalCommand } from "./gateway-goals.js";
+import { listGatewayChats } from "./gateway-chats.js";
 export interface GatewayOptions {
   cwd: string;
   workspace?: ProjectWorkspaceRoot | undefined;
@@ -1394,52 +1395,51 @@ export class GatewayService {
         }
         return;
       }
-
       case "chats": {
         const projectContext = await this.#requireProjectContext(
           message.identity.conversationId,
           resolved.conversationId,
         );
         if (!projectContext) return;
-        if (!supportsAgentThreadManagement(this.agent)) {
-          await this.#send(
-            message.identity.conversationId,
-            "当前 Agent runtime 未开放 Codex thread/list。",
-          );
-          return;
-        }
-        const entries = await this.agent.listThreads({
-          cwd: projectContext.project.path,
-          limit: 20,
-        });
-        this.#chatListCaches.set(resolved.conversationId, {
+        const { entries, text } = await listGatewayChats({
+          agent: this.agent, cwd: projectContext.project.path,
           projectName: projectContext.project.name,
-          entries,
-          createdAtMs: Date.now(),
+          activeThreadId: projectContext.threadId,
+        }).catch(() => ({ entries: [], text: "当前 Agent runtime 未开放 Codex thread/list。" }));
+        this.#chatListCaches.set(resolved.conversationId, {
+          projectName: projectContext.project.name, entries, createdAtMs: Date.now(),
         });
-        const lines = [`项目 ${projectContext.project.name} 的会话：`];
-        if (entries.length === 0) {
-          lines.push("（暂无 Codex 会话；下一条普通消息会创建第一个会话）");
-        } else {
-          entries.forEach((entry, index) => {
-            const marker = entry.id === projectContext.threadId ? " ← 当前" : "";
-            lines.push(`${String(index + 1)}. ${formatThreadPreview(entry.preview)}${marker}`);
-          });
-        }
-        lines.push("", "使用 /chat <序号> 切换；/chat new 新建；/chat archive <序号> 归档（owner）。");
         await this.store.appendAudit({
           userId: resolved.userId,
           conversationId: resolved.conversationId,
           eventType: "command.chats",
-          payload: {
-            projectName: projectContext.project.name,
-            count: entries.length,
-          },
+          payload: { projectName: projectContext.project.name, count: entries.length },
         });
-        await this.#send(message.identity.conversationId, lines.join("\n"));
+        await this.#send(message.identity.conversationId, text);
         return;
       }
-
+      case "goal": {
+        const projectContext = await this.#requireProjectContext(
+          message.identity.conversationId, resolved.conversationId,
+        );
+        if (!projectContext) return;
+        if (!projectContext.threadId) {
+          await this.#send(message.identity.conversationId,
+            "当前项目还没有 Codex 会话。请先发送一条普通消息建立会话，再使用 /goal。");
+          return;
+        }
+        await handleGatewayGoalCommand({
+          agent: this.agent, command,
+          threadId: projectContext.threadId,
+          projectName: projectContext.project.name,
+          userId: resolved.userId, conversationId: resolved.conversationId,
+          role: resolved.role,
+          busy: this.#conversationBusy(resolved.conversationId),
+          audit: async (event) => this.store.appendAudit(event),
+          send: async (text) => this.#send(message.identity.conversationId, text),
+        });
+        return;
+      }
       case "chat-archive": {
         const value = command.value?.trim();
         if (!value) {

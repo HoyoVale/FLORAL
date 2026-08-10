@@ -13,6 +13,7 @@ let extraSkillRoots = [];
 const skillEnabled = new Map();
 let appEnabled = true;
 let appConfigWriteCount = 0;
+const goals = new Map();
 
 function send(message) {
   process.stdout.write(`${JSON.stringify(message)}\n`);
@@ -134,6 +135,17 @@ function hasFloralContextTools(params) {
     "status",
     "verify",
   ]);
+}
+
+function hasFloralGoalTools(params) {
+  const dynamicTools = params?.dynamicTools;
+  if (!Array.isArray(dynamicTools)) return false;
+  const namespace = dynamicTools.find((entry) =>
+    entry?.type === "namespace" && entry?.name === "floral_goal"
+  );
+  if (!namespace || !Array.isArray(namespace.tools)) return false;
+  return JSON.stringify(namespace.tools.map((tool) => tool?.name).sort())
+    === JSON.stringify(["clear", "create", "status", "update"]);
 }
 
 function sendSuccess(threadId = activeThreadId, turnId = activeTurnId, finalText = "authoritative final") {
@@ -449,6 +461,46 @@ lines.on("line", (line) => {
     send({ id: message.id, result: {} });
     return;
   }
+
+  if (message.method === "thread/goal/get") {
+    send({ id: message.id, result: { goal: goals.get(message.params?.threadId) ?? null } });
+    return;
+  }
+
+  if (message.method === "thread/goal/set") {
+    const threadId = message.params?.threadId;
+    if (typeof threadId !== "string" || !threadId) {
+      send({ id: message.id, error: { code: -32602, message: "invalid goal thread" } });
+      return;
+    }
+    const previous = goals.get(threadId);
+    const now = 1_700_000_000;
+    const goal = {
+      threadId,
+      objective: message.params.objective ?? previous?.objective,
+      status: message.params.status ?? previous?.status ?? "active",
+      tokenBudget: message.params.tokenBudget !== undefined
+        ? message.params.tokenBudget
+        : previous?.tokenBudget ?? null,
+      tokensUsed: previous?.tokensUsed ?? 0,
+      timeUsedSeconds: previous?.timeUsedSeconds ?? 0,
+      createdAt: previous?.createdAt ?? now,
+      updatedAt: now + 1,
+    };
+    if (typeof goal.objective !== "string" || !goal.objective) {
+      send({ id: message.id, error: { code: -32602, message: "objective required" } });
+      return;
+    }
+    goals.set(threadId, goal);
+    send({ id: message.id, result: { goal } });
+    return;
+  }
+
+  if (message.method === "thread/goal/clear") {
+    const cleared = goals.delete(message.params?.threadId);
+    send({ id: message.id, result: { cleared } });
+    return;
+  }
   if (message.method === "app/read") {
     const ids = message.params?.appIds;
     if (!Array.isArray(ids) || ids.length < 1 || ids.length > 100) {
@@ -549,6 +601,10 @@ lines.on("line", (line) => {
     }
     if (scenario === "context-propose-apply" && !hasFloralContextTools(message.params)) {
       send({ id: message.id, error: { code: -32602, message: "missing FLORAL context dynamic tools" } });
+      return;
+    }
+    if (scenario === "goal-dynamic-create" && !hasFloralGoalTools(message.params)) {
+      send({ id: message.id, error: { code: -32602, message: "missing floral Goal tools" } });
       return;
     }
     if (
@@ -1297,6 +1353,65 @@ lines.on("line", (line) => {
         return;
       }
 
+      if (scenario === "goal-dynamic-create") {
+        send({
+          id: "dynamic_1",
+          method: "item/tool/call",
+          params: {
+            threadId: activeThreadId,
+            turnId: activeTurnId,
+            callId: "call_goal_create_1",
+            namespace: "floral_goal",
+            tool: "create",
+            arguments: { objective: "Finish Phase 10", token_budget: 9000 },
+          },
+        });
+        return;
+      }
+
+      if (scenario === "github-mcp-approval") {
+        waitingForApproval = true;
+        const toolParams = {
+          owner: "octo-org",
+          repo: "floral",
+          issue_number: 42,
+          body: "Acceptance note",
+        };
+        send({
+          method: "item/started",
+          params: {
+            threadId: activeThreadId,
+            turnId: activeTurnId,
+            item: {
+              id: "mcp_github_1",
+              type: "mcpToolCall",
+              server: "github-owner",
+              tool: "add_issue_comment",
+              status: "inProgress",
+              arguments: toolParams,
+            },
+          },
+        });
+        send({
+          id: "approval_1",
+          method: "mcpServer/elicitation/request",
+          params: {
+            threadId: activeThreadId,
+            turnId: activeTurnId,
+            serverName: "github-owner",
+            mode: "form",
+            _meta: {
+              codex_approval_kind: "mcp_tool_call",
+              tool_title: "Add issue comment",
+              tool_params: toolParams,
+            },
+            message: "Allow GitHub issue comment?",
+            requestedSchema: { type: "object", properties: {} },
+          },
+        });
+        return;
+      }
+
       if (scenario === "skill-control-disable") {
         send({
           id: "dynamic_1",
@@ -1651,6 +1766,18 @@ lines.on("line", (line) => {
     const success = message.result?.success;
     const text = message.result?.contentItems?.[0]?.text ?? "";
     if (
+      scenario === "goal-dynamic-create"
+      && success === true
+      && text.includes("goal=present")
+      && text.includes("status=active")
+      && text.includes("objective=Finish Phase 10")
+      && text.includes("token_budget=9000")
+      && text.includes("authority=codex-app-server-thread-goal")
+    ) {
+      sendSuccess(activeThreadId, activeTurnId, "goal dynamic create complete");
+      return;
+    }
+    if (
       scenario.startsWith("skill-project-publish:")
       && success === true
       && text.includes("project_skill_publish=verified")
@@ -1980,7 +2107,7 @@ lines.on("line", (line) => {
 
   if (waitingForApproval && message.id === "approval_1" && "result" in message) {
     waitingForApproval = false;
-    if (scenario === "mcp-approval" || scenario === "external-mcp-approval") {
+    if (scenario === "mcp-approval" || scenario === "external-mcp-approval" || scenario === "github-mcp-approval") {
       const action = message.result?.action;
       if (action === "decline") {
         sendSuccess(activeThreadId, activeTurnId, "mcp approval declined safely");
