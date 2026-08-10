@@ -51,6 +51,22 @@ export const DEFAULT_SYSTEM_DEFINITIONS: readonly SystemDefinition[] = [
     tags: ["control-plane", "maintenance", "audit"],
   }),
   definition({
+    id: "floral.extension_control",
+    displayName: "FLORAL Extension Control Ledger",
+    description: "Machine-local receipts for governed External MCP/Skill mutations and upstream App installation handoffs, plus fresh-turn verification state.",
+    kind: "runtime",
+    owner: authority("floral", "FLORAL", "Owns bounded extension-control planning, lifecycle handoff receipts, and verification records."),
+    authority: authority("floral", "ExtensionControlLedger", "Is authoritative for the latest FLORAL-controlled extension transaction receipt; runtime readiness remains authoritative in the owning extension/runtime observers."),
+    stateSources: [
+      source("extension-control-ledger", "filesystem", "authoritative", ["last_transaction"], "Latest bounded controlled-extension transaction receipt; contains no credential values, shell commands, arbitrary package sources, or authentication tokens."),
+    ],
+    managementActions: [
+      action("read", "Read the latest controlled-extension receipt.", "automatic", "automatic", "machine.status.read"),
+    ],
+    failureDomain: "floral",
+    tags: ["control-plane", "extension", "audit"],
+  }),
+  definition({
     id: "floral.configuration",
     displayName: "Configuration Authority",
     description: "Resolved requested/effective FLORAL configuration, provenance, locked paths, and secret references.",
@@ -213,7 +229,7 @@ export const DEFAULT_SYSTEM_DEFINITIONS: readonly SystemDefinition[] = [
     ],
     managementActions: [
       action("read", "Read installed runtime evidence, directory candidates, and App metadata.", "automatic", "automatic", "machine.status.read"),
-      action("install", "Prepare a supported App installation handoff; user completes upstream installation/authentication.", "user-mediated", "user-mediated", undefined, "floral-extensions/prepare_app_install", "codex-app-installed"),
+      action("install", "Prepare a supported App installation handoff; user completes upstream installation/authentication.", "user-mediated", "user-mediated", undefined, "floral_extensions/prepare_app_install", "floral_extensions/verify_extension"),
       action("remove", "App removal is not exposed as a FLORAL production management action.", "unsupported", "not-applicable"),
     ],
     failureDomain: "codex",
@@ -265,7 +281,7 @@ export const DEFAULT_SYSTEM_DEFINITIONS: readonly SystemDefinition[] = [
     stateSources: [
       source("external-skill-registry", "registry", "authoritative", ["packages"], "Machine-local curated External Skill registry."),
     ],
-    managementActions: extensionLifecycleActions("external-skill-manager", "codex-skills"),
+    managementActions: extensionLifecycleActions("floral_extensions/apply_extension", "floral_extensions/verify_extension"),
     failureDomain: "third-party",
     tags: ["skill", "extension", "supply-chain"],
   }),
@@ -280,7 +296,7 @@ export const DEFAULT_SYSTEM_DEFINITIONS: readonly SystemDefinition[] = [
       source("external-mcp-registry", "registry", "authoritative", ["packages"], "Machine-local curated External MCP registry."),
       source("external-mcp-auth", "environment", "authoritative", ["auth_presence"], "Presence-only authentication prerequisites; credential values are never exposed."),
     ],
-    managementActions: extensionLifecycleActions("external-mcp-manager", "codex-mcp-status"),
+    managementActions: extensionLifecycleActions("floral_extensions/apply_extension", "floral_extensions/verify_extension"),
     secretDependencies: ["GITHUB_PAT_TOKEN"],
     failureDomain: "third-party",
     tags: ["mcp", "extension", "supply-chain"],

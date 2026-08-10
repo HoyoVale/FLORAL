@@ -37,6 +37,16 @@ import type {
   ExternalMcpMutationRequest,
 } from "../extensions/external-mcp-manager.js";
 import {
+  buildExtensionPlan,
+  buildExtensionVerification,
+  formatExtensionPlan,
+  formatExtensionVerification,
+  readExtensionControlTransactionFromSnapshot,
+  type ExtensionPlanIntent,
+  type ExtensionPlanKind,
+  type ExtensionVerificationResult,
+} from "../extensions/extension-control.js";
+import {
   CodexRpcClient,
   type CodexExitEvent,
   type CodexServerRequest,
@@ -222,6 +232,8 @@ export interface CodexAppServerOptions {
   manageExternalMcp?: ((
     request: ExternalMcpMutationRequest,
   ) => Promise<ExternalMcpManagementResult>) | undefined;
+  recordAppInstallHandoff?: ((appId: string) => Promise<{ transactionId: string }>) | undefined;
+  recordExtensionVerification?: ((result: ExtensionVerificationResult) => Promise<void>) | undefined;
   permissionProfile?: string | undefined;
   permissionProfileCwd?: string | undefined;
   systemAwareness?: CodexSystemAwarenessOptions | undefined;
@@ -254,9 +266,10 @@ export const FLORAL_AGENT_DEVELOPER_INSTRUCTIONS = [
   "- When the user explicitly asks to receive a screenshot or another already-registered artifact, call floral_delivery/send_artifact with the artifactId returned by the trusted producer. Never claim delivery unless that tool reports success.",
   "- For terminal-produced files, first create or copy the final attachment into <cwd>/artifacts/outbound, then call floral_delivery/register_outbound_file, then floral_delivery/send_artifact. Do not register or send arbitrary paths outside that staging root.",
   "- Manage Skills through floral_skills and Codex-native Skill discovery. Project Skills may be created under <cwd>/.agents/skills. Never edit data/external-skills/registry.json directly or use shell/git to bypass External Skill approval.",
-  "- Discover and manage supported extensions through floral_extensions. Use floral_system when current ownership, readiness, or management authority matters. Shared external MCP changes must use manage_mcp and user approval; never edit Codex config or run codex mcp/plugin installation commands through shell as a bypass.",
-  "- Extension control-plane routing overrides terminal-first application routing. After manage_mcp changes shared MCP state, the current turn's extension snapshot predates that mutation and cannot verify the reload. Do not inspect ~/.codex, process tables, package storage, or run codex mcp/plugin commands to verify it. End the current turn with verification pending; on the next turn use floral_extensions/mcp_status or the /mcp command. If FLORAL blocks a forbidden same-turn shell verification attempt, treat that block as a non-fatal control-plane redirect rather than evidence that the MCP installation failed.",
-  "- Extension operations not exposed by FLORAL are unsupported for this Agent turn. Never use shell, direct Codex config edits, or undocumented RPCs to bypass the governed extension surface; consult floral_system/capabilities for the current management contract.",
+  "- Discover and manage supported extensions through floral_extensions. Use floral_system when current ownership, readiness, or management authority matters. For a capability gap or extension lifecycle request, call floral_extensions/plan_extension first; treat its current_state/status/recommended_action as the deterministic control-plane plan for this frozen turn.",
+  "- Only call floral_extensions/apply_extension when plan_extension returns action-required and the requested exact action matches recommended_action. External MCP/Skill mutation remains one-shot software.install approval-gated. If the plan says no-op, prerequisite-required, diagnose-first, unknown, or unsupported, do not mutate merely to try. Apps are upstream/user-owned: use prepare_app_install only when the plan returns user-handoff; never silently install or authenticate an App.",
+  "- Extension control-plane routing overrides terminal-first application routing. After any controlled extension mutation or App install handoff, the current turn's extension/System Awareness snapshot predates the change and cannot verify adoption. End the current turn with verification pending. On a fresh next turn use floral_extensions/verify_extension; use mcp_status or system diagnostics only as supporting read-only views. Do not inspect ~/.codex, process tables, package storage, data/external-* registries, or run shell/git/npm/pnpm/codex extension commands to compensate.",
+  "- Legacy manage_mcp/manage_external remain compatibility routes but do not authorize bypassing the Phase 8E plan/apply/verify contract. Extension operations not exposed by FLORAL are unsupported for this Agent turn. Never use shell, direct Codex config edits, undocumented RPCs, arbitrary package sources, or package managers as an extension-install workaround; consult floral_system/capabilities for the current management contract.",
 ].join("\n");
 
 const FLORAL_SYSTEM_DEVELOPER_INSTRUCTIONS = [
@@ -433,7 +446,7 @@ const FLORAL_EXTENSIONS_DYNAMIC_TOOLS = [
   {
     type: "namespace",
     name: "floral_extensions",
-    description: "Codex-native App/MCP discovery plus FLORAL-controlled curated MCP lifecycle. Plugin catalog/install RPCs remain blocked because upstream marks them under development for production clients.",
+    description: "Phase 8E controlled extension surface: deterministic planning, one-shot governed curated External MCP/Skill mutation, user-mediated Codex App handoff, and fresh-turn verification. Plugin write RPCs remain outside the production contract.",
     tools: [
       {
         type: "function",
@@ -512,6 +525,49 @@ const FLORAL_EXTENSIONS_DYNAMIC_TOOLS = [
       },
       {
         type: "function",
+        name: "plan_extension",
+        description: "Build a deterministic, read-only activation/lifecycle plan for one curated MCP, curated External Skill package, or currently visible Codex App. This does not grant authorization or execute a mutation.",
+        inputSchema: {
+          type: "object",
+          properties: {
+            kind: { type: "string", enum: ["mcp", "skill", "app"] },
+            id: { type: "string", minLength: 1, maxLength: 160 },
+            intent: { type: "string", enum: ["activate", "update", "disable", "remove"] },
+          },
+          required: ["kind", "id"],
+          additionalProperties: false,
+        },
+        deferLoading: false,
+      },
+      {
+        type: "function",
+        name: "apply_extension",
+        description: "Apply one exact lifecycle action to a FLORAL-curated External MCP or External Skill package after one-shot FLORAL approval. Apps are never installed by this tool; use prepare_app_install for upstream user-mediated installation.",
+        inputSchema: {
+          type: "object",
+          properties: {
+            kind: { type: "string", enum: ["mcp", "skill"] },
+            action: { type: "string", enum: ["install", "update", "enable", "disable", "remove"] },
+            id: { type: "string", minLength: 1, maxLength: 160 },
+          },
+          required: ["kind", "action", "id"],
+          additionalProperties: false,
+        },
+        deferLoading: false,
+      },
+      {
+        type: "function",
+        name: "verify_extension",
+        description: "Verify the latest controlled extension transaction against this turn's frozen System Awareness evidence. Use only on a fresh turn after mutation or App handoff; no shell or direct config inspection is performed.",
+        inputSchema: {
+          type: "object",
+          properties: {},
+          additionalProperties: false,
+        },
+        deferLoading: false,
+      },
+      {
+        type: "function",
         name: "mcp_catalog",
         description: "List FLORAL-curated external MCP capabilities and their install/auth state. No secret values are returned.",
         inputSchema: {
@@ -535,7 +591,7 @@ const FLORAL_EXTENSIONS_DYNAMIC_TOOLS = [
       {
         type: "function",
         name: "manage_mcp",
-        description: "Install, enable, disable, or remove one curated external MCP capability. This is a machine-wide extension mutation and requires FLORAL user approval.",
+        description: "Compatibility lifecycle route for one curated external MCP. Phase 8E Agent behavior should use plan_extension then apply_extension. This remains one-shot FLORAL approval-gated and does not authorize shell/config bypasses.",
         inputSchema: {
           type: "object",
           properties: {
@@ -693,6 +749,8 @@ export class CodexAppServerRuntime implements AgentRuntime {
   readonly #manageExternalMcp: ((
     request: ExternalMcpMutationRequest,
   ) => Promise<ExternalMcpManagementResult>) | undefined;
+  readonly #recordAppInstallHandoff: ((appId: string) => Promise<{ transactionId: string }>) | undefined;
+  readonly #recordExtensionVerification: ((result: ExtensionVerificationResult) => Promise<void>) | undefined;
   readonly #permissionProfile: string | undefined;
   readonly #permissionProfileCwd: string | undefined;
   readonly #systemDefinitionRegistry: SystemDefinitionRegistry | undefined;
@@ -741,6 +799,8 @@ export class CodexAppServerRuntime implements AgentRuntime {
     this.#manageExternalSkill = options.manageExternalSkill;
     this.#externalMcpCatalog = options.externalMcpCatalog;
     this.#manageExternalMcp = options.manageExternalMcp;
+    this.#recordAppInstallHandoff = options.recordAppInstallHandoff;
+    this.#recordExtensionVerification = options.recordExtensionVerification;
     this.#permissionProfile = options.permissionProfile?.trim() || undefined;
     this.#permissionProfileCwd = options.permissionProfileCwd?.trim()
       ? resolve(options.permissionProfileCwd)
@@ -2503,6 +2563,194 @@ export class CodexAppServerRuntime implements AgentRuntime {
         throw new Error("extension snapshot unavailable");
       }
 
+      if (tool === "plan_extension") {
+        const kind = readExtensionPlanKind(argumentsValue.kind);
+        const id = readExtensionPlanTargetId(argumentsValue.id);
+        const intent = readExtensionPlanIntent(argumentsValue.intent);
+        const systemSnapshot = this.#systemSnapshots.get(threadId);
+        if (!kind || !id || (argumentsValue.intent !== undefined && !intent) || !systemSnapshot) {
+          this.#respondSafely(
+            request.id,
+            dynamicToolResponse(false, "extension_plan=denied\nreason=invalid-arguments-or-system-snapshot"),
+          );
+          return;
+        }
+        const plan = buildExtensionPlan(systemSnapshot, {
+          kind,
+          id,
+          ...(intent ? { intent } : {}),
+        });
+        this.#respondSafely(
+          request.id,
+          dynamicToolResponse(true, boundedDynamicToolText(formatExtensionPlan(plan))),
+        );
+        return;
+      }
+
+      if (tool === "verify_extension") {
+        const systemSnapshot = this.#systemSnapshots.get(threadId);
+        if (!systemSnapshot) {
+          this.#respondSafely(
+            request.id,
+            dynamicToolResponse(false, "extension_verification=denied\nreason=system-snapshot-unavailable"),
+          );
+          return;
+        }
+        const transaction = readExtensionControlTransactionFromSnapshot(systemSnapshot);
+        if (!transaction) {
+          this.#respondSafely(
+            request.id,
+            dynamicToolResponse(
+              true,
+              [
+                "FLORAL Controlled Extension Verification",
+                "status=unavailable",
+                "reason=no-controlled-extension-transaction-in-frozen-snapshot",
+                "execution_performed=false",
+              ].join("\n"),
+            ),
+          );
+          return;
+        }
+        const result = buildExtensionVerification(systemSnapshot, transaction);
+        if (this.#recordExtensionVerification) {
+          await this.#recordExtensionVerification(result).catch(() => undefined);
+        }
+        this.#respondSafely(
+          request.id,
+          dynamicToolResponse(true, boundedDynamicToolText(formatExtensionVerification(result))),
+        );
+        return;
+      }
+
+      if (tool === "apply_extension") {
+        const kind = readExtensionApplyKind(argumentsValue.kind);
+        const action = readExternalSkillAction(argumentsValue.action);
+        const id = readExtensionPlanTargetId(argumentsValue.id);
+        const systemSnapshot = this.#systemSnapshots.get(threadId);
+        if (!kind || !action || !id || !systemSnapshot) {
+          this.#respondSafely(
+            request.id,
+            dynamicToolResponse(false, "extension_apply=denied\nreason=invalid-arguments-or-system-snapshot"),
+          );
+          return;
+        }
+        const intent = extensionIntentForAction(action);
+        const plan = buildExtensionPlan(systemSnapshot, { kind, id, intent });
+        if (plan.status !== "action-required" || plan.recommendedAction !== action) {
+          this.#respondSafely(
+            request.id,
+            dynamicToolResponse(
+              false,
+              boundedDynamicToolText([
+                "extension_apply=denied",
+                "reason=plan-does-not-authorize-requested-action",
+                `plan_status=${plan.status}`,
+                `requested_action=${action}`,
+                `recommended_action=${plan.recommendedAction ?? "none"}`,
+                `current_state=${safeDynamicToolToken(plan.currentState)}`,
+                `next=${plan.verificationInterface}`,
+              ].join("\n")),
+            ),
+          );
+          return;
+        }
+
+        if (kind === "mcp") {
+          const mcpId = readExternalMcpId(id);
+          const mcpAction = readExternalMcpAction(action);
+          const handler = this.#extensionManagementApprovalHandlers.get(threadId);
+          if (!mcpId || !mcpAction || !handler || !this.#manageExternalMcp) {
+            this.#respondSafely(request.id, dynamicToolResponse(false, "extension_apply=denied\nreason=curated-mcp-handler-unavailable"));
+            return;
+          }
+          const approval: AgentApprovalRequest = {
+            requestId: `extension-${safeDynamicToolToken(readString(params?.callId) ?? String(request.id))}`,
+            kind: "extension-management",
+            capability: "software.install",
+            summary: `FLORAL Agent 请求按受控扩展计划修改 External MCP： action=${mcpAction} id=${mcpId}`,
+            source: "floral",
+          };
+          this.#eventHandlers.get(threadId)?.({
+            type: "approval.requested",
+            requestId: approval.requestId,
+            capability: approval.capability,
+            kind: approval.kind,
+            detail: { summary: approval.summary },
+          });
+          const decision = await handler(approval).catch(() => "deny" as const);
+          if (decision !== "approve") {
+            this.#respondSafely(request.id, dynamicToolResponse(false, "extension_apply=denied\nreason=user-approval"));
+            return;
+          }
+          const result = await this.#manageExternalMcp({ action: mcpAction, id: mcpId }).catch((error) => ({
+            changed: false,
+            registry: { version: 1 as const, packages: [] },
+            message: `external_mcp.${mcpAction}=failed reason=${safeDynamicToolToken(error instanceof Error ? error.name : "Error")}`,
+          }));
+          const succeeded = !result.message.includes("=failed");
+          if (succeeded && result.changed) this.#extensionMutationPendingVerification.add(threadId);
+          const transactionId = "transactionId" in result ? result.transactionId : undefined;
+          const resultText = succeeded
+            ? [
+                result.message,
+                ...(transactionId ? [`extension_transaction=${safeDynamicToolToken(transactionId)}`] : []),
+                "verification=pending-fresh-turn",
+                "verification_tool=floral_extensions/verify_extension",
+                "same_turn_verification=forbidden",
+                "shell_verification=forbidden",
+              ].join("\n")
+            : result.message;
+          this.#respondSafely(request.id, dynamicToolResponse(succeeded, boundedDynamicToolText(resultText)));
+          return;
+        }
+
+        const skillId = readExternalSkillId(id);
+        const handler = this.#skillManagementApprovalHandlers.get(threadId);
+        if (!skillId || !handler || !this.#manageExternalSkill) {
+          this.#respondSafely(request.id, dynamicToolResponse(false, "extension_apply=denied\nreason=curated-skill-handler-unavailable"));
+          return;
+        }
+        const approval: AgentApprovalRequest = {
+          requestId: `skill-${safeDynamicToolToken(readString(params?.callId) ?? String(request.id))}`,
+          kind: "skill-management",
+          capability: "software.install",
+          summary: `FLORAL Agent 请求按受控扩展计划修改 External Skill： action=${action} id=${skillId}`,
+          source: "floral",
+        };
+        this.#eventHandlers.get(threadId)?.({
+          type: "approval.requested",
+          requestId: approval.requestId,
+          capability: approval.capability,
+          kind: approval.kind,
+          detail: { summary: approval.summary },
+        });
+        const decision = await handler(approval).catch(() => "deny" as const);
+        if (decision !== "approve") {
+          this.#respondSafely(request.id, dynamicToolResponse(false, "extension_apply=denied\nreason=user-approval"));
+          return;
+        }
+        const result = await this.#manageExternalSkill({ action, id: skillId }).catch((error) => ({
+          changed: false,
+          message: `external_skills.${action}=failed\nreason=${safeDynamicToolToken(error instanceof Error ? error.name : "Error")}`,
+        }));
+        const succeeded = !result.message.includes("=failed");
+        if (succeeded && result.changed) this.#extensionMutationPendingVerification.add(threadId);
+        const transactionId = "transactionId" in result ? result.transactionId : undefined;
+        const resultText = succeeded
+          ? [
+              result.message,
+              ...(transactionId ? [`extension_transaction=${safeDynamicToolToken(transactionId)}`] : []),
+              "verification=pending-fresh-turn",
+              "verification_tool=floral_extensions/verify_extension",
+              "same_turn_verification=forbidden",
+              "shell_verification=forbidden",
+            ].join("\n")
+          : result.message;
+        this.#respondSafely(request.id, dynamicToolResponse(succeeded, boundedDynamicToolText(resultText)));
+        return;
+      }
+
       if (tool === "native_status") {
         if (!snapshot.features) {
           throw new Error("native feature snapshot unavailable");
@@ -2560,6 +2808,9 @@ export class CodexAppServerRuntime implements AgentRuntime {
           );
           return;
         }
+        const handoff = this.#recordAppInstallHandoff
+          ? await this.#recordAppInstallHandoff(selected.id).catch(() => undefined)
+          : undefined;
         this.#respondSafely(
           request.id,
           dynamicToolResponse(
@@ -2571,6 +2822,10 @@ export class CodexAppServerRuntime implements AgentRuntime {
               `install_url=${selected.installUrl}`,
               "surface=codex-supported-app-install-flow",
               "authentication=user-mediated",
+              ...(handoff ? [`extension_transaction=${safeDynamicToolToken(handoff.transactionId)}`] : []),
+              "verification=pending-fresh-turn-after-user-action",
+              "verification_tool=floral_extensions/verify_extension",
+              "same_turn_verification=forbidden",
               "post_install=start-new-session-and-verify-app-installed",
             ].join("\n"),
           ),
@@ -3652,6 +3907,38 @@ function readExternalMcpId(
   return value === "github-readonly" || value === "chrome-devtools"
     ? value
     : undefined;
+}
+
+function readExtensionPlanKind(value: unknown): ExtensionPlanKind | undefined {
+  return value === "mcp" || value === "skill" || value === "app" ? value : undefined;
+}
+
+function readExtensionApplyKind(value: unknown): "mcp" | "skill" | undefined {
+  return value === "mcp" || value === "skill" ? value : undefined;
+}
+
+function readExtensionPlanIntent(value: unknown): ExtensionPlanIntent | undefined {
+  if (value === undefined) return undefined;
+  return value === "activate" || value === "update" || value === "disable" || value === "remove"
+    ? value
+    : undefined;
+}
+
+function readExtensionPlanTargetId(value: unknown): string | undefined {
+  if (typeof value !== "string") return undefined;
+  const normalized = value.trim();
+  return /^[A-Za-z0-9][A-Za-z0-9._-]{0,159}$/u.test(normalized)
+    ? normalized
+    : undefined;
+}
+
+function extensionIntentForAction(
+  action: ExternalSkillMutationRequest["action"],
+): ExtensionPlanIntent {
+  if (action === "disable") return "disable";
+  if (action === "remove") return "remove";
+  if (action === "update") return "update";
+  return "activate";
 }
 
 function appendExplicitAppMentions(

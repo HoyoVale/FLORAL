@@ -92,6 +92,7 @@ export function buildSystemDiagnosticReport(
   for (const definition of targetDefinitions) {
     if (definition.id === "floral.service") diagnoseService(model, definition, findings);
     if (definition.id === "floral.maintenance") diagnoseMaintenance(model, definition, findings);
+    if (definition.id === "floral.extension_control") diagnoseExtensionControl(model, definition, findings);
     if (definition.id === "codex.apps") diagnoseApps(model, definition, findings);
     if (definition.id === "extensions.external_mcp") {
       diagnoseExternalMcp(model, definition, findings);
@@ -121,7 +122,6 @@ export function buildSystemDiagnosticReport(
     findings: ordered,
     executionPerformed: false,
     maintenanceEnabled: registry.has("floral.maintenance")
-      && Boolean(model.snapshot.components.find((component) => component.componentId === "floral.maintenance")?.observed)
       && registry.require("floral.service").managementActions.some((action) => action.id === "restart"),
   };
 }
@@ -376,6 +376,55 @@ function diagnoseMaintenance(
         check(1, "maintenance-policy", "Read the maintenance autonomy policy and latest receipt before the owner resets the breaker.", "floral_system/component_status"),
       ],
       limitations: ["An open circuit breaker intentionally blocks repeated automatic repair; owner-requested/manual maintenance remains separately governed."],
+    });
+  }
+}
+
+function diagnoseExtensionControl(
+  model: SystemReadModel,
+  definition: SystemDefinition,
+  findings: SystemDiagnosticFinding[],
+): void {
+  const transaction = factSnapshot(model, definition.id, "last_transaction");
+  const value = resolvedRecord(transaction);
+  if (!value) return;
+  const status = readString(value.status);
+  const kind = readString(value.kind) ?? "extension";
+  const target = readString(value.targetId) ?? "unknown";
+  const verification = readString(value.verification) ?? "unknown";
+  if (status === "failed") {
+    findings.push({
+      id: "floral.extension_control.last-transaction-failed",
+      componentId: definition.id,
+      severity: "warning",
+      status: "degraded",
+      impact: "degraded",
+      confidence: "high",
+      summary: `The latest governed ${kind} extension transaction for ${target} failed before fresh-turn verification.`,
+      candidateFailureDomains: ["floral", "third-party"],
+      evidence: compactEvidenceRefs([evidenceRefIf(definition.id, transaction)]),
+      checks: [
+        check(1, "extension-receipt", "Read the latest controlled-extension receipt and bounded error type.", "floral_system/component_status"),
+        check(2, "extension-plan", "Re-plan the requested capability from a fresh frozen snapshot before attempting another mutation.", "floral_extensions/plan_extension"),
+      ],
+      limitations: ["A failed lifecycle transaction does not prove the third-party extension source or service is the root cause."],
+    });
+  } else if (status === "degraded" || status === "prerequisite-required") {
+    findings.push({
+      id: `floral.extension_control.last-transaction-${status}`,
+      componentId: definition.id,
+      severity: status === "degraded" ? "warning" : "info",
+      status: status === "degraded" ? "degraded" : "unknown",
+      impact: status === "degraded" ? "degraded" : "none",
+      confidence: "high",
+      summary: `The latest governed ${kind} extension verification for ${target} is ${status}; verification=${verification}.`,
+      candidateFailureDomains: status === "degraded" ? ["codex", "third-party", "floral"] : ["third-party", "floral"],
+      evidence: compactEvidenceRefs([evidenceRefIf(definition.id, transaction)]),
+      checks: [
+        check(1, "extension-receipt", "Read the latest controlled-extension receipt.", "floral_system/component_status"),
+        check(2, "extension-plan", "Build a fresh read-only extension plan; do not reinstall merely to try.", "floral_extensions/plan_extension"),
+      ],
+      limitations: ["Extension verification is derived from fresh System Awareness evidence and remains distinct from authoritative runtime/registry facts."],
     });
   }
 }

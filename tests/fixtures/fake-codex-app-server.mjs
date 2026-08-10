@@ -22,6 +22,8 @@ function hasFloralRoutingPolicy(params) {
     && instructions.includes("floral_peekaboo/click")
     && instructions.includes("floral_delivery/send_artifact")
     && instructions.includes("local filesystem path")
+    && instructions.includes("call floral_extensions/plan_extension first")
+    && instructions.includes("floral_extensions/verify_extension")
     && instructions.includes("Extension control-plane routing overrides terminal-first")
     && instructions.includes("Do not inspect ~/.codex");
 }
@@ -61,14 +63,17 @@ function hasFloralExtensionTools(params) {
   if (!namespace || !Array.isArray(namespace.tools)) return false;
   const names = namespace.tools.map((tool) => tool?.name).sort();
   return JSON.stringify(names) === JSON.stringify([
+    "apply_extension",
     "available_apps",
     "installed_apps",
     "manage_mcp",
     "mcp_catalog",
     "mcp_status",
     "native_status",
+    "plan_extension",
     "prepare_app_install",
     "read_apps",
+    "verify_extension",
   ]);
 }
 
@@ -489,6 +494,8 @@ lines.on("line", (line) => {
     }
     if (
       (scenario === "extension-dynamic-tools"
+        || scenario === "extension-plan"
+        || scenario === "extension-apply-mcp"
         || scenario === "extension-installed-apps"
         || scenario === "extension-available-apps"
         || scenario === "extension-app-install-handoff"
@@ -1010,6 +1017,38 @@ lines.on("line", (line) => {
         return;
       }
 
+      if (scenario === "extension-apply-mcp") {
+        send({
+          id: "dynamic_1",
+          method: "item/tool/call",
+          params: {
+            threadId: activeThreadId,
+            turnId: activeTurnId,
+            callId: "call_extensions_apply_1",
+            namespace: "floral_extensions",
+            tool: "apply_extension",
+            arguments: { kind: "mcp", action: "install", id: "chrome-devtools" },
+          },
+        });
+        return;
+      }
+
+      if (scenario === "extension-plan") {
+        send({
+          id: "dynamic_1",
+          method: "item/tool/call",
+          params: {
+            threadId: activeThreadId,
+            turnId: activeTurnId,
+            callId: "call_extensions_plan_1",
+            namespace: "floral_extensions",
+            tool: "plan_extension",
+            arguments: { kind: "mcp", id: "chrome-devtools", intent: "activate" },
+          },
+        });
+        return;
+      }
+
       if (scenario === "extension-installed-apps") {
         send({
           id: "dynamic_1",
@@ -1516,6 +1555,31 @@ lines.on("line", (line) => {
       && text.includes("artifactId=artifact-screen-fixture")
     ) {
       sendSuccess(activeThreadId, activeTurnId, "delivery send complete");
+      return;
+    }
+    if (
+      scenario === "extension-apply-mcp"
+      && success === true
+      && text.includes("external_mcp.install=ok")
+      && text.includes("id=chrome-devtools")
+      && text.includes("verification=pending-fresh-turn")
+      && text.includes("verification_tool=floral_extensions/verify_extension")
+      && text.includes("same_turn_verification=forbidden")
+    ) {
+      sendSuccess(activeThreadId, activeTurnId, "extension apply complete");
+      return;
+    }
+    if (
+      scenario === "extension-plan"
+      && success === true
+      && text.includes("FLORAL Controlled Extension Plan")
+      && text.includes("kind=mcp")
+      && text.includes("id=chrome-devtools")
+      && text.includes("status=action-required")
+      && text.includes("recommended_action=install")
+      && text.includes("execution_performed=false")
+    ) {
+      sendSuccess(activeThreadId, activeTurnId, "extension plan complete");
       return;
     }
     if (

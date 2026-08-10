@@ -73,7 +73,15 @@ describe("configuration inventory", () => {
   it("validates catalog shape and extraction helpers", async () => {
     const catalog = await loadUpstreamConfigCatalog(repositoryRoot);
     expect(catalog.schemaVersion).toBe(1);
-    expect(Object.keys(catalog.environmentKeyPolicies)).toHaveLength(71);
+    const environmentKeys = Object.keys(catalog.environmentKeyPolicies);
+    expect(environmentKeys).toHaveLength(76);
+    expect(environmentKeys).toEqual(expect.arrayContaining([
+      "FLORAL_MAINTENANCE_MODE_CEILING",
+      "FLORAL_MAINTENANCE_MAX_ACTIONS_PER_HOUR",
+      "FLORAL_MAINTENANCE_COOLDOWN_MS",
+      "FLORAL_MAINTENANCE_FAILURE_THRESHOLD",
+      "FLORAL_MAINTENANCE_SELF_HEAL_INTERVAL_MS",
+    ]));
     expect(catalog.classifications).toEqual([
       "floral-owned",
       "upstream-managed",

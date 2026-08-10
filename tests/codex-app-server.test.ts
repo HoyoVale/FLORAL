@@ -662,6 +662,118 @@ describe("CodexAppServerRuntime", () => {
     }
   });
 
+  it("applies only the exact action authorized by the frozen extension plan and one-shot approval", async () => {
+    const registry = createDefaultSystemDefinitionRegistry();
+    let approvals = 0;
+    let mutations = 0;
+    const runtime = createRuntime("extension-apply-mcp", 5_000, {
+      systemAwareness: {
+        definitions: registry.list(),
+        snapshotProvider: async () => ({
+          schemaVersion: SYSTEM_AWARENESS_SCHEMA_VERSION,
+          generatedAt: "2026-08-10T00:00:00.000Z",
+          definitionFingerprint: registry.fingerprint(),
+          components: registry.list().map((definition) => {
+            if (definition.id === "extensions.external_mcp") {
+              return {
+                componentId: definition.id,
+                observed: true,
+                facts: [
+                  { fact: "packages", resolution: "resolved" as const, confidence: "authoritative" as const, value: [], evidence: [] },
+                  { fact: "auth_presence", resolution: "resolved" as const, confidence: "authoritative" as const, value: [], evidence: [] },
+                ],
+              };
+            }
+            if (definition.id === "codex.mcp") {
+              return { componentId: definition.id, observed: true, facts: [{ fact: "servers", resolution: "resolved" as const, confidence: "authoritative" as const, value: [], evidence: [] }] };
+            }
+            return { componentId: definition.id, observed: false, facts: [] };
+          }),
+          observers: [],
+        }),
+      },
+      manageExternalMcp: async (request) => {
+        mutations += 1;
+        expect(request).toEqual({ action: "install", id: "chrome-devtools" });
+        return {
+          changed: true,
+          message: "external_mcp.install=ok\nid=chrome-devtools",
+          registry: {
+            version: 1,
+            packages: [{
+              id: "chrome-devtools",
+              enabled: true,
+              installedAt: "2026-08-10T00:00:00.000Z",
+              updatedAt: "2026-08-10T00:00:00.000Z",
+            }],
+          },
+        };
+      },
+    });
+    try {
+      await runtime.start();
+      const result = await runtime.run({
+        text: "Install the curated Chrome DevTools extension through the controlled plan.",
+        cwd: process.cwd(),
+        extensionManagementApprovalHandler: async (request) => {
+          approvals += 1;
+          expect(request).toMatchObject({ kind: "extension-management", capability: "software.install", source: "floral" });
+          return "approve";
+        },
+      });
+      expect(result.finalText).toBe("extension apply complete");
+      expect(approvals).toBe(1);
+      expect(mutations).toBe(1);
+    } finally {
+      await runtime.stop();
+    }
+  });
+
+  it("plans a curated extension from the frozen System Awareness snapshot before mutation", async () => {
+    const registry = createDefaultSystemDefinitionRegistry();
+    const runtime = createRuntime("extension-plan", 5_000, {
+      systemAwareness: {
+        definitions: registry.list(),
+        snapshotProvider: async () => ({
+          schemaVersion: SYSTEM_AWARENESS_SCHEMA_VERSION,
+          generatedAt: "2026-08-10T00:00:00.000Z",
+          definitionFingerprint: registry.fingerprint(),
+          components: registry.list().map((definition) => {
+            if (definition.id === "extensions.external_mcp") {
+              return {
+                componentId: definition.id,
+                observed: true,
+                facts: [
+                  { fact: "packages", resolution: "resolved" as const, confidence: "authoritative" as const, value: [], evidence: [] },
+                  { fact: "auth_presence", resolution: "resolved" as const, confidence: "authoritative" as const, value: [], evidence: [] },
+                ],
+              };
+            }
+            if (definition.id === "codex.mcp") {
+              return {
+                componentId: definition.id,
+                observed: true,
+                facts: [{ fact: "servers", resolution: "resolved" as const, confidence: "authoritative" as const, value: [], evidence: [] }],
+              };
+            }
+            return { componentId: definition.id, observed: false, facts: [] };
+          }),
+          observers: [],
+        }),
+      },
+    });
+    try {
+      await runtime.start();
+      const result = await runtime.run({
+        text: "Plan the curated Chrome DevTools capability before changing anything.",
+        cwd: process.cwd(),
+      });
+      expect(result.finalText).toBe("extension plan complete");
+    } finally {
+      await runtime.stop();
+    }
+  });
+
   it("exposes read-only FLORAL extension discovery as client-hosted dynamic tools", async () => {
     const runtime = createRuntime("extension-installed-apps");
     try {

@@ -24,6 +24,8 @@ export interface ExternalMcpManagementResult {
   changed: boolean;
   message: string;
   registry: ExternalMcpRegistry;
+  serverId?: string | undefined;
+  transactionId?: string | undefined;
 }
 
 export interface ExternalMcpCatalogStatus {
@@ -162,6 +164,7 @@ export class ExternalMcpHostManager {
     return {
       changed,
       registry: effective,
+      serverId: catalog.serverId,
       message: [
         `external_mcp.${request.action}=${changed ? "ok" : "unchanged"}`,
         `id=${request.id}`,

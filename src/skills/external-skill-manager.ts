@@ -37,6 +37,8 @@ export interface ExternalSkillMutationRequest {
 export interface ExternalSkillManagementResult {
   changed: boolean;
   message: string;
+  skillNames?: string[] | undefined;
+  transactionId?: string | undefined;
 }
 
 export interface ExternalSkillPackageStatus {
@@ -247,6 +249,7 @@ export class ExternalSkillManager {
 
       return {
         changed: true,
+        skillNames: validated.skillNames,
         message: [
           `external_skills.${mode}=ok`,
           `id=${id}`,
@@ -289,8 +292,8 @@ export class ExternalSkillManager {
       };
     }
 
-    let skillCount: number | undefined;
-    if (enabled) {
+    let skillNames: string[] | undefined;
+    {
       const checkout = join(
         this.#paths.packagesRoot,
         id,
@@ -300,12 +303,14 @@ export class ExternalSkillManager {
         checkout,
         existing.skillSubdir,
       );
-      skillCount = validated.skillNames.length;
-      await this.#assertNoEnabledSkillNameCollisions(
-        id,
-        validated.skillNames,
-        registry,
-      );
+      skillNames = validated.skillNames;
+      if (enabled) {
+        await this.#assertNoEnabledSkillNameCollisions(
+          id,
+          validated.skillNames,
+          registry,
+        );
+      }
     }
 
     await writeExternalSkillRegistry(this.#paths, {
@@ -323,15 +328,14 @@ export class ExternalSkillManager {
 
     return {
       changed: true,
+      ...(skillNames ? { skillNames } : {}),
       message: [
         `external_skills.${enabled ? "enable" : "disable"}=ok`,
         `id=${id}`,
         `enabled=${String(enabled)}`,
         `ref=${existing.ref}`,
         `commit=${existing.commit}`,
-        ...(skillCount !== undefined
-          ? [`skills=${String(skillCount)}`]
-          : []),
+        ...(skillNames ? [`skills=${String(skillNames.length)}`] : []),
       ].join("\n"),
     };
   }
@@ -344,6 +348,10 @@ export class ExternalSkillManager {
     if (!existing) throw new Error(`${id} is not installed`);
 
     const finalPackage = join(this.#paths.packagesRoot, id);
+    const validated = await validateExternalSkillCheckout(
+      join(finalPackage, "repository"),
+      existing.skillSubdir,
+    );
     const backupPackage =
       `${finalPackage}.remove-${String(process.pid)}-${Date.now().toString(36)}`;
 
@@ -361,6 +369,7 @@ export class ExternalSkillManager {
 
     return {
       changed: true,
+      skillNames: validated.skillNames,
       message: [
         "external_skills.remove=ok",
         `id=${id}`,

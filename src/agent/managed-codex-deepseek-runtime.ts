@@ -62,6 +62,7 @@ import {
   type ExternalSkillMutationRequest,
 } from "../skills/external-skill-manager.js";
 import {
+  CURATED_EXTERNAL_MCP,
   EXTERNAL_MCP_REGISTRY_VERSION,
   externalMcpRegistryFingerprint,
   renderExternalMcpOverlay,
@@ -72,6 +73,11 @@ import {
   type ExternalMcpManagementResult,
   type ExternalMcpMutationRequest,
 } from "../extensions/external-mcp-manager.js";
+import {
+  ExtensionControlLedger,
+  resolveExtensionControlDirectory,
+  type ExtensionVerificationResult,
+} from "../extensions/extension-control.js";
 import {
   createDefaultSystemAwarenessReader,
   createDefaultSystemDefinitionRegistry,
@@ -140,6 +146,8 @@ export interface ManagedCodexDeepSeekDependencies {
     manageExternalMcp: (
       request: ExternalMcpMutationRequest,
     ) => Promise<ExternalMcpManagementResult>;
+    recordAppInstallHandoff: (appId: string) => Promise<{ transactionId: string }>;
+    recordExtensionVerification: (result: ExtensionVerificationResult) => Promise<void>;
     permissionProfile?: string | undefined;
     permissionProfileCwd?: string | undefined;
   }) => AgentRuntime) | undefined;
@@ -200,6 +208,7 @@ export class ManagedCodexDeepSeekRuntime implements AgentRuntime {
     packages: [],
   };
   #externalMcpMutationTail: Promise<void> = Promise.resolve();
+  #extensionControlLedger: ExtensionControlLedger | undefined;
   #stopped = false;
 
   constructor(
@@ -392,6 +401,7 @@ export class ManagedCodexDeepSeekRuntime implements AgentRuntime {
       packages: [],
     };
     this.#externalMcpMutationTail = Promise.resolve();
+    this.#extensionControlLedger = undefined;
 
     await Promise.all(
       projectSlots.map(async (slot) => {
@@ -666,6 +676,13 @@ export class ManagedCodexDeepSeekRuntime implements AgentRuntime {
       externalMcpCatalog: async () => await this.#externalMcpCatalogText(),
       manageExternalMcp: async (request: ExternalMcpMutationRequest) =>
         await this.#manageExternalMcp(request),
+      recordAppInstallHandoff: async (appId: string) => {
+        const transaction = await this.#extensionControlLedgerForRuntime().recordAppHandoff(appId);
+        return { transactionId: transaction.id };
+      },
+      recordExtensionVerification: async (result: ExtensionVerificationResult) => {
+        await this.#extensionControlLedgerForRuntime().recordVerification(result);
+      },
       ...(permissionScope
         ? {
             permissionProfile: permissionScope.profile,
@@ -704,9 +721,33 @@ export class ManagedCodexDeepSeekRuntime implements AgentRuntime {
   async #manageExternalSkillOnce(
     request: ExternalSkillMutationRequest,
   ): Promise<ExternalSkillManagementResult> {
-    const result = await (this.dependencies.manageExternalSkill?.(request)
-      ?? this.#externalSkillManagerForRuntime().manage(request));
-    if (!result.changed) return result;
+    let result: ExternalSkillManagementResult;
+    try {
+      result = await (this.dependencies.manageExternalSkill?.(request)
+        ?? this.#externalSkillManagerForRuntime().manage(request));
+    } catch (error) {
+      await this.#extensionControlLedgerForRuntime().recordFailure({
+        kind: "external-skill",
+        targetId: request.id,
+        action: request.action,
+        error,
+      }).catch(() => undefined);
+      throw error;
+    }
+    const transaction = await this.#extensionControlLedgerForRuntime().recordMutation({
+      kind: "external-skill",
+      targetId: request.id,
+      action: request.action,
+      changed: result.changed,
+      ...(result.skillNames ? { expectedSkillNames: result.skillNames } : {}),
+    });
+    if (!result.changed) {
+      return {
+        ...result,
+        transactionId: transaction.id,
+        message: `${result.message}\nextension_transaction=${transaction.id}\nverification=next-turn`,
+      };
+    }
 
     const externalRoots = await (this.dependencies.resolveExternalSkillRoots?.()
       ?? this.#externalSkillManagerForRuntime().enabledRoots(true));
@@ -725,7 +766,8 @@ export class ManagedCodexDeepSeekRuntime implements AgentRuntime {
     });
     return {
       ...result,
-      message: `${result.message}\nhot_reload=scheduled\nrestart_required=false`,
+      transactionId: transaction.id,
+      message: `${result.message}\nhot_reload=scheduled\nrestart_required=false\nextension_transaction=${transaction.id}\nverification=next-turn`,
     };
   }
 
@@ -795,9 +837,33 @@ export class ManagedCodexDeepSeekRuntime implements AgentRuntime {
   async #manageExternalMcpOnce(
     request: ExternalMcpMutationRequest,
   ): Promise<ExternalMcpManagementResult> {
-    const result = await (this.dependencies.manageExternalMcp?.(request)
-      ?? this.#externalMcpManagerForRuntime().mutate(request));
-    if (!result.changed) return result;
+    let result: ExternalMcpManagementResult;
+    try {
+      result = await (this.dependencies.manageExternalMcp?.(request)
+        ?? this.#externalMcpManagerForRuntime().mutate(request));
+    } catch (error) {
+      await this.#extensionControlLedgerForRuntime().recordFailure({
+        kind: "external-mcp",
+        targetId: request.id,
+        action: request.action,
+        error,
+      }).catch(() => undefined);
+      throw error;
+    }
+    const transaction = await this.#extensionControlLedgerForRuntime().recordMutation({
+      kind: "external-mcp",
+      targetId: request.id,
+      action: request.action,
+      changed: result.changed,
+      expectedServerId: result.serverId ?? CURATED_EXTERNAL_MCP[request.id].serverId,
+    });
+    if (!result.changed) {
+      return {
+        ...result,
+        transactionId: transaction.id,
+        message: `${result.message}\nextension_transaction=${transaction.id}\nverification=next-turn`,
+      };
+    }
     this.#externalMcpRegistry = result.registry;
     const registry = structuredClone(result.registry);
     setImmediate(() => {
@@ -809,8 +875,19 @@ export class ManagedCodexDeepSeekRuntime implements AgentRuntime {
     });
     return {
       ...result,
-      message: `${result.message}\nhot_reload=scheduled`,
+      transactionId: transaction.id,
+      message: `${result.message}\nhot_reload=scheduled\nextension_transaction=${transaction.id}\nverification=next-turn`,
     };
+  }
+
+  #extensionControlLedgerForRuntime(): ExtensionControlLedger {
+    if (!this.#extensionControlLedger) {
+      this.#extensionControlLedger = new ExtensionControlLedger({
+        directory: resolveExtensionControlDirectory(process.cwd(), this.env.DATA_DIR),
+      });
+      void this.#extensionControlLedger.initialize().catch(() => undefined);
+    }
+    return this.#extensionControlLedger;
   }
 
   #externalMcpManagerForRuntime(): ExternalMcpHostManager {
@@ -1270,6 +1347,8 @@ function createCodexRuntime(
     manageExternalMcp: (
       request: ExternalMcpMutationRequest,
     ) => Promise<ExternalMcpManagementResult>;
+    recordAppInstallHandoff: (appId: string) => Promise<{ transactionId: string }>;
+    recordExtensionVerification: (result: ExtensionVerificationResult) => Promise<void>;
     permissionProfile?: string | undefined;
     permissionProfileCwd?: string | undefined;
   },
@@ -1325,6 +1404,8 @@ function createCodexRuntime(
     manageExternalSkill: execution.manageExternalSkill,
     externalMcpCatalog: execution.externalMcpCatalog,
     manageExternalMcp: execution.manageExternalMcp,
+    recordAppInstallHandoff: execution.recordAppInstallHandoff,
+    recordExtensionVerification: execution.recordExtensionVerification,
     permissionProfile: execution.permissionProfile,
     permissionProfileCwd: execution.permissionProfileCwd,
     ...(systemRuntime ? { systemAwareness: systemRuntime } : {}),
