@@ -59,6 +59,7 @@ import {
   FloralSystemToolController,
   type CodexSystemAwarenessOptions,
 } from "./floral-system-tools.js";
+import { FloralExtensionSnapshotStore } from "./floral-extension-snapshot.js";
 export type { CodexSystemAwarenessOptions } from "./floral-system-tools.js";
 
 interface ThreadResponse {
@@ -146,15 +147,6 @@ interface ExperimentalFeatureListResponse {
     defaultEnabled?: unknown;
   }> | undefined;
   nextCursor?: unknown;
-}
-
-interface ExtensionDiscoverySnapshot {
-  features?: AgentNativeFeatureSummary[] | undefined;
-  installedApps?: AgentAppSummary[] | undefined;
-  availableApps?: AgentAppSummary[] | undefined;
-  appDetails?: AgentAppReadResult | undefined;
-  mcpServers?: AgentMcpServerSummary[] | undefined;
-  errors: string[];
 }
 
 interface TurnCompletedParams {
@@ -760,7 +752,7 @@ export class CodexAppServerRuntime implements AgentRuntime {
   readonly #artifactRegistrationHandlers = new Map<string, AgentArtifactRegistrationHandler>();
   readonly #artifactDeliveryHandlers = new Map<string, AgentArtifactDeliveryHandler>();
   readonly #threadCwds = new Map<string, string>();
-  readonly #extensionSnapshots = new Map<string, ExtensionDiscoverySnapshot>();
+  readonly #extensionSnapshots: FloralExtensionSnapshotStore;
   readonly #extensionMutationPendingVerification = new Set<string>();
   readonly #extensionVerificationShellSoftBlocked = new Set<string>();
   readonly #contextTools = new FloralContextToolController();
@@ -799,6 +791,16 @@ export class CodexAppServerRuntime implements AgentRuntime {
       ? resolve(options.permissionProfileCwd)
       : undefined;
     this.#systemTools = new FloralSystemToolController(options.systemAwareness);
+    this.#extensionSnapshots = new FloralExtensionSnapshotStore({
+      listFeatures: async (cwd) => await this.listNativeExtensionFeatures({ cwd }),
+      listInstalledApps: async (cwd, threadId) =>
+        await this.listInstalledApps({ cwd, threadId, forceRefresh: false }),
+      listAvailableApps: async (cwd, threadId) =>
+        await this.listAvailableApps({ cwd, threadId, forceRefresh: false }),
+      listMcpServers: async (cwd, threadId) => await this.listMcpServers({ cwd, threadId }),
+      readApps: async (cwd, appIds) =>
+        await this.readApps({ cwd, appIds, includeTools: true }),
+    });
     this.#client.on("serverRequest", (request: CodexServerRequest) => {
       void this.#handleServerRequest(request).catch(() => {
         this.#respondSafely(request.id, undefined, {
@@ -1165,7 +1167,7 @@ export class CodexAppServerRuntime implements AgentRuntime {
     this.#artifactDeliveryHandlers.delete(normalized);
     this.#threadCwds.delete(normalized);
     this.#contextTools.clearThread(normalized);
-    this.#extensionSnapshots.delete(normalized);
+    this.#extensionSnapshots.clearThread(normalized);
     this.#systemTools.clearThread(normalized);
     this.#extensionMutationPendingVerification.delete(normalized);
     this.#extensionVerificationShellSoftBlocked.delete(normalized);
@@ -1395,7 +1397,7 @@ export class CodexAppServerRuntime implements AgentRuntime {
             },
       };
 
-      await this.#refreshExtensionSnapshot(threadId, cwd);
+      await this.#extensionSnapshots.capture(threadId, cwd);
       await this.#systemTools.captureSnapshot(threadId, cwd, executionContext);
       const turnInput: Array<Record<string, unknown>> = [
         { type: "text", text: request.text },
@@ -1537,7 +1539,7 @@ export class CodexAppServerRuntime implements AgentRuntime {
       this.#artifactDeliveryHandlers.delete(threadId);
       this.#threadCwds.delete(threadId);
       this.#contextTools.clearThread(threadId);
-      this.#extensionSnapshots.delete(threadId);
+      this.#extensionSnapshots.clearThread(threadId);
       this.#systemTools.clearThread(threadId);
       this.#extensionMutationPendingVerification.delete(threadId);
       this.#extensionVerificationShellSoftBlocked.delete(threadId);
@@ -2173,70 +2175,6 @@ export class CodexAppServerRuntime implements AgentRuntime {
         "skill_management=denied\nreason=unsupported-tool",
       ),
     );
-  }
-
-  async #refreshExtensionSnapshot(
-    threadId: string,
-    cwd: string,
-  ): Promise<void> {
-    const snapshot: ExtensionDiscoverySnapshot = { errors: [] };
-    const [featureResult, installedResult, availableResult, mcpResult] = await Promise.allSettled([
-      this.listNativeExtensionFeatures({ cwd }),
-      this.listInstalledApps({ cwd, threadId, forceRefresh: false }),
-      this.listAvailableApps({ cwd, threadId, forceRefresh: false }),
-      this.listMcpServers({ cwd, threadId }),
-    ]);
-
-    if (featureResult.status === "fulfilled") {
-      snapshot.features = featureResult.value;
-    } else {
-      snapshot.errors.push("experimentalFeature/list");
-    }
-
-    if (installedResult.status === "fulfilled") {
-      snapshot.installedApps = installedResult.value;
-    } else {
-      snapshot.errors.push("app/installed");
-    }
-
-    if (availableResult.status === "fulfilled") {
-      snapshot.availableApps = availableResult.value;
-    } else {
-      snapshot.errors.push("app/list");
-    }
-
-    const appIds = [...new Set([
-      ...(snapshot.installedApps ?? []).map((app) => app.id),
-      ...(snapshot.availableApps ?? []).map((app) => app.id),
-    ])].slice(0, 100);
-    if (appIds.length > 0) {
-      try {
-        snapshot.appDetails = await this.readApps({
-          cwd,
-          appIds,
-          includeTools: true,
-        });
-      } catch {
-        snapshot.errors.push("app/read");
-      }
-    } else {
-      snapshot.appDetails = { apps: [], missingAppIds: [] };
-    }
-
-    if (mcpResult.status === "fulfilled") {
-      snapshot.mcpServers = mcpResult.value;
-    } else {
-      snapshot.errors.push("mcpServerStatus/list");
-    }
-
-    this.#extensionSnapshots.set(threadId, snapshot);
-    if (snapshot.errors.length > 0) {
-      process.stderr.write(
-        `agent.stack.extensions.snapshot=partial:${snapshot.errors.join(",")}\n`,
-      );
-    } else {
-      process.stderr.write("agent.stack.extensions.snapshot=ok\n");
-    }
   }
 
   async #handleSystemDynamicToolCall(
