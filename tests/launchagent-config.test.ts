@@ -1,6 +1,6 @@
 import { chmod, mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { delimiter, join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import {
   buildServicePath,
@@ -168,5 +168,22 @@ describe("LaunchAgent configuration", () => {
     );
     expect(value).toContain("/usr/bin");
     if (process.platform !== "win32") expect(value).toContain(directory);
+  });
+
+  it("discovers a user-local executable without inheriting the whole shell path", async () => {
+    const directory = await mkdtemp(join(tmpdir(), "floral-user-bin-"));
+    directories.push(directory);
+    const executable = join(directory, "codex");
+    await writeFile(executable, "#!/bin/sh\n");
+    if (process.platform !== "win32") await chmod(executable, 0o700);
+
+    const value = await buildServicePath(
+      ["codex"],
+      ["/usr/bin", "/bin", "/untrusted/shell/bin"].join(delimiter),
+      [directory],
+    );
+
+    expect(value.split(delimiter)).toContain(directory);
+    expect(value).not.toContain("/untrusted/shell/bin");
   });
 });

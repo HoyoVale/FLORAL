@@ -88,8 +88,9 @@ export function renderLaunchAgentPlist(options: LaunchAgentPlistOptions): string
 export async function buildServicePath(
   commands: string[],
   sourcePath = process.env.PATH ?? "",
+  trustedDiscoveryDirectories: string[] = [],
 ): Promise<string> {
-  const directories = new Set<string>([
+  const serviceDirectories = new Set<string>([
     "/opt/homebrew/bin",
     "/usr/local/bin",
     "/usr/bin",
@@ -97,13 +98,19 @@ export async function buildServicePath(
     "/usr/sbin",
     "/sbin",
   ]);
+  const discoveryDirectories = new Set<string>([
+    ...sourcePath.split(delimiter).filter(Boolean),
+    ...serviceDirectories,
+    ...trustedDiscoveryDirectories.map((directory) => resolve(directory)),
+  ]);
+  const discoveryPath = [...discoveryDirectories].join(delimiter);
 
   for (const command of commands) {
-    const executable = await resolveExecutable(command, sourcePath);
-    directories.add(dirname(executable));
+    const executable = await resolveExecutable(command, discoveryPath);
+    serviceDirectories.add(dirname(executable));
   }
 
-  return [...directories].join(":");
+  return [...serviceDirectories].join(delimiter);
 }
 
 export async function resolveExecutable(

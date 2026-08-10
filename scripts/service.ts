@@ -135,8 +135,9 @@ async function doctor(): Promise<void> {
   const runtimeEnv = requireValidEnv();
   await ensureBuild();
   await ensurePrivateEnv(runtimeEnv);
-  const codex = await resolveExecutable(runtimeEnv.CODEX_COMMAND);
-  const npx = await resolveExecutable("npx");
+  const servicePath = await resolveServicePath(runtimeEnv);
+  const codex = await resolveExecutable(runtimeEnv.CODEX_COMMAND, servicePath);
+  const npx = await resolveExecutable("npx", servicePath);
   const node = process.execPath;
   await access(node, constants.X_OK);
   const search = await checkSearxng(
@@ -164,11 +165,7 @@ async function install(): Promise<void> {
   await prepareLaunchAgentUserPaths(launchAgentUserPaths);
   await mkdir(join(repositoryRoot, "data"), { recursive: true, mode: 0o700 });
 
-  const servicePath = await buildServicePath([
-    process.execPath,
-    runtimeEnv.CODEX_COMMAND,
-    "npx",
-  ]);
+  const servicePath = await resolveServicePath(runtimeEnv);
   const plist = renderLaunchAgentPlist({
     projectDir: repositoryRoot,
     workingDirectory: launchAgentUserPaths.runtimeDir,
@@ -201,6 +198,14 @@ async function install(): Promise<void> {
   console.log(`service.runtime_dir=${launchAgentUserPaths.runtimeDir}`);
   console.log(`service.log_dir=${launchAgentUserPaths.logDir}`);
   console.log("service.install=ok");
+}
+
+async function resolveServicePath(runtimeEnv: AppEnv): Promise<string> {
+  return await buildServicePath(
+    [process.execPath, runtimeEnv.CODEX_COMMAND, "npx"],
+    process.env.PATH ?? "",
+    [join(homedir(), ".local", "bin")],
+  );
 }
 
 async function start(): Promise<void> {
