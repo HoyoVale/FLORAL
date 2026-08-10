@@ -18,7 +18,6 @@ import type {
   AgentRunRequest,
   AgentRunResult,
   AgentSystemMaintenanceHandler,
-  AgentSystemMaintenanceResult,
 } from "../core/types.js";
 import {
   CodexRuntimeError,
@@ -51,23 +50,16 @@ import {
   type CodexExitEvent,
   type CodexServerRequest,
 } from "./codex-rpc-client.js";
-import {
-  SystemDefinitionRegistry,
-  buildSystemDiagnosticReport,
-  formatSystemCapabilities,
-  formatSystemComponentStatus,
-  formatSystemDiagnostics,
-  formatSystemRuntimeContext,
-  formatSystemSummary,
-  type SystemDefinition,
-  type SystemObservationContext,
-  type SystemReadModel,
-  type SystemSnapshot,
-} from "../system-awareness/index.js";
+import type { SystemObservationContext } from "../system-awareness/index.js";
 import {
   FloralContextToolController,
   FLORAL_CONTEXT_DYNAMIC_TOOLS,
 } from "./floral-context-tools.js";
+import {
+  FloralSystemToolController,
+  type CodexSystemAwarenessOptions,
+} from "./floral-system-tools.js";
+export type { CodexSystemAwarenessOptions } from "./floral-system-tools.js";
 
 interface ThreadResponse {
   thread: { id: string };
@@ -208,11 +200,6 @@ interface ErrorNotificationParams {
   threadId?: string;
   turnId?: string;
   error?: unknown;
-}
-
-export interface CodexSystemAwarenessOptions {
-  definitions: readonly SystemDefinition[];
-  snapshotProvider: (context: SystemObservationContext) => Promise<SystemSnapshot>;
 }
 
 export interface CodexAppServerOptions {
@@ -760,8 +747,7 @@ export class CodexAppServerRuntime implements AgentRuntime {
   readonly #recordExtensionVerification: ((result: ExtensionVerificationResult) => Promise<void>) | undefined;
   readonly #permissionProfile: string | undefined;
   readonly #permissionProfileCwd: string | undefined;
-  readonly #systemDefinitionRegistry: SystemDefinitionRegistry | undefined;
-  readonly #systemSnapshotProvider: ((context: SystemObservationContext) => Promise<SystemSnapshot>) | undefined;
+  readonly #systemTools: FloralSystemToolController;
   readonly #loadedThreads = new Set<string>();
   readonly #activeTurns = new Map<string, string>();
   readonly #eventHandlers = new Map<string, (event: AgentEvent) => void>();
@@ -775,7 +761,6 @@ export class CodexAppServerRuntime implements AgentRuntime {
   readonly #artifactDeliveryHandlers = new Map<string, AgentArtifactDeliveryHandler>();
   readonly #threadCwds = new Map<string, string>();
   readonly #extensionSnapshots = new Map<string, ExtensionDiscoverySnapshot>();
-  readonly #systemSnapshots = new Map<string, SystemSnapshot>();
   readonly #extensionMutationPendingVerification = new Set<string>();
   readonly #extensionVerificationShellSoftBlocked = new Set<string>();
   readonly #contextTools = new FloralContextToolController();
@@ -813,10 +798,7 @@ export class CodexAppServerRuntime implements AgentRuntime {
     this.#permissionProfileCwd = options.permissionProfileCwd?.trim()
       ? resolve(options.permissionProfileCwd)
       : undefined;
-    this.#systemDefinitionRegistry = options.systemAwareness
-      ? new SystemDefinitionRegistry(options.systemAwareness.definitions)
-      : undefined;
-    this.#systemSnapshotProvider = options.systemAwareness?.snapshotProvider;
+    this.#systemTools = new FloralSystemToolController(options.systemAwareness);
     this.#client.on("serverRequest", (request: CodexServerRequest) => {
       void this.#handleServerRequest(request).catch(() => {
         this.#respondSafely(request.id, undefined, {
@@ -1184,7 +1166,7 @@ export class CodexAppServerRuntime implements AgentRuntime {
     this.#threadCwds.delete(normalized);
     this.#contextTools.clearThread(normalized);
     this.#extensionSnapshots.delete(normalized);
-    this.#systemSnapshots.delete(normalized);
+    this.#systemTools.clearThread(normalized);
     this.#extensionMutationPendingVerification.delete(normalized);
     this.#extensionVerificationShellSoftBlocked.delete(normalized);
     this.#deleteApprovalItemSummaries(normalized);
@@ -1414,7 +1396,7 @@ export class CodexAppServerRuntime implements AgentRuntime {
       };
 
       await this.#refreshExtensionSnapshot(threadId, cwd);
-      await this.#refreshSystemSnapshot(threadId, cwd, executionContext);
+      await this.#systemTools.captureSnapshot(threadId, cwd, executionContext);
       const turnInput: Array<Record<string, unknown>> = [
         { type: "text", text: request.text },
       ];
@@ -1556,7 +1538,7 @@ export class CodexAppServerRuntime implements AgentRuntime {
       this.#threadCwds.delete(threadId);
       this.#contextTools.clearThread(threadId);
       this.#extensionSnapshots.delete(threadId);
-      this.#systemSnapshots.delete(threadId);
+      this.#systemTools.clearThread(threadId);
       this.#extensionMutationPendingVerification.delete(threadId);
       this.#extensionVerificationShellSoftBlocked.delete(threadId);
       this.#deleteApprovalItemSummaries(threadId);
@@ -1592,7 +1574,7 @@ export class CodexAppServerRuntime implements AgentRuntime {
     this.#artifactDeliveryHandlers.clear();
     this.#threadCwds.clear();
     this.#extensionSnapshots.clear();
-    this.#systemSnapshots.clear();
+    this.#systemTools.clear();
     this.#extensionMutationPendingVerification.clear();
     this.#extensionVerificationShellSoftBlocked.clear();
     this.#contextTools.clear();
@@ -1622,9 +1604,7 @@ export class CodexAppServerRuntime implements AgentRuntime {
     // ceiling is applied immediately before every turn via turn/start below.
     // This avoids app-server's thread/start project-trust/config mutation path
     // while preserving one-turn-at-a-time FLORAL authorization semantics.
-    const systemAwarenessEnabled = Boolean(
-      this.#systemSnapshotProvider && this.#systemDefinitionRegistry,
-    );
+    const systemAwarenessEnabled = this.#systemTools.enabled;
     const params: Record<string, unknown> = {
       cwd,
       developerInstructions: systemAwarenessEnabled
@@ -1650,9 +1630,7 @@ export class CodexAppServerRuntime implements AgentRuntime {
 
     // Resuming only restores conversation history. Current approval/sandbox
     // policy is always re-applied by the following turn/start request.
-    const systemAwarenessEnabled = Boolean(
-      this.#systemSnapshotProvider && this.#systemDefinitionRegistry,
-    );
+    const systemAwarenessEnabled = this.#systemTools.enabled;
     const response = await this.#client.request<ThreadResponse>("thread/resume", {
       threadId,
       developerInstructions: systemAwarenessEnabled
@@ -2197,38 +2175,6 @@ export class CodexAppServerRuntime implements AgentRuntime {
     );
   }
 
-  async #refreshSystemSnapshot(
-    threadId: string,
-    cwd: string,
-    execution?: SystemObservationContext["execution"],
-  ): Promise<void> {
-    const provider = this.#systemSnapshotProvider;
-    const registry = this.#systemDefinitionRegistry;
-    if (!provider || !registry) return;
-
-    try {
-      const snapshot = await provider({
-        cwd,
-        threadId,
-        ...(execution ? { execution } : {}),
-      });
-      if (snapshot.definitionFingerprint !== registry.fingerprint()) {
-        throw new Error("System snapshot definition fingerprint mismatch");
-      }
-      this.#systemSnapshots.set(threadId, snapshot);
-      process.stderr.write(
-        `agent.stack.system_awareness.snapshot=ok:${String(snapshot.components.length)}\n`,
-      );
-    } catch (error) {
-      this.#systemSnapshots.delete(threadId);
-      process.stderr.write(
-        `agent.stack.system_awareness.snapshot=failed:${safeDynamicToolToken(
-          error instanceof Error ? error.name : "Error",
-        )}\n`,
-      );
-    }
-  }
-
   async #refreshExtensionSnapshot(
     threadId: string,
     cwd: string,
@@ -2302,8 +2248,6 @@ export class CodexAppServerRuntime implements AgentRuntime {
     const namespace = readString(params?.namespace);
     const tool = readString(params?.tool);
     const activeTurnId = threadId ? this.#activeTurns.get(threadId) : undefined;
-    const registry = this.#systemDefinitionRegistry;
-    const snapshot = threadId ? this.#systemSnapshots.get(threadId) : undefined;
 
     if (
       !threadId
@@ -2311,8 +2255,6 @@ export class CodexAppServerRuntime implements AgentRuntime {
       || activeTurnId !== turnId
       || namespace !== "floral_system"
       || !tool
-      || !registry
-      || !snapshot
     ) {
       this.#respondSafely(
         request.id,
@@ -2330,118 +2272,14 @@ export class CodexAppServerRuntime implements AgentRuntime {
       return;
     }
 
-    const model: SystemReadModel = {
-      definitions: registry.list(),
-      snapshot,
-    };
-    try {
-      if (tool === "current_context") {
-        this.#respondSafely(
-          request.id,
-          dynamicToolResponse(true, boundedDynamicToolText(formatSystemRuntimeContext(model))),
-        );
-        return;
-      }
-
-      if (tool === "system_summary") {
-        this.#respondSafely(
-          request.id,
-          dynamicToolResponse(true, boundedDynamicToolText(formatSystemSummary(model))),
-        );
-        return;
-      }
-
-      if (tool === "component_status") {
-        const componentId = readString(argumentsValue.component_id);
-        if (!componentId || !registry.has(componentId)) {
-          this.#respondSafely(
-            request.id,
-            dynamicToolResponse(false, "system_awareness=denied\nreason=unknown-component"),
-          );
-          return;
-        }
-        this.#respondSafely(
-          request.id,
-          dynamicToolResponse(
-            true,
-            boundedDynamicToolText(formatSystemComponentStatus(model, componentId)),
-          ),
-        );
-        return;
-      }
-
-      if (tool === "diagnose") {
-        const rawComponentId = argumentsValue.component_id;
-        const componentId = rawComponentId === undefined
-          ? undefined
-          : readString(rawComponentId);
-        if (rawComponentId !== undefined && (!componentId || !registry.has(componentId))) {
-          this.#respondSafely(
-            request.id,
-            dynamicToolResponse(false, "system_awareness=denied\nreason=unknown-component"),
-          );
-          return;
-        }
-        this.#respondSafely(
-          request.id,
-          dynamicToolResponse(
-            true,
-            boundedDynamicToolText(formatSystemDiagnostics(model, componentId)),
-          ),
-        );
-        return;
-      }
-
-      if (tool === "maintain") {
-        const componentId = readString(argumentsValue.component_id);
-        const actionId = readString(argumentsValue.action_id);
-        const rationale = readString(argumentsValue.rationale)?.trim();
-        const definition = componentId && registry.has(componentId)
-          ? registry.require(componentId)
-          : undefined;
-        const action = definition?.managementActions.find((candidate) => candidate.id === actionId);
-        const approvalHandler = this.#systemMaintenanceApprovalHandlers.get(threadId);
-        const maintenanceHandler = this.#systemMaintenanceHandlers.get(threadId);
-        if (
-          componentId !== "floral.service"
-          || actionId !== "restart"
-          || !rationale
-          || rationale.length > 320
-          || !action
-          || action.disposition !== "host-only"
-          || action.approval !== "autonomy-policy"
-          || action.capability !== "system.restart"
-          || !approvalHandler
-          || !maintenanceHandler
-        ) {
-          this.#respondSafely(
-            request.id,
-            dynamicToolResponse(false, "system_maintenance=denied\nreason=invalid-or-undeclared-action"),
-          );
-          return;
-        }
-
-        // Host-side preflight keeps the maintenance pipeline evidence-linked even
-        // when the model already called diagnose. A healthy preflight does not
-        // silently deny an explicit owner-requested restart; local confirmation
-        // remains the final authority for this bounded host action.
-        const preflight = buildSystemDiagnosticReport(model, componentId);
-        const approval: AgentApprovalRequest = {
-          requestId: `maintenance-${safeDynamicToolToken(readString(params?.callId) ?? String(request.id))}`,
-          kind: "system-maintenance",
-          capability: "system.restart",
-          summary: [
-            "FLORAL Agent 请求执行受治理的系统维护。",
-            `component=${componentId}`,
-            `action=${actionId}`,
-            `diagnostic_status=${preflight.overallStatus}`,
-            `diagnostic_findings=${preflight.findings.length}`,
-            `rationale=${rationale.slice(0, 180)}`,
-            "execution=post-reply-handoff",
-            "verification=maintenance-receipt-next-turn",
-          ].join(" "),
-          source: "floral",
-        };
+    const result = await this.#systemTools.handle({
+      threadId,
+      tool,
+      callId: readString(params?.callId) ?? String(request.id),
+      arguments: argumentsValue,
+      approvalHandler: this.#systemMaintenanceApprovalHandlers.get(threadId),
+      maintenanceHandler: this.#systemMaintenanceHandlers.get(threadId),
+      onApprovalRequested: (approval) => {
         this.#eventHandlers.get(threadId)?.({
           type: "approval.requested",
           requestId: approval.requestId,
@@ -2449,95 +2287,9 @@ export class CodexAppServerRuntime implements AgentRuntime {
           kind: approval.kind,
           detail: { summary: approval.summary },
         });
-        const decision = await approvalHandler(approval).catch(() => "deny" as const);
-        if (decision !== "approve") {
-          this.#respondSafely(
-            request.id,
-            dynamicToolResponse(false, "system_maintenance=denied\nreason=local-confirmation"),
-          );
-          return;
-        }
-        const result: AgentSystemMaintenanceResult = await maintenanceHandler({
-          componentId,
-          actionId,
-          rationale,
-        }).catch((error): AgentSystemMaintenanceResult => ({
-          status: "failed",
-          reason: safeDynamicToolToken(error instanceof Error ? error.name : "Error"),
-        }));
-        if (result.status !== "queued") {
-          this.#respondSafely(
-            request.id,
-            dynamicToolResponse(
-              false,
-              [
-                `system_maintenance=${result.status}`,
-                `reason=${safeDynamicToolToken(result.reason)}`,
-                ...(result.transactionId ? [`transaction_id=${safeDynamicToolToken(result.transactionId)}`] : []),
-              ].join("\n"),
-            ),
-          );
-          return;
-        }
-        this.#respondSafely(
-          request.id,
-          dynamicToolResponse(
-            true,
-            [
-              "system_maintenance=queued",
-              `component=${componentId}`,
-              `action=${actionId}`,
-              `transaction_id=${safeDynamicToolToken(result.transactionId)}`,
-              `diagnostic_status=${preflight.overallStatus}`,
-              `diagnostic_findings=${preflight.findings.length}`,
-              "execution_performed=false",
-              "handoff=after-agent-reply",
-              "verification=pending-next-service-instance",
-              "next=use-floral_system/component_status-floral.maintenance-on-a-fresh-turn",
-            ].join("\n"),
-          ),
-        );
-        return;
-      }
-
-      if (tool === "capabilities") {
-        const rawComponentId = argumentsValue.component_id;
-        const componentId = rawComponentId === undefined
-          ? undefined
-          : readString(rawComponentId);
-        if (rawComponentId !== undefined && (!componentId || !registry.has(componentId))) {
-          this.#respondSafely(
-            request.id,
-            dynamicToolResponse(false, "system_awareness=denied\nreason=unknown-component"),
-          );
-          return;
-        }
-        this.#respondSafely(
-          request.id,
-          dynamicToolResponse(
-            true,
-            boundedDynamicToolText(formatSystemCapabilities(model, componentId)),
-          ),
-        );
-        return;
-      }
-    } catch (error) {
-      this.#respondSafely(
-        request.id,
-        dynamicToolResponse(
-          false,
-          `system_awareness=failed\nreason=${safeDynamicToolToken(
-            error instanceof Error ? error.name : "Error",
-          )}`,
-        ),
-      );
-      return;
-    }
-
-    this.#respondSafely(
-      request.id,
-      dynamicToolResponse(false, "system_awareness=denied\nreason=unsupported-tool"),
-    );
+      },
+    });
+    this.#respondSafely(request.id, dynamicToolResponse(result.success, result.text));
   }
 
   async #handleContextDynamicToolCall(
@@ -2629,7 +2381,7 @@ export class CodexAppServerRuntime implements AgentRuntime {
         const kind = readExtensionPlanKind(argumentsValue.kind);
         const id = readExtensionPlanTargetId(argumentsValue.id);
         const intent = readExtensionPlanIntent(argumentsValue.intent);
-        const systemSnapshot = this.#systemSnapshots.get(threadId);
+        const systemSnapshot = this.#systemTools.getSnapshot(threadId);
         if (!kind || !id || (argumentsValue.intent !== undefined && !intent) || !systemSnapshot) {
           this.#respondSafely(
             request.id,
@@ -2650,7 +2402,7 @@ export class CodexAppServerRuntime implements AgentRuntime {
       }
 
       if (tool === "verify_extension") {
-        const systemSnapshot = this.#systemSnapshots.get(threadId);
+        const systemSnapshot = this.#systemTools.getSnapshot(threadId);
         if (!systemSnapshot) {
           this.#respondSafely(
             request.id,
@@ -2689,7 +2441,7 @@ export class CodexAppServerRuntime implements AgentRuntime {
         const kind = readExtensionApplyKind(argumentsValue.kind);
         const action = readExternalSkillAction(argumentsValue.action);
         const id = readExtensionPlanTargetId(argumentsValue.id);
-        const systemSnapshot = this.#systemSnapshots.get(threadId);
+        const systemSnapshot = this.#systemTools.getSnapshot(threadId);
         if (!kind || !action || !id || !systemSnapshot) {
           this.#respondSafely(
             request.id,
