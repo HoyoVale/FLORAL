@@ -63,13 +63,19 @@
             "runtime.authorization.local_approval_poll_ms",
             "approval:local:list",
             "approval:local:approve",
-            "approval:local:deny"
+            "approval:local:deny",
+            "FLORAL_MAINTENANCE_MODE_CEILING",
+            "FLORAL_MAINTENANCE_MAX_ACTIONS_PER_HOUR",
+            "FLORAL_MAINTENANCE_COOLDOWN_MS",
+            "FLORAL_MAINTENANCE_FAILURE_THRESHOLD",
+            "FLORAL_MAINTENANCE_SELF_HEAL_INTERVAL_MS",
+            "/maintenance [status|manual|owner-auto|self-heal|reset-breaker]"
           ],
           "futureKeys": [
             "audit_retention",
             "native_local_confirmation_ui"
           ],
-          "notes": "Ask/auto/full are conversation-scoped Codex-native execution modes. Full additionally requires the paired owner and the Mac-local FLORAL_REMOTE_MODE_CEILING=full startup ceiling. The ceiling is not a model-owned permission surface and is stripped from the Codex child environment. MCP authorization and artifact DLP remain independent."
+          "notes": "Ask/auto/full are conversation-scoped Codex-native execution modes. Full additionally requires the paired owner and the Mac-local FLORAL_REMOTE_MODE_CEILING=full startup ceiling. The ceiling is not a model-owned permission surface and is stripped from the Codex child environment. MCP authorization and artifact DLP remain independent. Maintenance autonomy is separately bounded by the Mac-local FLORAL_MAINTENANCE_MODE_CEILING. manual requires per-action local confirmation, owner-auto applies only to narrow direct owner restart intent recognized by the host, and self-heal is restricted to deterministic host repair rules with cooldown/rate-limit/circuit-breaker controls. The Agent cannot raise the machine ceiling."
         },
         {
           "id": "security-invariants",
@@ -1485,6 +1491,26 @@
       "classification": "locked"
     },
     "FLORAL_WORKSPACE_ROOT": {
+      "component": "floral",
+      "classification": "locked"
+    },
+    "FLORAL_MAINTENANCE_MODE_CEILING": {
+      "component": "floral",
+      "classification": "locked"
+    },
+    "FLORAL_MAINTENANCE_MAX_ACTIONS_PER_HOUR": {
+      "component": "floral",
+      "classification": "locked"
+    },
+    "FLORAL_MAINTENANCE_COOLDOWN_MS": {
+      "component": "floral",
+      "classification": "locked"
+    },
+    "FLORAL_MAINTENANCE_FAILURE_THRESHOLD": {
+      "component": "floral",
+      "classification": "locked"
+    },
+    "FLORAL_MAINTENANCE_SELF_HEAL_INTERVAL_MS": {
       "component": "floral",
       "classification": "locked"
     }

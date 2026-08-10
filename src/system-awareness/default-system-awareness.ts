@@ -56,6 +56,14 @@ export function createDefaultSystemObservers(
         options.repositoryRoot,
         options.authority.effective.floral.data_dir,
       ),
+      autonomy: {
+        ceiling: options.env.FLORAL_MAINTENANCE_MODE_CEILING,
+        allowedActions: ["floral.service.restart"],
+        maxAutomaticActionsPerHour: options.env.FLORAL_MAINTENANCE_MAX_ACTIONS_PER_HOUR,
+        cooldownMs: options.env.FLORAL_MAINTENANCE_COOLDOWN_MS,
+        failureThreshold: options.env.FLORAL_MAINTENANCE_FAILURE_THRESHOLD,
+        selfHealIntervalMs: options.env.FLORAL_MAINTENANCE_SELF_HEAL_INTERVAL_MS,
+      },
       ...(now ? { now } : {}),
     }),
   ];

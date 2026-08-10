@@ -2,6 +2,18 @@ import { randomBytes } from "node:crypto";
 import { spawn, type ChildProcess } from "node:child_process";
 import { chmod, mkdir, readFile, rename, rm, writeFile } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
+import {
+  defaultMaintenanceAutonomyState,
+  maintenanceModeAllows,
+  maintenanceModeAtMost,
+  normalizeAutomaticActionTimestamps,
+  readMaintenanceAutonomyState,
+  writeMaintenanceAutonomyState,
+  type MaintenanceAutonomyMachinePolicy,
+  type MaintenanceAutonomyMode,
+  type MaintenanceAutonomyStatus,
+  type MaintenanceAutonomyTrigger,
+} from "./maintenance-autonomy.js";
 import { readServiceState } from "../runtime/service-state.js";
 import type {
   AgentSystemMaintenanceRequest,
@@ -34,6 +46,11 @@ export interface SystemMaintenanceTransaction {
   verification?: "pending" | "service-ready-new-pid" | undefined;
   cancellationReason?: "run-ended-before-handoff" | "final-reply-delivery-failed" | undefined;
   errorType?: string | undefined;
+  trigger?: MaintenanceAutonomyTrigger | undefined;
+  diagnosticFindingIds?: string[] | undefined;
+  notificationStatus?: "pending" | "delivered" | "failed" | undefined;
+  notificationUpdatedAt?: string | undefined;
+  repairOutcome?: "resolved" | "persistent" | "action-failed" | undefined;
 }
 
 export interface PreparedSystemMaintenance {
@@ -49,6 +66,7 @@ export interface SystemMaintenanceControllerOptions {
   now?: (() => Date) | undefined;
   createId?: (() => string) | undefined;
   spawnWorker?: ((command: string, args: string[]) => ChildProcess) | undefined;
+  autonomy?: MaintenanceAutonomyMachinePolicy | undefined;
 }
 
 export class SystemMaintenanceController {
@@ -59,6 +77,7 @@ export class SystemMaintenanceController {
   readonly #now: () => Date;
   readonly #createId: () => string;
   readonly #spawnWorker: (command: string, args: string[]) => ChildProcess;
+  readonly #autonomy: MaintenanceAutonomyMachinePolicy;
   #preparing = false;
 
   constructor(options: SystemMaintenanceControllerOptions) {
@@ -68,6 +87,14 @@ export class SystemMaintenanceController {
     this.#platform = options.platform ?? process.platform;
     this.#now = options.now ?? (() => new Date());
     this.#createId = options.createId ?? (() => randomBytes(8).toString("hex").toUpperCase());
+    this.#autonomy = options.autonomy ?? {
+      ceiling: "manual",
+      allowedActions: ["floral.service.restart"],
+      maxAutomaticActionsPerHour: 2,
+      cooldownMs: 300_000,
+      failureThreshold: 2,
+      selfHealIntervalMs: 60_000,
+    };
     this.#spawnWorker = options.spawnWorker ?? ((command, args) => spawn(command, args, {
       detached: true,
       stdio: "ignore",
@@ -86,9 +113,95 @@ export class SystemMaintenanceController {
     await mkdir(this.#transactionsDirectory(), { recursive: true, mode: 0o700 });
     await chmod(this.#directory, 0o700).catch(() => undefined);
     await chmod(this.#transactionsDirectory(), 0o700).catch(() => undefined);
+    const autonomyState = await this.#ensureAutonomyState();
+    const clamped = maintenanceModeAtMost(autonomyState.requestedMode, this.#autonomy.ceiling);
+    if (clamped !== autonomyState.requestedMode) {
+      await writeMaintenanceAutonomyState(this.#directory, {
+        ...autonomyState,
+        requestedMode: clamped,
+        updatedAt: this.#now().toISOString(),
+      });
+    }
+    await this.#reconcileLatestAutomaticTransaction();
   }
 
-  async prepare(request: AgentSystemMaintenanceRequest): Promise<PreparedSystemMaintenance> {
+  async autonomyStatus(): Promise<MaintenanceAutonomyStatus> {
+    await this.#reconcileLatestAutomaticTransaction();
+    const now = this.#now();
+    const state = await this.#ensureAutonomyState();
+    const automaticActionTimestamps = normalizeAutomaticActionTimestamps(
+      state.automaticActionTimestamps,
+      now.getTime(),
+    );
+    const lastAutomaticActionAt = automaticActionTimestamps.at(-1);
+    return {
+      requestedMode: state.requestedMode,
+      effectiveMode: maintenanceModeAtMost(state.requestedMode, this.#autonomy.ceiling),
+      ceiling: this.#autonomy.ceiling,
+      allowedActions: this.#autonomy.allowedActions,
+      maxAutomaticActionsPerHour: this.#autonomy.maxAutomaticActionsPerHour,
+      cooldownMs: this.#autonomy.cooldownMs,
+      failureThreshold: this.#autonomy.failureThreshold,
+      selfHealIntervalMs: this.#autonomy.selfHealIntervalMs,
+      recentAutomaticActions: automaticActionTimestamps.length,
+      consecutiveSelfHealFailures: state.consecutiveSelfHealFailures,
+      circuitBreakerOpen: state.circuitBreakerOpen,
+      ...(lastAutomaticActionAt ? { lastAutomaticActionAt } : {}),
+      ...(state.lastOwnerDeliveryConversationId
+        ? { lastOwnerDeliveryConversationId: state.lastOwnerDeliveryConversationId }
+        : {}),
+    };
+  }
+
+  async setAutonomyMode(mode: MaintenanceAutonomyMode): Promise<{ status: "updated" | "denied"; reason?: string; policy: MaintenanceAutonomyStatus }> {
+    const state = await this.#ensureAutonomyState();
+    if (maintenanceModeAtMost(mode, this.#autonomy.ceiling) !== mode) {
+      return { status: "denied", reason: "machine-ceiling", policy: await this.autonomyStatus() };
+    }
+    const next = { ...state, requestedMode: mode, updatedAt: this.#now().toISOString() };
+    await writeMaintenanceAutonomyState(this.#directory, next);
+    return { status: "updated", policy: await this.autonomyStatus() };
+  }
+
+  async resetCircuitBreaker(): Promise<MaintenanceAutonomyStatus> {
+    const state = await this.#ensureAutonomyState();
+    await writeMaintenanceAutonomyState(this.#directory, {
+      ...state,
+      consecutiveSelfHealFailures: 0,
+      circuitBreakerOpen: false,
+      updatedAt: this.#now().toISOString(),
+    });
+    return await this.autonomyStatus();
+  }
+
+  async recordOwnerDeliveryTarget(conversationId: string): Promise<void> {
+    const normalized = conversationId.trim().slice(0, 512);
+    if (!normalized) return;
+    const state = await this.#ensureAutonomyState();
+    if (state.lastOwnerDeliveryConversationId === normalized) return;
+    await writeMaintenanceAutonomyState(this.#directory, {
+      ...state,
+      lastOwnerDeliveryConversationId: normalized,
+      updatedAt: this.#now().toISOString(),
+    });
+  }
+
+  async automaticApprovalAllowed(required: "owner-auto" | "self-heal"): Promise<{ allowed: boolean; reason: string }> {
+    const policy = await this.autonomyStatus();
+    if (!maintenanceModeAllows(policy.effectiveMode, required)) return { allowed: false, reason: "autonomy-mode" };
+    if (required === "self-heal" && policy.circuitBreakerOpen) return { allowed: false, reason: "circuit-breaker-open" };
+    if (policy.recentAutomaticActions >= policy.maxAutomaticActionsPerHour) return { allowed: false, reason: "rate-limit" };
+    if (policy.lastAutomaticActionAt) {
+      const elapsed = this.#now().getTime() - Date.parse(policy.lastAutomaticActionAt);
+      if (Number.isFinite(elapsed) && elapsed < policy.cooldownMs) return { allowed: false, reason: "cooldown" };
+    }
+    return { allowed: true, reason: "policy" };
+  }
+
+  async prepare(
+    request: AgentSystemMaintenanceRequest,
+    context: { trigger?: MaintenanceAutonomyTrigger; diagnosticFindingIds?: string[] } = {},
+  ): Promise<PreparedSystemMaintenance> {
     if (request.componentId !== "floral.service" || request.actionId !== "restart") {
       return { result: { status: "denied", reason: "unsupported-management-action" } };
     }
@@ -122,6 +235,12 @@ export class SystemMaintenanceController {
         };
       }
 
+      const trigger = context.trigger ?? "manual";
+      if (trigger !== "manual") {
+        const automatic = await this.automaticApprovalAllowed(trigger === "self-heal" ? "self-heal" : "owner-auto");
+        if (!automatic.allowed) return { result: { status: "denied", reason: `autonomy-${automatic.reason}` } };
+      }
+
       const previous = await readServiceState(this.#serviceStatePath);
       const now = this.#now().toISOString();
       const id = this.#allocateId();
@@ -135,8 +254,14 @@ export class SystemMaintenanceController {
         updatedAt: now,
         ...(previous?.pid ? { previousPid: previous.pid } : {}),
         verification: "pending",
+        trigger,
+        ...(context.diagnosticFindingIds?.length
+          ? { diagnosticFindingIds: context.diagnosticFindingIds.slice(0, 8).map((value) => value.slice(0, 160)) }
+          : {}),
+        ...(trigger === "self-heal" ? { notificationStatus: "pending" as const } : {}),
       };
       await writeSystemMaintenanceTransaction(this.#directory, transaction);
+      if (trigger !== "manual") await this.#recordAutomaticAction(now);
       return {
         transactionId: id,
         result: {
@@ -198,6 +323,106 @@ export class SystemMaintenanceController {
 
   async readLatest(): Promise<SystemMaintenanceTransaction | undefined> {
     return await readLatestSystemMaintenanceTransaction(this.#directory);
+  }
+
+  async markNotificationDelivered(transactionId: string, delivered: boolean): Promise<void> {
+    const transaction = await readSystemMaintenanceTransaction(this.#directory, transactionId);
+    if (!transaction || transaction.trigger !== "self-heal") return;
+    await writeSystemMaintenanceTransaction(this.#directory, {
+      ...transaction,
+      notificationStatus: delivered ? "delivered" : "failed",
+      notificationUpdatedAt: this.#now().toISOString(),
+    });
+  }
+
+  async pendingSelfHealNotification(): Promise<SystemMaintenanceTransaction | undefined> {
+    const latest = await this.readLatest();
+    return latest?.trigger === "self-heal"
+      && (latest.status === "failed" || (latest.status === "verified" && Boolean(latest.repairOutcome)))
+      && latest.notificationStatus !== "delivered"
+      ? latest
+      : undefined;
+  }
+
+  async reconcileSelfHealOutcome(activeFindingIds: readonly string[]): Promise<void> {
+    const latest = await this.readLatest();
+    if (!latest || latest.trigger !== "self-heal") return;
+    const state = await this.#ensureAutonomyState();
+    if (state.lastReconciledTransactionId === latest.id) return;
+
+    if (latest.status === "failed") {
+      const failures = state.consecutiveSelfHealFailures + 1;
+      await writeSystemMaintenanceTransaction(this.#directory, {
+        ...latest,
+        repairOutcome: "action-failed",
+      });
+      await writeMaintenanceAutonomyState(this.#directory, {
+        ...state,
+        consecutiveSelfHealFailures: failures,
+        circuitBreakerOpen: failures >= this.#autonomy.failureThreshold,
+        lastReconciledTransactionId: latest.id,
+        updatedAt: this.#now().toISOString(),
+      });
+      return;
+    }
+    if (latest.status !== "verified") return;
+
+    const original = latest.diagnosticFindingIds ?? [];
+    if (original.length === 0) return;
+    const active = new Set(activeFindingIds);
+    const persistent = original.some((id) => active.has(id));
+    const failures = persistent ? state.consecutiveSelfHealFailures + 1 : 0;
+    await writeSystemMaintenanceTransaction(this.#directory, {
+      ...latest,
+      repairOutcome: persistent ? "persistent" : "resolved",
+    });
+    await writeMaintenanceAutonomyState(this.#directory, {
+      ...state,
+      consecutiveSelfHealFailures: failures,
+      circuitBreakerOpen: persistent && failures >= this.#autonomy.failureThreshold,
+      lastReconciledTransactionId: latest.id,
+      updatedAt: this.#now().toISOString(),
+    });
+  }
+
+  async #ensureAutonomyState() {
+    const existing = await readMaintenanceAutonomyState(this.#directory);
+    if (existing) return existing;
+    const created = defaultMaintenanceAutonomyState(this.#now());
+    await writeMaintenanceAutonomyState(this.#directory, created);
+    return created;
+  }
+
+  async #recordAutomaticAction(timestamp: string): Promise<void> {
+    const state = await this.#ensureAutonomyState();
+    const values = normalizeAutomaticActionTimestamps(
+      [...state.automaticActionTimestamps, timestamp],
+      this.#now().getTime(),
+    );
+    await writeMaintenanceAutonomyState(this.#directory, {
+      ...state,
+      automaticActionTimestamps: values,
+      updatedAt: this.#now().toISOString(),
+    });
+  }
+
+  async #reconcileLatestAutomaticTransaction(): Promise<void> {
+    const latest = await this.readLatest();
+    if (!latest || latest.trigger !== "self-heal" || latest.status !== "failed") return;
+    const state = await this.#ensureAutonomyState();
+    if (state.lastReconciledTransactionId === latest.id) return;
+    const failures = state.consecutiveSelfHealFailures + 1;
+    await writeSystemMaintenanceTransaction(this.#directory, {
+      ...latest,
+      repairOutcome: "action-failed",
+    });
+    await writeMaintenanceAutonomyState(this.#directory, {
+      ...state,
+      consecutiveSelfHealFailures: failures,
+      circuitBreakerOpen: failures >= this.#autonomy.failureThreshold,
+      lastReconciledTransactionId: latest.id,
+      updatedAt: this.#now().toISOString(),
+    });
   }
 
   #transactionsDirectory(): string {

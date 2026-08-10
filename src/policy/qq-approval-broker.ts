@@ -27,6 +27,10 @@ export interface QqApprovalBrokerOptions {
   now?: (() => number) | undefined;
   createPublicId?: (() => string) | undefined;
   localConfirmation?: LocalConfirmationBroker | undefined;
+  autoApproveSystemMaintenance?: ((
+    scope: ApprovalRequesterScope,
+    request: AgentApprovalRequest,
+  ) => Promise<{ approved: boolean; reason: string }>) | undefined;
 }
 
 export type ApprovalResolveResult =
@@ -90,6 +94,19 @@ export class QqApprovalBroker {
     }
 
     if (decision.approvalLevel === "local-confirmation") {
+      if (request.kind === "system-maintenance" && this.options.autoApproveSystemMaintenance) {
+        const autonomous = await this.options.autoApproveSystemMaintenance(scope, request)
+          .catch(() => ({ approved: false, reason: "autonomy-policy-error" }));
+        if (autonomous.approved) {
+          await this.#audit(scope, "authorization.maintenance_auto_approved", request, {
+            autonomyReason: autonomous.reason,
+          });
+          return "approve";
+        }
+        await this.#audit(scope, "authorization.maintenance_auto_not_applicable", request, {
+          autonomyReason: autonomous.reason,
+        });
+      }
       await this.#audit(scope, "authorization.local_confirmation_required", request);
       const local = this.options.localConfirmation;
       const handle = local

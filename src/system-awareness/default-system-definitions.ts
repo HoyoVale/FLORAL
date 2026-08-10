@@ -27,7 +27,7 @@ export const DEFAULT_SYSTEM_DEFINITIONS: readonly SystemDefinition[] = [
     ],
     managementActions: [
       action("read", "Read service state and liveness evidence.", "automatic", "automatic", "machine.status.read"),
-      action("restart", "Restart the LaunchAgent-backed FLORAL service through the bounded maintenance handoff worker.", "host-only", "local-confirmation", "system.restart", "system-maintenance/service-restart-worker", "maintenance-receipt"),
+      action("restart", "Restart the LaunchAgent-backed FLORAL service through the bounded maintenance handoff worker.", "host-only", "autonomy-policy", "system.restart", "system-maintenance/service-restart-worker", "maintenance-receipt"),
     ],
     failureDomain: "host",
     tags: ["control-plane", "service"],
@@ -35,13 +35,14 @@ export const DEFAULT_SYSTEM_DEFINITIONS: readonly SystemDefinition[] = [
   definition({
     id: "floral.maintenance",
     displayName: "FLORAL Maintenance Ledger",
-    description: "Bounded receipts for governed self-maintenance actions and their post-action verification result.",
+    description: "Machine-bounded maintenance autonomy policy plus bounded receipts for governed self-maintenance actions and post-action verification.",
     kind: "runtime",
     owner: authority("floral", "FLORAL", "Owns maintenance transaction recording and verification receipts."),
-    authority: authority("floral", "SystemMaintenanceController", "Is authoritative for queued maintenance handoff and worker verification receipts."),
+    authority: authority("floral", "SystemMaintenanceController", "Is authoritative for maintenance autonomy state, queued handoff, circuit-breaker state, and worker verification receipts."),
     parentId: "floral.service",
     stateSources: [
       source("maintenance-receipt", "filesystem", "authoritative", ["last_transaction"], "Latest bounded system-maintenance transaction receipt; contains no command text or secrets."),
+      source("maintenance-autonomy-policy", "filesystem", "authoritative", ["autonomy_policy", "autonomy_state"], "Machine-bounded maintenance autonomy mode, rate limits, cooldown, and circuit-breaker state."),
     ],
     managementActions: [
       action("read", "Read the latest governed maintenance receipt.", "automatic", "automatic", "machine.status.read"),

@@ -27,6 +27,14 @@ const envSchema = z.object({
   // intentionally not sourced from config/floral.toml because an Agent
   // working inside the project must not be able to raise its own ceiling.
   FLORAL_REMOTE_MODE_CEILING: z.enum(["auto", "full"]).default("auto"),
+  // Machine-local ceiling for governed maintenance autonomy. Project files and
+  // the model cannot raise this value; enabling owner-auto/self-heal requires
+  // an explicit owner-controlled environment change followed by service restart.
+  FLORAL_MAINTENANCE_MODE_CEILING: z.enum(["manual", "owner-auto", "self-heal"]).default("manual"),
+  FLORAL_MAINTENANCE_MAX_ACTIONS_PER_HOUR: z.coerce.number().int().min(1).max(12).default(2),
+  FLORAL_MAINTENANCE_COOLDOWN_MS: z.coerce.number().int().min(10_000).max(24 * 60 * 60_000).default(300_000),
+  FLORAL_MAINTENANCE_FAILURE_THRESHOLD: z.coerce.number().int().min(1).max(8).default(2),
+  FLORAL_MAINTENANCE_SELF_HEAL_INTERVAL_MS: z.coerce.number().int().min(15_000).max(60 * 60_000).default(60_000),
   // Optional machine-local parent directory whose direct child directories are
   // remotely selectable Codex projects. Like the full-access ceiling, this is
   // intentionally outside config/floral.toml.

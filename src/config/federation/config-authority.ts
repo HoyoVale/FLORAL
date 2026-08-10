@@ -88,6 +88,11 @@ export const SECRET_ENVIRONMENT_REFERENCES: Record<SecretId, string> = {
 // ceiling. The main process reads the validated AppEnv value directly.
 export const MACHINE_LOCAL_ENVIRONMENT_KEYS = [
   "FLORAL_REMOTE_MODE_CEILING",
+  "FLORAL_MAINTENANCE_MODE_CEILING",
+  "FLORAL_MAINTENANCE_MAX_ACTIONS_PER_HOUR",
+  "FLORAL_MAINTENANCE_COOLDOWN_MS",
+  "FLORAL_MAINTENANCE_FAILURE_THRESHOLD",
+  "FLORAL_MAINTENANCE_SELF_HEAL_INTERVAL_MS",
   "FLORAL_WORKSPACE_ROOT",
 ] as const satisfies readonly EnvironmentKey[];
 

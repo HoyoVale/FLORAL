@@ -36,6 +36,7 @@ import type { AuthorizationAuthority } from "../policy/authorization-authority.j
 import { QqApprovalBroker } from "../policy/qq-approval-broker.js";
 import type { LocalConfirmationBroker } from "../policy/local-confirmation-broker.js";
 import type { SystemMaintenanceController } from "../system-maintenance/system-maintenance.js";
+import { isExplicitOwnerServiceRestartRequest, type MaintenanceAutonomyMode } from "../system-maintenance/maintenance-autonomy.js";
 import {
   formatSystemComponentStatus,
   formatSystemDiagnostics,
@@ -132,6 +133,8 @@ interface ActiveRun {
   latestToolName?: string | undefined;
   artifactEgressTail: Promise<void>;
   maintenanceTransactions: string[];
+  maintenanceOwnerIntent: boolean;
+  maintenanceAutoApproved: boolean;
   artifactBudget?: ArtifactEgressRunBudget | undefined;
 }
 
@@ -166,6 +169,17 @@ export class GatewayService {
           ...(interactiveTransport ? {
             sendInteractive: (prompt) =>
               interactiveTransport.sendInteractiveApprovalPrompt(prompt),
+          } : {}),
+          ...(options.systemMaintenance ? {
+            autoApproveSystemMaintenance: async (scope) => {
+              const active = this.#activeRuns.get(scope.conversationId);
+              if (scope.role !== "owner") return { approved: false, reason: "owner-required" };
+              if (!active?.maintenanceOwnerIntent) return { approved: false, reason: "explicit-owner-intent-required" };
+              const allowed = await options.systemMaintenance!.controller.automaticApprovalAllowed("owner-auto");
+              if (!allowed.allowed) return { approved: false, reason: allowed.reason };
+              active.maintenanceAutoApproved = true;
+              return { approved: true, reason: "owner-auto" };
+            },
           } : {}),
           audit: (event) => this.store.appendAudit(event),
         })
@@ -265,6 +279,12 @@ export class GatewayService {
         );
       }
       return;
+    }
+
+    if (resolved.role === "owner" && this.options.systemMaintenance) {
+      await this.options.systemMaintenance.controller
+        .recordOwnerDeliveryTarget(message.identity.conversationId)
+        .catch(() => undefined);
     }
 
     if (command) {
@@ -681,6 +701,71 @@ export class GatewayService {
               : "FLORAL Self-Diagnostics 读取失败，请检查服务日志。",
           );
         }
+        return;
+      }
+
+      case "maintenance": {
+        const controller = this.options.systemMaintenance?.controller;
+        if (!controller) {
+          await this.#send(message.identity.conversationId, "FLORAL 受治理维护接口当前不可用。");
+          return;
+        }
+        const requested = command.value ?? "status";
+        if (requested === "status") {
+          await this.#send(message.identity.conversationId, maintenancePolicyText(await controller.autonomyStatus()));
+          return;
+        }
+        if (resolved.role !== "owner") {
+          await this.store.appendAudit({
+            userId: resolved.userId,
+            conversationId: resolved.conversationId,
+            eventType: "command.maintenance_denied",
+            payload: { requested, reason: "owner-required" },
+          });
+          await this.#send(message.identity.conversationId, "只有已绑定 owner 可以修改维护自治模式。");
+          return;
+        }
+        if (requested === "reset-breaker") {
+          const policy = await controller.resetCircuitBreaker();
+          await this.store.appendAudit({
+            userId: resolved.userId,
+            conversationId: resolved.conversationId,
+            eventType: "command.maintenance_breaker_reset",
+          });
+          await this.#send(message.identity.conversationId, [
+            "维护自治 Circuit Breaker 已由 owner 重置。",
+            maintenancePolicyText(policy),
+          ].join("\n"));
+          return;
+        }
+        if (requested !== "manual" && requested !== "owner-auto" && requested !== "self-heal") {
+          await this.#send(message.identity.conversationId, "用法：/maintenance [status|manual|owner-auto|self-heal|reset-breaker]");
+          return;
+        }
+        const result = await controller.setAutonomyMode(requested as MaintenanceAutonomyMode);
+        await this.store.appendAudit({
+          userId: resolved.userId,
+          conversationId: resolved.conversationId,
+          eventType: result.status === "updated" ? "command.maintenance_mode_changed" : "command.maintenance_denied",
+          payload: { requested, reason: result.reason ?? null, effectiveMode: result.policy.effectiveMode, ceiling: result.policy.ceiling },
+        });
+        if (result.status === "denied") {
+          await this.#send(message.identity.conversationId, [
+            `维护自治模式未修改：请求=${requested} 超过本机 ceiling=${result.policy.ceiling}。`,
+            `请在 Mac 本地 .env 设置 FLORAL_MAINTENANCE_MODE_CEILING=${requested}（或更高）并重启服务；Agent/项目配置不能提高该 ceiling。`,
+            maintenancePolicyText(result.policy),
+          ].join("\n"));
+          return;
+        }
+        await this.#send(message.identity.conversationId, [
+          `维护自治模式已切换为 ${result.policy.effectiveMode}。`,
+          result.policy.effectiveMode === "manual"
+            ? "所有 system.restart 继续要求 Mac 本地逐次确认。"
+            : result.policy.effectiveMode === "owner-auto"
+              ? "只有 host 明确认定为 owner 直接重启指令的请求可免逐次本地确认；Agent 自主提出的维护仍不会因此自动获批。"
+              : "除 owner-auto 行为外，Host Self-Heal supervisor 可根据固定的高置信度 repair rule 自动恢复；模型不能自行声明 self-heal trigger。",
+          maintenancePolicyText(result.policy),
+        ].join("\n"));
         return;
       }
 
@@ -1706,6 +1791,8 @@ export class GatewayService {
       waitingForApproval: false,
       artifactEgressTail: Promise.resolve(),
       maintenanceTransactions: [],
+      maintenanceOwnerIntent: resolved.role === "owner" && isExplicitOwnerServiceRestartRequest(message.text),
+      maintenanceAutoApproved: false,
       ...(this.options.artifactEgress
         ? { artifactBudget: this.options.artifactEgress.policy.createRunBudget() }
         : {}),
@@ -1828,7 +1915,9 @@ export class GatewayService {
                 if (active.maintenanceTransactions.length > 0) {
                   return { status: "denied" as const, reason: "one-maintenance-action-per-run" };
                 }
-                const prepared = await this.options.systemMaintenance!.controller.prepare(request);
+                const prepared = await this.options.systemMaintenance!.controller.prepare(request, {
+                  trigger: active.maintenanceAutoApproved ? "owner-auto" : "manual",
+                });
                 if (prepared.result.status === "queued" && prepared.transactionId) {
                   active.maintenanceTransactions.push(prepared.transactionId);
                   await this.store.appendAudit({
@@ -2725,6 +2814,23 @@ function renderIncomingMessageForAgent(message: IncomingMessage): string {
     }),
   ].join("\n");
   return message.text.trim() ? `${message.text.trim()}\n\n${manifest}` : manifest;
+}
+
+function maintenancePolicyText(
+  policy: Awaited<ReturnType<SystemMaintenanceController["autonomyStatus"]>>,
+): string {
+  return [
+    `maintenance_mode=${policy.effectiveMode}`,
+    `requested_mode=${policy.requestedMode}`,
+    `machine_ceiling=${policy.ceiling}`,
+    `allowed_actions=${JSON.stringify(policy.allowedActions)}`,
+    `automatic_actions_hour=${String(policy.recentAutomaticActions)}/${String(policy.maxAutomaticActionsPerHour)}`,
+    `cooldown_ms=${String(policy.cooldownMs)}`,
+    `self_heal_interval_ms=${String(policy.selfHealIntervalMs)}`,
+    `self_heal_failures=${String(policy.consecutiveSelfHealFailures)}/${String(policy.failureThreshold)}`,
+    `circuit_breaker=${policy.circuitBreakerOpen ? "open" : "closed"}`,
+    "ceiling_semantics=machine-local-owner-controlled-agent-cannot-raise",
+  ].join("\n");
 }
 
 function modeStatusText(

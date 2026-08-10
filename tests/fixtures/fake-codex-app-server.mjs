@@ -1483,7 +1483,7 @@ lines.on("line", (line) => {
       && text.includes("FLORAL Self-Diagnostics")
       && text.includes("scope=floral.service")
       && text.includes("execution_performed=false")
-      && text.includes("maintenance_enabled=false")
+      && text.includes("maintenance_enabled=true")
     ) {
       sendSuccess(activeThreadId, activeTurnId, "self diagnostics complete");
       return;

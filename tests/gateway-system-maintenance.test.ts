@@ -245,4 +245,68 @@ describe("Gateway controlled system maintenance", () => {
       await rm(root, { recursive: true, force: true });
     }
   });
+  it("auto-approves only a direct owner restart when owner-auto is enabled below the machine ceiling", async () => {
+    const root = await mkdtemp(join(tmpdir(), "floral-gateway-maintenance-owner-auto-"));
+    const transport = new TestTransport();
+    let spawnedAfterFinalReply = false;
+    const maintenanceDirectory = join(root, "maintenance");
+    const controller = new SystemMaintenanceController({
+      directory: maintenanceDirectory,
+      serviceStatePath: join(root, "service-state.json"),
+      workerPath: join(root, "worker.js"),
+      platform: "darwin",
+      createId: () => "AUTO8888",
+      autonomy: {
+        ceiling: "owner-auto",
+        allowedActions: ["floral.service.restart"],
+        maxAutomaticActionsPerHour: 2,
+        cooldownMs: 60_000,
+        failureThreshold: 2,
+        selfHealIntervalMs: 60_000,
+      },
+      spawnWorker: () => {
+        spawnedAfterFinalReply = transport.sent.some((message) => message.text === "maintenance queued");
+        return { unref: () => undefined } as never;
+      },
+    });
+    await controller.setAutonomyMode("owner-auto");
+    const gateway = new GatewayService(
+      transport,
+      new MaintenanceAgent(),
+      new MemoryThreadStore(),
+      {
+        cwd: process.cwd(),
+        trustMockOwner: true,
+        authorization: {
+          authority: new AuthorizationAuthority({
+            enabled: true,
+            sandboxMode: "read-only",
+            allowRemoteFileChangeApproval: false,
+            mcpRegistry: emptyRegistry(),
+          }),
+          approvalTtlMs: 5_000,
+          maxPendingApprovals: 2,
+          ownerOnlyRemoteApproval: true,
+        },
+        systemMaintenance: { controller },
+      },
+    );
+
+    try {
+      await gateway.start();
+      await transport.receive("请重启");
+      expect(transport.sent.some((message) => message.text.includes("Mac 本地确认"))).toBe(false);
+      expect(transport.sent.some((message) => message.text === "maintenance queued")).toBe(true);
+      expect(spawnedAfterFinalReply).toBe(true);
+      expect(await readLatestSystemMaintenanceTransaction(maintenanceDirectory)).toMatchObject({
+        id: "AUTO8888",
+        status: "handoff",
+        trigger: "owner-auto",
+      });
+    } finally {
+      await gateway.stop();
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
 });

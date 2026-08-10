@@ -91,6 +91,7 @@ export type SystemApprovalRequirement =
   | "automatic"
   | "chat-confirmation"
   | "local-confirmation"
+  | "autonomy-policy"
   | "user-mediated"
   | "source-change"
   | "not-applicable";

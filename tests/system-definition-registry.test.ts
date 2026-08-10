@@ -29,7 +29,7 @@ describe("Phase 8A system definition registry", () => {
     expect(registry.require("floral.service").managementActions.find((action) => action.id === "restart"))
       .toMatchObject({
         disposition: "host-only",
-        approval: "local-confirmation",
+        approval: "autonomy-policy",
         capability: "system.restart",
       });
 
@@ -42,7 +42,8 @@ describe("Phase 8A system definition registry", () => {
       expect(lifecycle.every((action) => action.approval === approvalLevelFor("software.install"))).toBe(true);
     }
     expect(registry.require("floral.service").managementActions.find((action) => action.id === "restart")?.approval)
-      .toBe(approvalLevelFor("system.restart"));
+      .toBe("autonomy-policy");
+    expect(approvalLevelFor("system.restart")).toBe("local-confirmation");
 
     const execution = registry.require("floral.execution");
     expect(execution.parentId).toBe("floral.authorization");

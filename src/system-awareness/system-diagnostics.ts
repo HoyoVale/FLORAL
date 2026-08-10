@@ -65,7 +65,7 @@ export interface SystemDiagnosticReport {
   overallStatus: "healthy" | "degraded" | "unavailable" | "conflict";
   findings: readonly SystemDiagnosticFinding[];
   executionPerformed: false;
-  maintenanceEnabled: false;
+  maintenanceEnabled: boolean;
 }
 
 const MAX_DIAGNOSTIC_LENGTH = 16_000;
@@ -120,7 +120,9 @@ export function buildSystemDiagnosticReport(
     overallStatus: overallStatus(ordered),
     findings: ordered,
     executionPerformed: false,
-    maintenanceEnabled: false,
+    maintenanceEnabled: registry.has("floral.maintenance")
+      && Boolean(model.snapshot.components.find((component) => component.componentId === "floral.maintenance")?.observed)
+      && registry.require("floral.service").managementActions.some((action) => action.id === "restart"),
   };
 }
 
@@ -143,7 +145,7 @@ export function formatSystemDiagnostics(
     `findings=${String(report.findings.length)}`,
     `errors=${String(errors)} warnings=${String(warnings)} info=${String(infos)}`,
     "execution_performed=false",
-    "maintenance_enabled=false",
+    `maintenance_enabled=${String(report.maintenanceEnabled)}`,
     "governed_maintenance_interface=floral_system/maintain",
   ];
 
@@ -354,6 +356,26 @@ function diagnoseMaintenance(
         check(1, "maintenance-receipt", "Read the maintenance receipt to confirm the pre-handoff cancellation state.", "floral_system/component_status"),
       ],
       limitations: ["Cancellation describes the transaction lifecycle and is not evidence that the FLORAL service itself is unhealthy."],
+    });
+  }
+
+  const autonomy = factSnapshot(model, definition.id, "autonomy_state");
+  const autonomyValue = resolvedRecord(autonomy);
+  if (autonomyValue && readBoolean(autonomyValue.circuit_breaker_open) === true) {
+    findings.push({
+      id: "floral.maintenance.autonomy-circuit-breaker-open",
+      componentId: definition.id,
+      severity: "warning",
+      status: "degraded",
+      impact: "degraded",
+      confidence: "high",
+      summary: "Maintenance Self-Heal circuit breaker is open after repeated automatic recovery failures; further autonomous repair attempts are suspended.",
+      candidateFailureDomains: ["floral", "host"],
+      evidence: compactEvidenceRefs([evidenceRefIf(definition.id, autonomy)]),
+      checks: [
+        check(1, "maintenance-policy", "Read the maintenance autonomy policy and latest receipt before the owner resets the breaker.", "floral_system/component_status"),
+      ],
+      limitations: ["An open circuit breaker intentionally blocks repeated automatic repair; owner-requested/manual maintenance remains separately governed."],
     });
   }
 }

@@ -36,6 +36,10 @@ describe("gateway command parsing and pairing security", () => {
       type: "diagnose",
       componentId: "floral.service",
     });
+    expect(parseGatewayCommand("/maintenance")).toEqual({ type: "maintenance" });
+    expect(parseGatewayCommand("/maintenance owner-auto")).toEqual({ type: "maintenance", value: "owner-auto" });
+    expect(parseGatewayCommand("/maintenance self-heal")).toEqual({ type: "maintenance", value: "self-heal" });
+    expect(parseGatewayCommand("/maintenance reset-breaker")).toEqual({ type: "maintenance", value: "reset-breaker" });
     expect(parseGatewayCommand("/memory")).toEqual({ type: "native-memory-status" });
     expect(parseGatewayCommand("/memory status")).toEqual({ type: "native-memory-status" });
     expect(parseGatewayCommand("/memory diagnose")).toEqual({ type: "native-memory-diagnose" });

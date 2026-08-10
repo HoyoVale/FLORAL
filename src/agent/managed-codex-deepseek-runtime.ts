@@ -1284,6 +1284,11 @@ function createCodexRuntime(
   // Machine-local trust boundaries belong to the FLORAL parent process,
   // not to Codex or model-visible shell environments.
   delete processEnv.FLORAL_REMOTE_MODE_CEILING;
+  delete processEnv.FLORAL_MAINTENANCE_MODE_CEILING;
+  delete processEnv.FLORAL_MAINTENANCE_MAX_ACTIONS_PER_HOUR;
+  delete processEnv.FLORAL_MAINTENANCE_COOLDOWN_MS;
+  delete processEnv.FLORAL_MAINTENANCE_FAILURE_THRESHOLD;
+  delete processEnv.FLORAL_MAINTENANCE_SELF_HEAL_INTERVAL_MS;
   delete processEnv.FLORAL_WORKSPACE_ROOT;
 
   let runtime: CodexAppServerRuntime | undefined;

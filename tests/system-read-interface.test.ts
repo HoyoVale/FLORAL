@@ -188,7 +188,7 @@ describe("Phase 8A.5 read-only System Awareness interface", () => {
     const text = formatSystemCapabilities(createModel(), "floral.service");
     expect(text).toContain("component=floral.service action=restart");
     expect(text).toContain("disposition=host-only");
-    expect(text).toContain("approval=local-confirmation");
+    expect(text).toContain("approval=autonomy-policy");
     expect(text).toContain("capability=system.restart");
     expect(text).toContain("executor=scripts/service.ts");
     expect(text).toContain("authorization_granted=false");

@@ -44,6 +44,7 @@ import {
   SystemMaintenanceController,
   resolveSystemMaintenanceDirectory,
 } from "./system-maintenance/system-maintenance.js";
+import { MaintenanceAutonomySupervisor } from "./system-maintenance/maintenance-autonomy-supervisor.js";
 
 loadProjectEnv();
 const env = loadEnv();
@@ -138,6 +139,14 @@ const systemMaintenance = serviceState
       ),
       serviceStatePath: resolve(repositoryRoot, env.FLORAL_SERVICE_STATE_PATH),
       workerPath: resolve(repositoryRoot, "dist", "src", "system-maintenance", "service-restart-worker.js"),
+      autonomy: {
+        ceiling: env.FLORAL_MAINTENANCE_MODE_CEILING,
+        allowedActions: ["floral.service.restart"],
+        maxAutomaticActionsPerHour: env.FLORAL_MAINTENANCE_MAX_ACTIONS_PER_HOUR,
+        cooldownMs: env.FLORAL_MAINTENANCE_COOLDOWN_MS,
+        failureThreshold: env.FLORAL_MAINTENANCE_FAILURE_THRESHOLD,
+        selfHealIntervalMs: env.FLORAL_MAINTENANCE_SELF_HEAL_INTERVAL_MS,
+      },
     })
   : undefined;
 await systemMaintenance?.initialize();
@@ -202,12 +211,18 @@ const gateway = new GatewayService(
           config: authority.effective.codex.memories,
         }),
       ]);
+      const maintenancePolicy = await systemMaintenance?.autonomyStatus().catch(() => undefined);
       return [
         ...renderCodexNativeMemoryRuntimeLines(nativeMemory),
         `cost_guard=${snapshot.blockedReason ? `blocked:${snapshot.blockedReason}` : "ready"}`,
         `cost_24h=¥${snapshot.estimatedCostCny.day.toFixed(3)}/${authority.effective.runtime.cost_guard.max_cost_cny_per_day.toFixed(2)}`,
         `tokens_24h=${String(snapshot.tokens.day)}/${String(authority.effective.runtime.cost_guard.max_tokens_per_day)}`,
         `requests_hour=${String(snapshot.requests.hour)}/${String(authority.effective.runtime.cost_guard.max_requests_per_hour)}`,
+        ...(maintenancePolicy ? [
+          `maintenance_mode=${maintenancePolicy.effectiveMode}`,
+          `maintenance_ceiling=${maintenancePolicy.ceiling}`,
+          `maintenance_breaker=${maintenancePolicy.circuitBreakerOpen ? "open" : "closed"}`,
+        ] : []),
       ];
     },
     nativeMemoryDiagnosticLines: async (cwd) => {
@@ -228,6 +243,18 @@ const gateway = new GatewayService(
     },
   },
 );
+
+const maintenanceAutonomy = systemMaintenance
+  ? new MaintenanceAutonomySupervisor({
+      controller: systemMaintenance,
+      systemAwareness,
+      cwd: env.CODEX_CWD,
+      store,
+      notify: async (conversationId, text) => {
+        await transport.send({ conversationId, text });
+      },
+    })
+  : undefined;
 
 function createChatTransport(
   selection: "mock" | "qq" | "feishu",
@@ -273,6 +300,7 @@ const shutdown = (signal: string): Promise<void> => {
   shutdownPromise = (async () => {
     process.stderr.write(`\n${signal}: stopping gateway...\n`);
     await serviceState?.write("stopping");
+    maintenanceAutonomy?.stop();
     await gateway.stop();
     await serviceState?.write("stopped");
     await lock.release();
@@ -300,6 +328,7 @@ try {
   await gateway.start();
   await serviceState?.write("ready");
   if (serviceState) process.stderr.write("service.gateway=ready\n");
+  maintenanceAutonomy?.start();
 } catch (error) {
   await serviceState?.write(
     "failed",

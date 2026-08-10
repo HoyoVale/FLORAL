@@ -11,6 +11,7 @@ export type GatewayCommand =
   | { type: "mcp" }
   | { type: "system"; componentId: string | undefined }
   | { type: "diagnose"; componentId: string | undefined }
+  | { type: "maintenance"; value: string | undefined }
   | { type: "stop" }
   | { type: "mode"; value: string | undefined }
   | { type: "projects" }
@@ -58,6 +59,13 @@ export function parseGatewayCommand(text: string): GatewayCommand | undefined {
     return {
       type: "diagnose",
       componentId: diagnose[1]?.trim().toLowerCase() || undefined,
+    };
+  }
+  const maintenance = /^\/maintenance(?:\s+([A-Za-z-]+))?$/i.exec(trimmed);
+  if (maintenance) {
+    return {
+      type: "maintenance",
+      value: maintenance[1]?.trim().toLowerCase() || undefined,
     };
   }
   if (/^\/memory(?:\s+status)?$/i.test(trimmed)) return { type: "native-memory-status" };

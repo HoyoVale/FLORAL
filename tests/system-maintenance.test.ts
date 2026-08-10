@@ -165,15 +165,19 @@ describe("SystemMaintenanceController", () => {
         directory,
         now: () => new Date("2026-08-10T00:00:01.000Z"),
       });
+      await controller.recordOwnerDeliveryTarget("private-owner-conversation-id");
       const evidence = await observer.observe();
-      expect(evidence).toHaveLength(1);
+      expect(evidence).toHaveLength(3);
       expect(evidence[0]).toMatchObject({
         componentId: "floral.maintenance",
         fact: "last_transaction",
         confidence: "authoritative",
         source: { id: "maintenance-receipt", kind: "filesystem" },
       });
+      expect(evidence.map((item) => item.fact)).toEqual(["last_transaction", "autonomy_policy", "autonomy_state"]);
       expect(JSON.stringify(evidence)).toContain("MAINT5678");
+      expect(JSON.stringify(evidence)).toContain("owner_notification_target_present");
+      expect(JSON.stringify(evidence).includes("private-owner-conversation-id")).toBe(false);
       expect(JSON.stringify(evidence).includes("launchctl")).toBe(false);
     } finally {
       await rm(root, { recursive: true, force: true });

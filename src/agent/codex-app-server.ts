@@ -271,7 +271,7 @@ const FLORAL_SYSTEM_DEVELOPER_INSTRUCTIONS = [
   "- system_summary, component_status, current_context, capabilities, and diagnose are read-only views or deterministic derivations of a snapshot captured before the current turn. Treat unknown and conflict as valid states; never use shell, config files, or guesswork to upgrade them into certainty.",
   "- Use floral_system/diagnose when the user asks why a FLORAL component is unavailable, degraded, conflicting, or not exposing an expected capability. Diagnostic findings are derived hypotheses over evidence, not new authoritative facts; preserve their confidence, failure-domain ordering, limitations, and read-only check sequence.",
   "- Governed self-maintenance is exposed only through floral_system/maintain for actions explicitly declared by floral_system/capabilities. Never use shell, launchctl, direct config edits, or generic command execution as a maintenance bypass. Before proposing maintain, inspect diagnose and capabilities; the host independently enforces the declared action, capability, approval requirement, bounded executor, and verification contract.",
-  "- floral_system/maintain is a mutation. It must not be called during diagnosis-only requests. A service restart requires Mac-local confirmation and is queued for post-reply handoff; the initiating turn cannot claim success. Verification comes from the maintenance receipt in a fresh turn after the service returns.",
+  "- floral_system/maintain is a mutation. It must not be called during diagnosis-only requests. Restart approval is governed by floral.maintenance autonomy_policy: manual requires Mac-local confirmation; owner-auto may bypass per-action local confirmation only for a direct owner restart request recognized by the host; self-heal is triggered only by the host supervisor from deterministic high-confidence repair rules. The model cannot self-label a request as owner-auto or self-heal. User-triggered restarts are queued for post-reply handoff; the initiating turn cannot claim success. Verification comes from the maintenance receipt in a fresh turn after the service returns.",
   "- The per-turn snapshot is frozen. A mutation performed later in the same turn does not refresh floral_system; use a fresh next turn or an owner-facing status command for post-mutation verification.",
   "- floral_system/capabilities describes declared ownership, management disposition, approval requirements, and verification contracts only. It grants no authorization. A maintenance tool call is separately governed and never inherits authorization from diagnostic metadata.",
 ].join("\n");
@@ -623,7 +623,7 @@ const FLORAL_SYSTEM_DYNAMIC_TOOLS = [
       {
         type: "function",
         name: "maintain",
-        description: "Request one declared governed maintenance action. MUTATING: never call for diagnosis-only or no-change requests. Phase 8D initially supports only floral.service/restart, requires Mac-local system.restart confirmation, queues execution until after the Agent reply, and verifies via a persisted maintenance receipt after restart. Never use shell/launchctl as a substitute.",
+        description: "Request one declared governed maintenance action. MUTATING: never call for diagnosis-only or no-change requests. floral.service/restart is governed by the host maintenance autonomy policy: manual requires Mac-local confirmation; owner-auto may auto-approve only a direct owner restart request recognized by the host; self-heal is host-supervisor-only and cannot be claimed by the model. User-triggered execution is queued until after the Agent reply and verified by persisted receipt. Never use shell/launchctl as a substitute.",
         inputSchema: {
           type: "object",
           properties: {
@@ -2334,7 +2334,7 @@ export class CodexAppServerRuntime implements AgentRuntime {
           || rationale.length > 320
           || !action
           || action.disposition !== "host-only"
-          || action.approval !== "local-confirmation"
+          || action.approval !== "autonomy-policy"
           || action.capability !== "system.restart"
           || !approvalHandler
           || !maintenanceHandler
