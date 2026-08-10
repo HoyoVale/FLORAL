@@ -202,7 +202,7 @@ function setup(options: {
         }
       : undefined,
     readExternalMcpRegistry: options.readExternalMcpRegistry
-      ?? (async () => ({ version: 1, packages: [] })),
+      ?? (async () => ({ version: 2, packages: [] })),
     manageExternalMcp: options.manageExternalMcp,
   });
   return {
@@ -309,7 +309,7 @@ describe("ManagedCodexDeepSeekRuntime", () => {
             changed: true,
             message: "external_mcp.install=ok\nid=chrome-devtools",
             registry: {
-              version: 1,
+              version: 2,
               packages: [{
                 id: "chrome-devtools",
                 enabled: true,
@@ -332,7 +332,9 @@ describe("ManagedCodexDeepSeekRuntime", () => {
       await new Promise<void>((resolvePromise) => setImmediate(resolvePromise));
       await new Promise<void>((resolvePromise) => setImmediate(resolvePromise));
       expect(workspaceConfigs.at(-1)).toContain("[mcp_servers.chrome-devtools]");
-      expect(workspaceConfigs.at(-1)).toContain("chrome-devtools-mcp@1.6.0");
+      expect(workspaceConfigs.at(-1)).toContain("chrome-devtools-mcp");
+      expect(workspaceConfigs.at(-1)).toContain("build\\\\src\\\\bin.js");
+      expect(workspaceConfigs.at(-1)).not.toContain('command = "npx"\nargs = ["-y", "chrome-devtools-mcp@1.6.0"');
       expect(workspaceConfigs.at(-1)).toContain('default_tools_approval_mode = "writes"');
       expect(runtime.mcpReloads).toBe(1);
       await managed.stop();
@@ -787,7 +789,7 @@ describe("ManagedCodexDeepSeekRuntime", () => {
         };
       },
       createRuntime: () => runtime,
-      readExternalMcpRegistry: async () => ({ version: 1, packages: [] }),
+      readExternalMcpRegistry: async () => ({ version: 2, packages: [] }),
       recordCodexCutover: async (report) => {
         reportStatus = report.status;
         return "/tmp/codex-cutover.json";
@@ -847,7 +849,7 @@ describe("ManagedCodexDeepSeekRuntime", () => {
         };
       },
       createRuntime: () => runtimes[runtimeIndex++]!,
-      readExternalMcpRegistry: async () => ({ version: 1, packages: [] }),
+      readExternalMcpRegistry: async () => ({ version: 2, packages: [] }),
       recordMcpRegistryAdoption: async () => {
         throw new Error("report write failed");
       },
@@ -911,7 +913,7 @@ describe("ManagedCodexDeepSeekRuntime", () => {
         };
       },
       createRuntime: () => runtimes[runtimeIndex++]!,
-      readExternalMcpRegistry: async () => ({ version: 1, packages: [] }),
+      readExternalMcpRegistry: async () => ({ version: 2, packages: [] }),
       recordCodexCutover: async (report) => {
         reportStatus = report.status;
         return "/tmp/codex-cutover.json";

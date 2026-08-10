@@ -131,9 +131,18 @@ describe("QqApprovalBroker", () => {
     const decisionPromise = broker.request(scope, {
       requestId: "skill-private",
       kind: "skill-management",
-      capability: "software.install",
+      capability: "extension.install",
       summary: "Install shared External Skill superpowers",
       source: "floral",
+      scope: {
+        type: "extension",
+        extensionKind: "skill",
+        targetId: "superpowers",
+        action: "install",
+        sourceId: "obra/superpowers",
+        sourceVersion: "pinned-test-commit",
+        permissions: ["files.read"],
+      },
     });
     await Promise.resolve();
 
@@ -464,7 +473,7 @@ describe("QqApprovalBroker", () => {
       send: async (_conversationId, text) => { sent.push(text); },
       audit: async (event) => { audits.push(event); },
       autoApproveChatConfirmation: async (scope, request) => ({
-        approved: scope.role === "owner" && request.capability === "software.install",
+        approved: scope.role === "owner" && request.capability === "extension.install",
         reason: "trusted-owner-full",
       }),
     });
@@ -477,9 +486,18 @@ describe("QqApprovalBroker", () => {
     }, {
       requestId: "extension-private",
       kind: "extension-management",
-      capability: "software.install",
+      capability: "extension.install",
       summary: "Install curated MCP",
       source: "floral",
+      scope: {
+        type: "extension",
+        extensionKind: "mcp",
+        targetId: "chrome-devtools",
+        action: "install",
+        sourceId: "npm:@modelcontextprotocol/server-chrome-devtools",
+        sourceVersion: "1.0.0",
+        permissions: ["browser.inspect"],
+      },
     })).resolves.toBe("approve");
 
     expect(sent).toEqual([]);

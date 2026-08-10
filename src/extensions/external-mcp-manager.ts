@@ -2,12 +2,17 @@ import {
   CURATED_EXTERNAL_MCP,
   EXTERNAL_MCP_REGISTRY_VERSION,
   externalMcpRegistryFingerprint,
+  externalMcpCatalogManifestIntegrity,
   readExternalMcpRegistry,
   resolveExternalMcpRegistryPaths,
   writeExternalMcpRegistry,
   type ExternalMcpCatalogId,
   type ExternalMcpRegistry,
 } from "./external-mcp-registry.js";
+import {
+  ExternalMcpPackageCache,
+  type ExternalMcpPackageCacheOptions,
+} from "./external-mcp-package-cache.js";
 
 export type ExternalMcpMutationAction =
   | "install"
@@ -43,13 +48,24 @@ export interface ExternalMcpCatalogStatus {
 
 export class ExternalMcpHostManager {
   readonly #paths;
+  readonly #packageCache: ExternalMcpPackageCache;
 
   constructor(
     repositoryRoot: string,
     dataDir: string,
     private readonly environment: NodeJS.ProcessEnv = process.env,
+    packageCacheOptions: Pick<ExternalMcpPackageCacheOptions, "install"> = {},
   ) {
     this.#paths = resolveExternalMcpRegistryPaths(repositoryRoot, dataDir);
+    this.#packageCache = new ExternalMcpPackageCache({
+      repositoryRoot,
+      dataDir,
+      ...packageCacheOptions,
+    });
+  }
+
+  async reconcileRuntimePackages(registry?: ExternalMcpRegistry): Promise<void> {
+    await this.#packageCache.reconcile(registry ?? await this.readRegistry());
   }
 
   async readRegistry(): Promise<ExternalMcpRegistry> {
@@ -108,6 +124,10 @@ export class ExternalMcpHostManager {
     let changed = false;
     let packages = [...registry.packages];
 
+    if (request.action === "install" || request.action === "enable") {
+      await this.#packageCache.ensure(request.id);
+    }
+
     switch (request.action) {
       case "install":
         if (!existing) {
@@ -116,6 +136,8 @@ export class ExternalMcpHostManager {
             enabled: true,
             installedAt: now,
             updatedAt: now,
+            sourceVersion: CURATED_EXTERNAL_MCP[request.id].sourceVersion,
+            manifestIntegrity: externalMcpCatalogManifestIntegrity(request.id),
           });
           changed = true;
         }
@@ -154,6 +176,9 @@ export class ExternalMcpHostManager {
       packages: packages.sort((a, b) => a.id.localeCompare(b.id)),
     };
     if (changed) await writeExternalMcpRegistry(this.#paths, next);
+    if (changed && request.action === "remove") {
+      await this.#packageCache.remove(request.id);
+    }
     const effective = changed ? next : registry;
     const catalog = CURATED_EXTERNAL_MCP[request.id];
     const auth = catalog.authentication === "none"

@@ -1,6 +1,10 @@
 import { describe, expect, it } from "vitest";
 import type { McpRuntimeRegistry } from "../src/config/mcp/mcp-runtime-registry.js";
 import { AuthorizationAuthority } from "../src/policy/authorization-authority.js";
+import {
+  externalMcpApprovalScope,
+  externalSkillApprovalScope,
+} from "../src/extensions/extension-approval.js";
 
 function registry(): McpRuntimeRegistry {
   return {
@@ -144,8 +148,9 @@ describe("AuthorizationAuthority", () => {
   it("allows only owner-approved FLORAL Skill supply-chain changes to cross a read-only Codex sandbox", () => {
     expect(authority("read-only").evaluate({
       role: "owner",
-      capability: "software.install",
+      capability: "extension.install",
       source: "floral-skill",
+      scope: externalSkillApprovalScope("superpowers", "install"),
     })).toEqual({
       status: "approval-required",
       approvalLevel: "chat-confirmation",
@@ -154,19 +159,29 @@ describe("AuthorizationAuthority", () => {
 
     expect(authority("read-only").evaluate({
       role: "operator",
-      capability: "software.install",
+      capability: "extension.install",
       source: "floral-skill",
+      scope: externalSkillApprovalScope("superpowers", "install"),
     })).toMatchObject({
       status: "deny",
       reason: "role-capability-denied",
     });
   });
 
-  it("requires owner chat approval for curated External MCP supply-chain changes", () => {
+  it("binds Project Skill publication to owner, project, target, digest, and declared permissions", () => {
+    const scope = {
+      type: "skill-publish" as const,
+      projectId: "a".repeat(64),
+      targetName: "release-summary",
+      action: "create" as const,
+      digest: `sha256:${"b".repeat(64)}`,
+      permissions: ["files.read" as const],
+    };
     expect(authority("read-only").evaluate({
       role: "owner",
-      capability: "software.install",
-      source: "floral-extension",
+      capability: "skill.publish",
+      source: "floral-skill",
+      scope,
     })).toEqual({
       status: "approval-required",
       approvalLevel: "chat-confirmation",
@@ -174,8 +189,33 @@ describe("AuthorizationAuthority", () => {
     });
     expect(authority("read-only").evaluate({
       role: "operator",
-      capability: "software.install",
+      capability: "skill.publish",
+      source: "floral-skill",
+      scope,
+    })).toMatchObject({ status: "deny", reason: "role-capability-denied" });
+    expect(authority("read-only").evaluate({
+      role: "owner",
+      capability: "skill.publish",
+      source: "floral-skill",
+    })).toMatchObject({ status: "deny", reason: "approval-scope-invalid" });
+  });
+
+  it("requires owner chat approval for curated External MCP supply-chain changes", () => {
+    expect(authority("read-only").evaluate({
+      role: "owner",
+      capability: "extension.install",
       source: "floral-extension",
+      scope: externalMcpApprovalScope("github-readonly", "install"),
+    })).toEqual({
+      status: "approval-required",
+      approvalLevel: "chat-confirmation",
+      reason: "policy",
+    });
+    expect(authority("read-only").evaluate({
+      role: "operator",
+      capability: "extension.install",
+      source: "floral-extension",
+      scope: externalMcpApprovalScope("github-readonly", "install"),
     })).toMatchObject({ status: "deny", reason: "role-capability-denied" });
   });
 
@@ -203,7 +243,7 @@ describe("AuthorizationAuthority", () => {
   it("keeps the GitHub owner control plane owner-only", () => {
     expect(authority("danger-full-access").evaluate({
       role: "owner",
-      capability: "files.write",
+      capability: "github.issue.write",
       source: "mcp-tool",
       mcpServerId: "github-owner",
       mcpToolName: "issue_write",
@@ -214,11 +254,52 @@ describe("AuthorizationAuthority", () => {
     });
     expect(authority("danger-full-access").evaluate({
       role: "operator",
-      capability: "files.write",
+      capability: "github.issue.write",
       source: "mcp-tool",
       mcpServerId: "github-owner",
       mcpToolName: "issue_write",
     })).toMatchObject({ status: "deny", reason: "role-capability-denied" });
+  });
+
+  it("denies extension mutations when the exact structured scope is missing or mismatched", () => {
+    expect(authority("read-only").evaluate({
+      role: "owner",
+      capability: "extension.install",
+      source: "floral-extension",
+    })).toMatchObject({ status: "deny", reason: "approval-scope-invalid" });
+
+    expect(authority("read-only").evaluate({
+      role: "owner",
+      capability: "extension.remove",
+      source: "floral-extension",
+      scope: externalMcpApprovalScope("github-readonly", "install"),
+    })).toMatchObject({ status: "deny", reason: "approval-scope-invalid" });
+  });
+
+  it("denies MCP capability spoofing and unknown future external tools", () => {
+    expect(authority("danger-full-access").evaluate({
+      role: "owner",
+      capability: "github.repository.read",
+      source: "mcp-tool",
+      mcpServerId: "github-owner",
+      mcpToolName: "issue_write",
+    })).toMatchObject({ status: "deny", reason: "mcp-capability-mismatch" });
+
+    expect(authority("danger-full-access").evaluate({
+      role: "owner",
+      capability: "github.issue.write",
+      source: "mcp-tool",
+      mcpServerId: "github-owner",
+      mcpToolName: "future_mutation_tool",
+    })).toMatchObject({ status: "deny", reason: "mcp-tool-not-allowlisted" });
+
+    expect(authority("danger-full-access").evaluate({
+      role: "owner",
+      capability: "github.repository.read",
+      source: "mcp-tool",
+      mcpServerId: "github",
+      mcpToolName: "future_read_or_write_tool",
+    })).toMatchObject({ status: "deny", reason: "mcp-tool-not-allowlisted" });
   });
 
   it("lets only bounded FLORAL maintenance reach Mac-local restart confirmation across a Codex sandbox", () => {

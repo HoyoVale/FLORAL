@@ -81,6 +81,7 @@ export class QqApprovalBroker {
       source: sourceFor(request),
       ...(request.mcpServerId ? { mcpServerId: request.mcpServerId } : {}),
       ...(request.mcpToolName ? { mcpToolName: request.mcpToolName } : {}),
+      ...(request.scope ? { scope: request.scope } : {}),
     });
 
     if (decision.status === "allow") {
@@ -358,6 +359,7 @@ export class QqApprovalBroker {
         capability: request.capability,
         kind: request.kind,
         source: request.source,
+        ...(request.scope ? { scope: request.scope } : {}),
         ...extra,
       },
     }).catch(() => undefined);
@@ -408,6 +410,7 @@ function approvalPrompt(
     `审批编号=${publicId}`,
     `能力=${request.capability}`,
     `请求=${boundedSummary(request.summary)}`,
+    ...approvalScopeLines(request),
     `有效期=${seconds} 秒`,
     `允许一次：/approve ${publicId}`,
   ];
@@ -424,6 +427,27 @@ function approvalPrompt(
     "权限决定由 Codex 原生审批/会话缓存执行；FLORAL 不维护影子命令白名单。",
   );
   return lines.join("\n");
+}
+
+function approvalScopeLines(request: AgentApprovalRequest): string[] {
+  const scope = request.scope;
+  if (!scope) return [];
+  if (scope.type === "skill-publish") {
+    return [
+      `项目 Skill=${scope.targetName}`,
+      `动作=${scope.action}`,
+      `草稿摘要=${scope.digest}`,
+      `声明权限=${scope.permissions.join(",") || "none"}`,
+    ];
+  }
+  return [
+    `扩展=${scope.extensionKind}/${scope.targetId}`,
+    `动作=${scope.action}`,
+    `来源=${boundedSummary(scope.sourceId)}`,
+    `版本=${boundedSummary(scope.sourceVersion)}`,
+    ...(scope.integrity ? [`完整性=${scope.integrity}`] : []),
+    `权限=${scope.permissions.join(",")}`,
+  ];
 }
 
 function boundedSummary(value: string): string {

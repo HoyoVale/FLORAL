@@ -1,5 +1,6 @@
 import type {
   AgentAppReadResult,
+  AgentAppDetail,
   AgentAppSummary,
   AgentMcpServerSummary,
   AgentNativeFeatureSummary,
@@ -35,8 +36,8 @@ export function readExtensionPlanKind(value: unknown): ExtensionPlanKind | undef
   return value === "mcp" || value === "skill" || value === "app" ? value : undefined;
 }
 
-export function readExtensionApplyKind(value: unknown): "mcp" | "skill" | undefined {
-  return value === "mcp" || value === "skill" ? value : undefined;
+export function readExtensionApplyKind(value: unknown): "mcp" | "skill" | "app" | undefined {
+  return value === "mcp" || value === "skill" || value === "app" ? value : undefined;
 }
 
 export function readExtensionPlanIntent(value: unknown): ExtensionPlanIntent | undefined {
@@ -67,6 +68,11 @@ export function readAppId(value: unknown): string | undefined {
   if (typeof value !== "string") return undefined;
   const id = value.trim();
   return /^[A-Za-z0-9][A-Za-z0-9._:-]{0,159}$/u.test(id) ? id : undefined;
+}
+
+export function readConfigAppId(value: unknown): string | undefined {
+  const id = readAppId(value);
+  return id && /^[A-Za-z0-9_]{1,160}$/u.test(id) ? id : undefined;
 }
 
 export function normalizeAppIds(values: readonly string[]): string[] {
@@ -131,10 +137,10 @@ export function formatNativeExtensionStatus(
     "apps.invocation=app-mention",
     "mcp.discovery=mcpServerStatus/list",
     "mcp.lifecycle=floral-curated+config/mcpServer/reload",
-    "plugins.catalog_rpc=blocked-by-floral",
-    "plugins.catalog_reason=upstream-under-development-for-production-clients",
-    "plugins.install_rpc=blocked-by-floral",
-    "plugins.install_surface=codex-cli-/plugins",
+    "plugins.catalog_rpc=blocked-by-upstream-production-contract",
+    "plugins.catalog_reason=app-server-plugin-rpcs-under-development-do-not-call-from-production-clients",
+    "plugins.install_rpc=blocked-by-upstream-production-contract",
+    "plugins.install_surface=codex-cli-/plugins-or-chatgpt-plugin-directory",
     "browser.availability=requires-ready-browser-mcp-on-headless-host",
   ].join("\n");
 }
@@ -201,6 +207,58 @@ export function formatAppReadForTool(result: AgentAppReadResult): string {
     lines.push(`missing_ids=${JSON.stringify(result.missingAppIds)}`);
   }
   return boundedDynamicToolText(lines.join("\n"));
+}
+
+export function formatAppPermissionReview(
+  appId: string,
+  installed: AgentAppSummary | undefined,
+  directory: AgentAppSummary | undefined,
+  detail: AgentAppDetail | undefined,
+): string {
+  const tools = detail?.tools ?? [];
+  const enabled = tools.filter((tool) => tool.enabled);
+  const readOnly = enabled.filter((tool) => tool.readOnly);
+  const action = enabled.filter((tool) => !tool.readOnly);
+  return boundedDynamicToolText([
+    "codex_app_permission_review=complete",
+    `app_id=${safeDynamicToolToken(appId)}`,
+    `name=${JSON.stringify(detail?.name ?? directory?.runtimeName ?? installed?.runtimeName ?? appId)}`,
+    `installed=${String(Boolean(installed && installed.source === "installed-runtime"))}`,
+    `enabled=${installed ? String(installed.enabled) : "unknown"}`,
+    `callable=${installed?.callable === undefined ? "unknown" : String(installed.callable)}`,
+    `directory_accessible=${directory?.accessible === undefined ? "unknown" : String(directory.accessible)}`,
+    `plugins=${JSON.stringify(detail?.pluginDisplayNames ?? [])}`,
+    `tools_total=${String(tools.length)}`,
+    `tools_enabled=${String(enabled.length)}`,
+    `tools_read_only=${String(readOnly.length)}`,
+    `tools_action=${String(action.length)}`,
+    `action_tool_names=${JSON.stringify(action.map((tool) => tool.name))}`,
+    "oauth_scopes=not-exposed-by-app-read",
+    "oauth_scope_review=required-on-upstream-install-or-auth-surface",
+    "source_system_authorization=separate-from-floral-and-codex-runtime-permissions",
+    "tool_metadata=display-only-not-authorization",
+  ].join("\n"));
+}
+
+export function formatPluginManagementHandoff(
+  features: AgentNativeFeatureSummary[],
+  action: "browse" | "install" | "uninstall" | "enable" | "disable",
+  pluginName?: string | undefined,
+): string {
+  const feature = features.find((item) => item.name === "plugins");
+  return [
+    "plugin_management_handoff=required",
+    `action=${action}`,
+    ...(pluginName ? [`plugin_name=${JSON.stringify(pluginName)}`] : []),
+    `feature_stage=${feature?.stage ?? "unknown"}`,
+    `feature_enabled=${feature ? String(feature.enabled) : "unknown"}`,
+    "supported_surface=codex-cli-/plugins-or-chatgpt-plugin-directory",
+    "app_server_plugin_list_read_install_uninstall=not-called",
+    "reason=upstream-app-server-plugin-rpcs-are-under-development-and-not-for-production-clients",
+    "review=publisher-skills-connectors-mcp-hooks-browser-extensions-and-permissions",
+    "authentication_and_connector_grants=user-mediated",
+    "post_change=start-new-session-and-verify-bundled-capabilities",
+  ].join("\n");
 }
 
 function readBoundedPlainText(value: unknown, maxLength: number): string | undefined {

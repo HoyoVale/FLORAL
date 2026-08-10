@@ -12,11 +12,12 @@ export const FLORAL_AGENT_DEVELOPER_INSTRUCTIONS = [
   "- A local filesystem path or Markdown link/image is not a delivered chat attachment.",
   "- When the user explicitly asks to receive a screenshot or another already-registered artifact, call floral_delivery/send_artifact with the artifactId returned by the trusted producer. Never claim delivery unless that tool reports success.",
   "- For terminal-produced files, first create or copy the final attachment into <cwd>/artifacts/outbound, then call floral_delivery/register_outbound_file, then floral_delivery/send_artifact. Do not register or send arbitrary paths outside that staging root.",
-  "- Manage Skills through floral_skills and Codex-native Skill discovery. Project Skills may be created under <cwd>/.agents/skills. Never edit data/external-skills/registry.json directly or use shell/git to bypass External Skill approval.",
+  "- Manage Skills through floral_skills and Codex-native Skill discovery. For a new or updated Project Skill, use the skill-creator workflow to write a draft under <cwd>/.agents/skill-drafts/<name>, including SKILL.md and proposal.json; call draft_status, then publish_draft with the returned exact digest. FLORAL atomically publishes only after scoped approval and verifies through Codex-native Skill discovery/config. Never write <cwd>/.agents/skills directly, edit runtime registries, or use shell/git to bypass Skill governance.",
   "- Discover and manage supported extensions through floral_extensions. Use floral_system when current ownership, readiness, or management authority matters. For a capability gap or extension lifecycle request, call floral_extensions/plan_extension first; treat its current_state/status/recommended_action as the deterministic control-plane plan for this frozen turn.",
-  "- Only call floral_extensions/apply_extension when plan_extension returns action-required and the requested exact action matches recommended_action. External MCP/Skill mutation remains one-shot software.install policy-gated. In paired-owner full mode the host may auto-approve that chat-confirmation after AuthorizationAuthority accepts the exact curated action; this does not widen the catalog or let the model bypass plan/apply/verify. If the plan says no-op, prerequisite-required, diagnose-first, unknown, or unsupported, do not mutate merely to try. Apps are upstream/user-owned: use prepare_app_install only when the plan returns user-handoff; never silently install or authenticate an App.",
+  "- Only call floral_extensions/apply_extension when plan_extension returns action-required and the requested exact action matches recommended_action. External MCP/Skill mutation is policy-gated by an exact extension.<action> capability and structured target/source/integrity scope. In paired-owner full mode the host may auto-approve a chat-confirmation only after AuthorizationAuthority accepts that exact curated action; this does not widen the catalog or let the model bypass plan/apply/verify. If the plan says no-op, prerequisite-required, diagnose-first, unknown, or unsupported, do not mutate merely to try. App install/auth/remove remain upstream/user-owned: review through app_permission_review and use prepare_app_install only for user-handoff. Installed App enable/disable may use the exact planned apply_extension action, which is executed only through Codex native config RPC and requires fresh-turn verification.",
+  "- Plugin App Server list/read/install/uninstall RPCs are upstream under development and forbidden to production clients. Use floral_extensions/prepare_plugin_management for the supported Codex CLI /plugins or ChatGPT Plugin Directory handoff, then require a new session and capability verification.",
   "- Extension control-plane routing overrides terminal-first application routing. After any controlled extension mutation or App install handoff, the current turn's extension/System Awareness snapshot predates the change and cannot verify adoption. End the current turn with verification pending. On a fresh next turn use floral_extensions/verify_extension; use mcp_status or system diagnostics only as supporting read-only views. Do not inspect ~/.codex, process tables, package storage, data/external-* registries, or run shell/git/npm/pnpm/codex extension commands to compensate.",
-  "- Legacy manage_mcp/manage_external remain compatibility routes but do not authorize bypassing the Phase 8E plan/apply/verify contract. Extension operations not exposed by FLORAL are unsupported for this Agent turn. Never use shell, direct Codex config edits, undocumented RPCs, arbitrary package sources, or package managers as an extension-install workaround; consult floral_system/capabilities for the current management contract.",
+  "- Legacy manage_mcp/manage_external are not exposed to Agent turns. Extension operations not exposed by FLORAL are unsupported for this Agent turn. Never use shell, direct Codex config edits, undocumented RPCs, arbitrary package sources, or package managers as an extension-install workaround; consult floral_system/capabilities for the current management contract.",
   "- Manage shared project memory through floral_context only. Read current context before relying on it; create a turn-bound proposal before applying an update. Applying an update is host approval-gated and writes only the selected managed .floral document with a provenance receipt. Never edit AGENTS.md, .floral files, or the provenance ledger through shell or direct file tools. Use compact to reconcile provenance freshness without rewriting document bodies.",
 ].join("\n");
 
@@ -165,26 +166,51 @@ const FLORAL_SKILLS_DYNAMIC_TOOLS = [
       },
       {
         type: "function",
-        name: "manage_external",
-        description: "Install, update, shared-enable, shared-disable, or remove one curated External Skill package. FLORAL requires user approval before any supply-chain mutation.",
+        name: "draft_status",
+        description: "Validate one Project Skill draft under <cwd>/.agents/skill-drafts/<name>. Checks Codex Skill schema, bounded file structure, declared permissions, trigger/negative tests, policy bypass patterns, collisions, and returns an exact digest. This is read-only.",
         inputSchema: {
           type: "object",
           properties: {
-            action: {
+            name: {
               type: "string",
-              enum: ["install", "update", "enable", "disable", "remove"],
-            },
-            id: {
-              type: "string",
-              pattern: "^[a-z0-9][a-z0-9-]{0,63}$",
-            },
-            ref: {
-              type: "string",
-              minLength: 1,
-              maxLength: 160,
+              pattern: "^[a-z0-9]+(?:-[a-z0-9]+)*$",
+              maxLength: 64,
             },
           },
-          required: ["action", "id"],
+          required: ["name"],
+          additionalProperties: false,
+        },
+        deferLoading: false,
+      },
+      {
+        type: "function",
+        name: "publish_draft",
+        description: "Publish one already validated Project Skill draft. Requires the exact digest from draft_status, revalidates after approval, atomically installs under <cwd>/.agents/skills, enables through native skills/config/write, verifies native discovery, and rolls back on failure.",
+        inputSchema: {
+          type: "object",
+          properties: {
+            name: {
+              type: "string",
+              pattern: "^[a-z0-9]+(?:-[a-z0-9]+)*$",
+              maxLength: 64,
+            },
+            digest: {
+              type: "string",
+              pattern: "^sha256:[0-9a-f]{64}$",
+            },
+          },
+          required: ["name", "digest"],
+          additionalProperties: false,
+        },
+        deferLoading: false,
+      },
+      {
+        type: "function",
+        name: "publication_history",
+        description: "Read bounded project-specific Project Skill publication and rollback receipts from FLORAL runtime data.",
+        inputSchema: {
+          type: "object",
+          properties: {},
           additionalProperties: false,
         },
         deferLoading: false,
@@ -197,7 +223,7 @@ const FLORAL_EXTENSIONS_DYNAMIC_TOOLS = [
   {
     type: "namespace",
     name: "floral_extensions",
-    description: "Phase 8E controlled extension surface: deterministic planning, one-shot governed curated External MCP/Skill mutation, user-mediated Codex App handoff, and fresh-turn verification. Plugin write RPCs remain outside the production contract.",
+    description: "Controlled extension surface: deterministic planning; governed curated External MCP/Skill mutation; native Codex App enable/disable plus user-mediated install/auth handoff; supported Plugin management handoff; and fresh-turn verification.",
     tools: [
       {
         type: "function",
@@ -252,6 +278,35 @@ const FLORAL_EXTENSIONS_DYNAMIC_TOOLS = [
       },
       {
         type: "function",
+        name: "app_permission_review",
+        description: "Summarize one App's frozen installed/directory state, bundled plugin names, and read-only versus action tool counts before install, enable, authentication, or use. Upstream OAuth scopes remain explicitly user-reviewed when App Server does not expose them.",
+        inputSchema: {
+          type: "object",
+          properties: {
+            app_id: { type: "string", minLength: 1, maxLength: 160 },
+          },
+          required: ["app_id"],
+          additionalProperties: false,
+        },
+        deferLoading: false,
+      },
+      {
+        type: "function",
+        name: "prepare_plugin_management",
+        description: "Prepare a supported user handoff for browsing, installing, uninstalling, enabling, or disabling a Plugin. FLORAL does not call upstream under-development Plugin App Server RPCs from production.",
+        inputSchema: {
+          type: "object",
+          properties: {
+            action: { type: "string", enum: ["browse", "install", "uninstall", "enable", "disable"] },
+            plugin_name: { type: "string", minLength: 1, maxLength: 160 },
+          },
+          required: ["action"],
+          additionalProperties: false,
+        },
+        deferLoading: false,
+      },
+      {
+        type: "function",
         name: "read_apps",
         description: "Read per-turn cached metadata and display-only tool summaries for installed Codex App ids. This does not authorize or invoke App tools.",
         inputSchema: {
@@ -293,11 +348,11 @@ const FLORAL_EXTENSIONS_DYNAMIC_TOOLS = [
       {
         type: "function",
         name: "apply_extension",
-        description: "Apply one exact lifecycle action to a FLORAL-curated External MCP or External Skill package after one-shot FLORAL approval. Apps are never installed by this tool; use prepare_app_install for upstream user-mediated installation.",
+        description: "Apply one exact planned lifecycle action to a FLORAL-curated External MCP/Skill, or enable/disable an installed Codex App through native config RPC after authorization. App install/auth/remove remain user-mediated.",
         inputSchema: {
           type: "object",
           properties: {
-            kind: { type: "string", enum: ["mcp", "skill"] },
+            kind: { type: "string", enum: ["mcp", "skill", "app"] },
             action: { type: "string", enum: ["install", "update", "enable", "disable", "remove"] },
             id: { type: "string", minLength: 1, maxLength: 160 },
           },
@@ -309,10 +364,28 @@ const FLORAL_EXTENSIONS_DYNAMIC_TOOLS = [
       {
         type: "function",
         name: "verify_extension",
-        description: "Verify the latest controlled extension transaction against this turn's frozen System Awareness evidence. Use only on a fresh turn after mutation or App handoff; no shell or direct config inspection is performed.",
+        description: "Verify one controlled extension transaction (latest by default, or an exact transaction_id) against this turn's frozen System Awareness evidence. Use only on a fresh turn after mutation or App handoff; no shell or direct config inspection is performed.",
         inputSchema: {
           type: "object",
-          properties: {},
+          properties: {
+            transaction_id: {
+              type: "string",
+              pattern: "^[A-Z0-9]{8,24}$",
+            },
+          },
+          additionalProperties: false,
+        },
+        deferLoading: false,
+      },
+      {
+        type: "function",
+        name: "extension_history",
+        description: "Read recent bounded controlled-extension transaction receipts from the frozen System Awareness snapshot.",
+        inputSchema: {
+          type: "object",
+          properties: {
+            limit: { type: "integer", minimum: 1, maximum: 50 },
+          },
           additionalProperties: false,
         },
         deferLoading: false,
@@ -335,27 +408,6 @@ const FLORAL_EXTENSIONS_DYNAMIC_TOOLS = [
         inputSchema: {
           type: "object",
           properties: {},
-          additionalProperties: false,
-        },
-        deferLoading: false,
-      },
-      {
-        type: "function",
-        name: "manage_mcp",
-        description: "Compatibility lifecycle route for one curated external MCP. Phase 8E Agent behavior should use plan_extension then apply_extension. This remains one-shot FLORAL approval-gated and does not authorize shell/config bypasses.",
-        inputSchema: {
-          type: "object",
-          properties: {
-            action: {
-              type: "string",
-              enum: ["install", "enable", "disable", "remove"],
-            },
-            id: {
-              type: "string",
-              enum: ["github-readonly", "github-owner", "chrome-devtools"],
-            },
-          },
-          required: ["action", "id"],
           additionalProperties: false,
         },
         deferLoading: false,

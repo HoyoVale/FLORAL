@@ -38,8 +38,11 @@ describe("Phase 8A system definition registry", () => {
         ["install", "update", "enable", "disable", "remove"].includes(action.id),
       );
       expect(lifecycle).toHaveLength(5);
-      expect(lifecycle.every((action) => action.capability === "software.install")).toBe(true);
-      expect(lifecycle.every((action) => action.approval === approvalLevelFor("software.install"))).toBe(true);
+      for (const lifecycleAction of lifecycle) {
+        const capability = `extension.${lifecycleAction.id}` as Parameters<typeof approvalLevelFor>[0];
+        expect(lifecycleAction.capability).toBe(capability);
+        expect(lifecycleAction.approval).toBe(approvalLevelFor(capability));
+      }
     }
     expect(registry.require("floral.service").managementActions.find((action) => action.id === "restart")?.approval)
       .toBe("autonomy-policy");

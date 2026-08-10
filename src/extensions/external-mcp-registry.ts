@@ -10,7 +10,7 @@ import {
 import { join, resolve } from "node:path";
 import type { Capability } from "../core/types.js";
 
-export const EXTERNAL_MCP_REGISTRY_VERSION = 1 as const;
+export const EXTERNAL_MCP_REGISTRY_VERSION = 2 as const;
 export const CHROME_DEVTOOLS_MCP_VERSION = "1.6.0" as const;
 
 export type ExternalMcpCatalogId = "github-readonly" | "github-owner" | "chrome-devtools";
@@ -45,6 +45,14 @@ export interface ExternalMcpCatalogEntry {
   authentication: "none" | "bearer-env";
   authEnvVar?: string | undefined;
   supplyChain: string;
+  sourceVersion: string;
+  runtimePackage?: {
+    name: string;
+    version: string;
+    integrity: string;
+    entrypoint: string;
+    args: string[];
+  } | undefined;
 }
 
 export const CURATED_EXTERNAL_MCP: Readonly<Record<ExternalMcpCatalogId, ExternalMcpCatalogEntry>> = {
@@ -67,6 +75,7 @@ export const CURATED_EXTERNAL_MCP: Readonly<Record<ExternalMcpCatalogId, Externa
     authentication: "bearer-env",
     authEnvVar: "GITHUB_PAT_TOKEN",
     supplyChain: "github/github-mcp-server remote endpoint",
+    sourceVersion: "managed-endpoint-v1",
   },
   "github-owner": {
     id: "github-owner",
@@ -91,6 +100,7 @@ export const CURATED_EXTERNAL_MCP: Readonly<Record<ExternalMcpCatalogId, Externa
     authentication: "bearer-env",
     authEnvVar: "GITHUB_PAT_TOKEN",
     supplyChain: "github/github-mcp-server remote endpoint (bounded owner profile)",
+    sourceVersion: "managed-endpoint-v1",
   },
   "chrome-devtools": {
     id: "chrome-devtools",
@@ -120,6 +130,19 @@ export const CURATED_EXTERNAL_MCP: Readonly<Record<ExternalMcpCatalogId, Externa
     strictReadOnly: false,
     authentication: "none",
     supplyChain: `npm:chrome-devtools-mcp@${CHROME_DEVTOOLS_MCP_VERSION}`,
+    sourceVersion: CHROME_DEVTOOLS_MCP_VERSION,
+    runtimePackage: {
+      name: "chrome-devtools-mcp",
+      version: CHROME_DEVTOOLS_MCP_VERSION,
+      integrity: "sha512-VZX6f/OjQSYhy2BGGRs+y3LsrsAQAz/HwZCWKBLVyST/4r/3zjVEjjVW7gMCVbRDuspnVdcp5hQDPrQ5UFrdZw==",
+      entrypoint: "node_modules/chrome-devtools-mcp/build/src/bin.js",
+      args: [
+        "--slim",
+        "--headless",
+        "--no-usage-statistics",
+        "--no-performance-crux",
+      ],
+    },
   },
 };
 
@@ -128,6 +151,8 @@ export interface ExternalMcpRegistryEntry {
   enabled: boolean;
   installedAt: string;
   updatedAt: string;
+  sourceVersion?: string | undefined;
+  manifestIntegrity?: string | undefined;
 }
 
 export interface ExternalMcpRegistry {
@@ -202,6 +227,11 @@ export function externalMcpRegistryFingerprint(
 export function renderExternalMcpOverlay(
   baseConfig: string,
   registry: ExternalMcpRegistry,
+  runtime?: {
+    repositoryRoot: string;
+    dataDir: string;
+    nodeExecutable?: string | undefined;
+  } | undefined,
 ): string {
   const normalized = parseExternalMcpRegistry(registry);
   if (normalized.packages.length === 0) return baseConfig;
@@ -227,6 +257,25 @@ export function renderExternalMcpOverlay(
         lines.push(
           `http_headers = ${tomlInlineTable(catalog.transport.httpHeaders)}`,
         );
+      }
+    } else if (catalog.runtimePackage) {
+      if (!runtime) {
+        throw new Error(`Managed runtime package path is required for ${catalog.id}`);
+      }
+      const executable = resolve(
+        runtime.repositoryRoot,
+        runtime.dataDir,
+        "external-extensions",
+        "packages",
+        catalog.id,
+        catalog.runtimePackage.entrypoint,
+      );
+      lines.push(
+        `command = ${tomlString(runtime.nodeExecutable ?? process.execPath)}`,
+        `args = ${tomlArray([executable, ...catalog.runtimePackage.args])}`,
+      );
+      if (catalog.transport.env && Object.keys(catalog.transport.env).length > 0) {
+        lines.push(`env = ${tomlInlineTable(catalog.transport.env)}`);
       }
     } else {
       lines.push(
@@ -257,10 +306,159 @@ export function externalMcpCapabilityForTool(
     (candidate) => candidate.serverId === serverId,
   );
   if (!entry) return undefined;
-  if (entry.id === "github-owner" && /^(get|list|search)_/u.test(toolName)) {
-    return "web.search";
-  }
-  return entry.capability;
+  if (entry.id === "github-readonly") return githubReadOnlyCapability(toolName);
+  if (entry.id === "github-owner") return githubOwnerCapability(toolName);
+  return chromeDevtoolsCapability(toolName);
+}
+
+const GITHUB_REPOSITORY_READ_TOOLS = new Set([
+  "get_me",
+  "get_file_contents",
+  "get_commit",
+  "get_label",
+  "get_latest_release",
+  "get_release_by_tag",
+  "get_tag",
+  "get_repository_tree",
+  "list_branches",
+  "list_commits",
+  "list_releases",
+  "list_repository_collaborators",
+  "list_tags",
+  "search_code",
+  "search_commits",
+  "search_repositories",
+  "search_users",
+]);
+
+const GITHUB_ISSUE_READ_TOOLS = new Set([
+  "get_issue",
+  "get_issue_comments",
+  "issue_read",
+  "list_issue_types",
+  "list_issue_fields",
+  "list_issues",
+  "list_labels",
+  "list_sub_issues",
+  "search_issues",
+]);
+
+const GITHUB_ISSUE_WRITE_TOOLS = new Set([
+  "add_issue_comment",
+  "add_sub_issue",
+  "assign_copilot_to_issue",
+  "create_issue",
+  "issue_write",
+  "remove_sub_issue",
+  "reprioritize_sub_issue",
+  "sub_issue_write",
+  "update_issue",
+]);
+
+const GITHUB_PULL_REQUEST_READ_TOOLS = new Set([
+  "get_pull_request",
+  "get_pull_request_comments",
+  "get_pull_request_diff",
+  "get_pull_request_files",
+  "get_pull_request_reviews",
+  "get_pull_request_status",
+  "list_pull_requests",
+  "pull_request_read",
+  "search_pull_requests",
+]);
+
+const GITHUB_PULL_REQUEST_WRITE_TOOLS = new Set([
+  "add_comment_to_pending_review",
+  "add_reply_to_pull_request_comment",
+  "create_pending_pull_request_review",
+  "create_pull_request",
+  "create_pull_request_review",
+  "delete_pending_pull_request_review",
+  "pull_request_review_write",
+  "request_copilot_review",
+  "submit_pending_pull_request_review",
+  "update_pull_request",
+  "update_pull_request_review_comment",
+]);
+
+const GITHUB_ACTION_READ_TOOLS = new Set([
+  "actions_get",
+  "actions_list",
+  "get_job_logs",
+  "get_workflow_run",
+  "get_workflow_run_logs",
+  "get_workflow_run_usage",
+  "list_workflow_jobs",
+  "list_workflow_runs",
+  "list_workflows",
+]);
+
+const GITHUB_ACTION_WRITE_TOOLS = new Set([
+  "actions_run_trigger",
+  "cancel_workflow_run",
+  "delete_workflow_run_logs",
+  "rerun_failed_jobs",
+  "rerun_workflow_run",
+  "run_workflow",
+]);
+
+function githubOwnerCapability(toolName: string): Capability | undefined {
+  if (
+    GITHUB_REPOSITORY_READ_TOOLS.has(toolName)
+    || GITHUB_ISSUE_READ_TOOLS.has(toolName)
+    || GITHUB_PULL_REQUEST_READ_TOOLS.has(toolName)
+    || GITHUB_ACTION_READ_TOOLS.has(toolName)
+  ) return "github.repository.read";
+  if (GITHUB_ISSUE_WRITE_TOOLS.has(toolName)) return "github.issue.write";
+  if (GITHUB_PULL_REQUEST_WRITE_TOOLS.has(toolName)) return "github.pull-request.write";
+  if (GITHUB_ACTION_WRITE_TOOLS.has(toolName)) return "github.actions.run";
+  return undefined;
+}
+
+function githubReadOnlyCapability(toolName: string): Capability | undefined {
+  return GITHUB_REPOSITORY_READ_TOOLS.has(toolName)
+    || GITHUB_ISSUE_READ_TOOLS.has(toolName)
+    || GITHUB_PULL_REQUEST_READ_TOOLS.has(toolName)
+    || GITHUB_ACTION_READ_TOOLS.has(toolName)
+    ? "github.repository.read"
+    : undefined;
+}
+
+const CHROME_INSPECTION_TOOLS = new Set([
+  "get_console_message",
+  "get_network_request",
+  "list_console_messages",
+  "list_network_requests",
+  "list_pages",
+  "performance_analyze_insight",
+  "take_screenshot",
+  "take_snapshot",
+  "wait_for",
+]);
+
+const CHROME_INTERACTION_TOOLS = new Set([
+  "click",
+  "close_page",
+  "drag",
+  "emulate",
+  "evaluate_script",
+  "fill",
+  "fill_form",
+  "handle_dialog",
+  "navigate_page",
+  "new_page",
+  "performance_start_trace",
+  "performance_stop_trace",
+  "press_key",
+  "resize_page",
+  "select_page",
+  "upload_file",
+]);
+
+function chromeDevtoolsCapability(toolName: string): Capability | undefined {
+  if (CHROME_INSPECTION_TOOLS.has(toolName)) return "browser.inspect";
+  if (CHROME_INTERACTION_TOOLS.has(toolName)) return "browser.submit";
+  return undefined;
 }
 
 export function isCuratedExternalMcpServer(serverId: string): boolean {
@@ -270,7 +468,7 @@ export function isCuratedExternalMcpServer(serverId: string): boolean {
 }
 
 function parseExternalMcpRegistry(value: unknown): ExternalMcpRegistry {
-  if (!isRecord(value) || value.version !== EXTERNAL_MCP_REGISTRY_VERSION) {
+  if (!isRecord(value) || (value.version !== 1 && value.version !== EXTERNAL_MCP_REGISTRY_VERSION)) {
     throw new Error("Unsupported external MCP registry version");
   }
   if (!Array.isArray(value.packages)) {
@@ -300,12 +498,40 @@ function parseExternalMcpRegistryEntry(value: unknown): ExternalMcpRegistryEntry
   if (typeof value.enabled !== "boolean") {
     throw new Error(`External MCP enabled flag is invalid for ${id}`);
   }
+  const catalog = CURATED_EXTERNAL_MCP[id];
+  const expectedIntegrity = externalMcpCatalogManifestIntegrity(id);
+  if (value.sourceVersion !== undefined && value.sourceVersion !== catalog.sourceVersion) {
+    throw new Error(`External MCP source version drift for ${id}`);
+  }
+  if (value.manifestIntegrity !== undefined && value.manifestIntegrity !== expectedIntegrity) {
+    throw new Error(`External MCP manifest integrity drift for ${id}`);
+  }
   return {
     id,
     enabled: value.enabled,
     installedAt: readIsoTimestamp(value.installedAt, "installedAt"),
     updatedAt: readIsoTimestamp(value.updatedAt, "updatedAt"),
+    sourceVersion: catalog.sourceVersion,
+    manifestIntegrity: expectedIntegrity,
   };
+}
+
+export function externalMcpCatalogManifestIntegrity(
+  id: ExternalMcpCatalogId,
+): string {
+  const catalog = CURATED_EXTERNAL_MCP[id];
+  const manifest = {
+    id: catalog.id,
+    serverId: catalog.serverId,
+    transport: catalog.transport,
+    sourceVersion: catalog.sourceVersion,
+    runtimePackage: catalog.runtimePackage ?? null,
+    approval: catalog.defaultToolsApprovalMode,
+    capability: catalog.capability,
+    strictReadOnly: catalog.strictReadOnly,
+    authentication: catalog.authentication,
+  };
+  return `sha256:${createHash("sha256").update(JSON.stringify(manifest), "utf8").digest("hex")}`;
 }
 
 function readCatalogId(value: unknown): ExternalMcpCatalogId {

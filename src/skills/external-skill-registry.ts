@@ -9,15 +9,18 @@ import {
   rename,
   rm,
 } from "node:fs/promises";
+import { createHash } from "node:crypto";
 import { dirname, join, relative, resolve, sep } from "node:path";
 
-export const EXTERNAL_SKILL_REGISTRY_VERSION = 1 as const;
+export const EXTERNAL_SKILL_REGISTRY_VERSION = 2 as const;
 
 export const CURATED_EXTERNAL_SKILLS = {
   superpowers: {
     id: "superpowers",
     repository: "https://github.com/obra/superpowers.git",
-    defaultRef: "main",
+    branch: "main",
+    pinnedCommit: "44c9b2d6e889982ac18c27d05a19fefe335194e1",
+    defaultRef: "44c9b2d6e889982ac18c27d05a19fefe335194e1",
     skillSubdir: "skills",
   },
 } as const;
@@ -29,6 +32,7 @@ export interface ExternalSkillRegistryEntry {
   repository: string;
   ref: string;
   commit: string;
+  integrity?: string | undefined;
   enabled: boolean;
   skillSubdir: string;
   installedAt: string;
@@ -50,6 +54,7 @@ export interface ValidatedExternalSkillCheckout {
   checkoutRoot: string;
   skillRoot: string;
   skillNames: string[];
+  integrity: string;
 }
 
 export function resolveExternalSkillRegistryPaths(
@@ -131,7 +136,39 @@ export async function validateExternalSkillCheckout(
     checkoutRoot: canonicalCheckout,
     skillRoot: canonicalSkillRoot,
     skillNames,
+    integrity: await computeSkillTreeIntegrity(canonicalSkillRoot),
   };
+}
+
+export async function computeSkillTreeIntegrity(skillRoot: string): Promise<string> {
+  const canonicalRoot = await canonicalDirectory(skillRoot, "Skill root");
+  const files: string[] = [];
+  const queue = [canonicalRoot];
+  while (queue.length > 0) {
+    const current = queue.pop()!;
+    const entries = await readdir(current, { withFileTypes: true });
+    for (const entry of entries) {
+      const child = join(current, entry.name);
+      const stat = await lstat(child);
+      if (stat.isSymbolicLink()) {
+        throw new Error(`External Skill symlink is forbidden: ${child}`);
+      }
+      if (stat.isDirectory()) queue.push(child);
+      else if (stat.isFile()) files.push(child);
+      else throw new Error(`External Skill entry type is forbidden: ${child}`);
+    }
+  }
+  files.sort((left, right) => relative(canonicalRoot, left).localeCompare(relative(canonicalRoot, right)));
+  const hash = createHash("sha256");
+  for (const file of files) {
+    const name = relative(canonicalRoot, file).split(sep).join("/");
+    const bytes = await readFile(file);
+    hash.update(`${String(Buffer.byteLength(name, "utf8"))}:`, "utf8");
+    hash.update(name, "utf8");
+    hash.update(`${String(bytes.byteLength)}:`, "utf8");
+    hash.update(bytes);
+  }
+  return `sha256:${hash.digest("hex")}`;
 }
 
 export async function discoverSkillNames(skillRoot: string): Promise<string[]> {
@@ -188,6 +225,9 @@ export async function resolveEnabledExternalSkillRoots(options: {
     try {
       const checkout = join(paths.packagesRoot, entry.id, "repository");
       const validated = await validateExternalSkillCheckout(checkout, entry.skillSubdir);
+      if (entry.integrity && validated.integrity !== entry.integrity) {
+        throw new Error(`External Skill integrity mismatch: ${entry.id}`);
+      }
       const collisions = validated.skillNames.filter((name) => occupied.has(name));
       if (collisions.length > 0) {
         throw new Error(`Skill name collision: ${collisions.join(", ")}`);
@@ -203,7 +243,7 @@ export async function resolveEnabledExternalSkillRoots(options: {
 }
 
 function parseExternalSkillRegistry(value: unknown): ExternalSkillRegistry {
-  if (!isRecord(value) || value.version !== EXTERNAL_SKILL_REGISTRY_VERSION) {
+  if (!isRecord(value) || (value.version !== 1 && value.version !== EXTERNAL_SKILL_REGISTRY_VERSION)) {
     throw new Error("Unsupported external Skill registry version");
   }
   if (!Array.isArray(value.packages)) {
@@ -225,6 +265,9 @@ function parseExternalSkillRegistryEntry(value: unknown): ExternalSkillRegistryE
   const repository = readString(value.repository, "repository");
   const ref = validateGitRef(readString(value.ref, "ref"));
   const commit = readString(value.commit, "commit");
+  const integrity = value.integrity === undefined
+    ? undefined
+    : readIntegrity(value.integrity, id);
   const skillSubdir = readString(value.skillSubdir, "skillSubdir");
   const installedAt = readIsoTimestamp(value.installedAt, "installedAt");
   const updatedAt = readIsoTimestamp(value.updatedAt, "updatedAt");
@@ -242,11 +285,19 @@ function parseExternalSkillRegistryEntry(value: unknown): ExternalSkillRegistryE
     repository,
     ref,
     commit,
+    ...(integrity ? { integrity } : {}),
     enabled: value.enabled,
     skillSubdir,
     installedAt,
     updatedAt,
   };
+}
+
+function readIntegrity(value: unknown, id: string): string {
+  if (typeof value !== "string" || !/^sha256:[0-9a-f]{64}$/u.test(value)) {
+    throw new Error(`External Skill integrity is invalid for ${id}`);
+  }
+  return value;
 }
 
 export function validateGitRef(value: string): string {

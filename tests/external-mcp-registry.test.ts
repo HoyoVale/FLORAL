@@ -22,6 +22,10 @@ describe("External MCP registry", () => {
         installedAt: "2026-08-10T00:00:00.000Z",
         updatedAt: "2026-08-10T00:00:00.000Z",
       }],
+    }, {
+      repositoryRoot: process.cwd(),
+      dataDir: "./data",
+      nodeExecutable: process.execPath,
     });
     expect(config).toContain("[mcp_servers.github]");
     expect(config).toContain('url = "https://api.githubcopilot.com/mcp/readonly"');
@@ -39,10 +43,16 @@ describe("External MCP registry", () => {
         installedAt: "2026-08-10T00:00:00.000Z",
         updatedAt: "2026-08-10T00:00:00.000Z",
       }],
+    }, {
+      repositoryRoot: process.cwd(),
+      dataDir: "./data",
+      nodeExecutable: process.execPath,
     });
     expect(CHROME_DEVTOOLS_MCP_VERSION).toBe("1.6.0");
     expect(config).toContain("[mcp_servers.chrome-devtools]");
-    expect(config).toContain(`chrome-devtools-mcp@${CHROME_DEVTOOLS_MCP_VERSION}`);
+    expect(config).toContain("chrome-devtools-mcp");
+    expect(config).toContain("build\\\\src\\\\bin.js");
+    expect(config).not.toContain("npx");
     expect(config).toContain('default_tools_approval_mode = "writes"');
     expect(config).toContain('CHROME_DEVTOOLS_MCP_NO_UPDATE_CHECKS = "1"');
     expect(config).toContain("--headless");

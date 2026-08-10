@@ -1,4 +1,4 @@
-import { isAbsolute, relative, resolve, sep } from "node:path";
+import { isAbsolute, join, relative, resolve, sep } from "node:path";
 import type {
   AgentAppReadResult,
   AgentAppSummary,
@@ -32,6 +32,15 @@ import type {
   ExternalSkillMutationRequest,
 } from "../skills/external-skill-manager.js";
 import { isCuratedExternalMcpServer } from "../extensions/external-mcp-registry.js";
+import {
+  CURATED_EXTERNAL_SKILLS,
+  type ExternalSkillCatalogId,
+} from "../skills/external-skill-registry.js";
+import {
+  extensionCapabilityForAction,
+  externalMcpApprovalScope,
+  externalSkillApprovalScope,
+} from "../extensions/extension-approval.js";
 import type {
   ExternalMcpManagementResult,
   ExternalMcpMutationRequest,
@@ -41,7 +50,9 @@ import {
   buildExtensionVerification,
   formatExtensionPlan,
   formatExtensionVerification,
+  formatExtensionControlHistory,
   readExtensionControlTransactionFromSnapshot,
+  readExtensionControlTransactionsFromSnapshot,
   type ExtensionVerificationResult,
 } from "../extensions/extension-control.js";
 import {
@@ -59,16 +70,12 @@ import {
 } from "./floral-system-tools.js";
 import { FloralExtensionSnapshotStore } from "./floral-extension-snapshot.js";
 import { FloralArtifactToolController } from "./floral-artifact-tools.js";
+import { FloralProjectSkillToolController } from "./floral-project-skill-tools.js";
+import { FloralNativeExtensionToolController } from "./floral-native-extension-tools.js";
 import {
   extensionIntentForAction,
-  formatAppReadForTool,
-  formatAvailableAppsForTool,
-  formatInstalledAppsForTool,
   formatMcpServersForTool,
-  formatNativeExtensionStatus,
   normalizeAppIds,
-  readAppId,
-  readAppIdArray,
   readExtensionApplyKind,
   readExtensionPlanIntent,
   readExtensionPlanKind,
@@ -235,6 +242,7 @@ export interface CodexAppServerOptions {
   processEnv?: NodeJS.ProcessEnv | undefined;
   skillRoots?: string[] | undefined;
   protectedSkillRoots?: string[] | undefined;
+  skillAuthoringDataRoot?: string | undefined;
   externalSkillCatalog?: (() => Promise<string>) | undefined;
   manageExternalSkill?: ((
     request: ExternalSkillMutationRequest,
@@ -244,6 +252,11 @@ export interface CodexAppServerOptions {
     request: ExternalMcpMutationRequest,
   ) => Promise<ExternalMcpManagementResult>) | undefined;
   recordAppInstallHandoff?: ((appId: string) => Promise<{ transactionId: string }>) | undefined;
+  recordAppConfigMutation?: ((input: {
+    appId: string;
+    action: "enable" | "disable";
+    changed: boolean;
+  }) => Promise<{ transactionId: string }>) | undefined;
   recordExtensionVerification?: ((result: ExtensionVerificationResult) => Promise<void>) | undefined;
   permissionProfile?: string | undefined;
   permissionProfileCwd?: string | undefined;
@@ -276,6 +289,8 @@ export class CodexAppServerRuntime implements AgentRuntime {
   readonly #developerInstructions: string;
   #skillRoots: string[];
   readonly #protectedSkillRoots: string[];
+  readonly #projectSkillTools: FloralProjectSkillToolController;
+  readonly #nativeExtensionTools: FloralNativeExtensionToolController;
   readonly #externalSkillCatalog: (() => Promise<string>) | undefined;
   readonly #manageExternalSkill: ((
     request: ExternalSkillMutationRequest,
@@ -284,7 +299,6 @@ export class CodexAppServerRuntime implements AgentRuntime {
   readonly #manageExternalMcp: ((
     request: ExternalMcpMutationRequest,
   ) => Promise<ExternalMcpManagementResult>) | undefined;
-  readonly #recordAppInstallHandoff: ((appId: string) => Promise<{ transactionId: string }>) | undefined;
   readonly #recordExtensionVerification: ((result: ExtensionVerificationResult) => Promise<void>) | undefined;
   readonly #permissionProfile: string | undefined;
   readonly #permissionProfileCwd: string | undefined;
@@ -330,12 +344,35 @@ export class CodexAppServerRuntime implements AgentRuntime {
     this.#protectedSkillRoots = normalizeSkillRoots(
       options.protectedSkillRoots ?? [],
     );
+    this.#projectSkillTools = new FloralProjectSkillToolController({
+      runtimeDataRoot: resolve(
+        options.skillAuthoringDataRoot ?? join(options.processCwd ?? process.cwd(), "data", "skill-authoring"),
+      ),
+      listSkills: async (cwd, forceReload) => await this.listSkills({ cwd, forceReload }),
+      writeSkillEnabled: async (path, enabled) => {
+        await this.#client.request("skills/config/write", { path, name: null, enabled });
+        this.#skillsDirty = true;
+      },
+    });
     this.#externalSkillCatalog = options.externalSkillCatalog;
     this.#manageExternalSkill = options.manageExternalSkill;
     this.#externalMcpCatalog = options.externalMcpCatalog;
     this.#manageExternalMcp = options.manageExternalMcp;
-    this.#recordAppInstallHandoff = options.recordAppInstallHandoff;
     this.#recordExtensionVerification = options.recordExtensionVerification;
+    this.#nativeExtensionTools = new FloralNativeExtensionToolController({
+      writeAppEnabled: async (appId, enabled) => await this.#client.request("config/value/write", {
+        keyPath: `apps.${appId}.enabled`,
+        value: enabled,
+        mergeStrategy: "upsert",
+      }),
+      listInstalledApps: async (cwd, threadId) => await this.listInstalledApps({
+        cwd,
+        threadId,
+        forceRefresh: true,
+      }),
+      recordAppInstallHandoff: options.recordAppInstallHandoff,
+      recordAppConfigMutation: options.recordAppConfigMutation,
+    });
     this.#contextTools = new FloralContextToolController(options.durableJournal);
     this.#permissionProfile = options.permissionProfile?.trim() || undefined;
     this.#permissionProfileCwd = options.permissionProfileCwd?.trim()
@@ -1546,6 +1583,28 @@ export class CodexAppServerRuntime implements AgentRuntime {
       return;
     }
 
+    const projectSkillResult = await this.#projectSkillTools.handle({
+      tool,
+      arguments: argumentsValue,
+      cwd,
+      callId: readString(params?.callId) ?? String(request.id),
+      approvalHandler: this.#skillManagementApprovalHandlers.get(threadId),
+      onApprovalRequested: (approval) => this.#eventHandlers.get(threadId)?.({
+        type: "approval.requested",
+        requestId: approval.requestId,
+        capability: approval.capability,
+        kind: approval.kind,
+        detail: { summary: approval.summary },
+      }),
+    });
+    if (projectSkillResult) {
+      this.#respondSafely(
+        request.id,
+        dynamicToolResponse(projectSkillResult.success, projectSkillResult.text),
+      );
+      return;
+    }
+
     if (tool === "external_catalog") {
       if (!this.#externalSkillCatalog) {
         this.#respondSafely(
@@ -1598,7 +1657,7 @@ export class CodexAppServerRuntime implements AgentRuntime {
           )
         }`,
         kind: "skill-management",
-        capability: "software.install",
+        capability: extensionCapabilityForAction(action),
         summary: [
           "FLORAL Agent 请求修改共享 External Skill。",
           `action=${action}`,
@@ -1606,6 +1665,7 @@ export class CodexAppServerRuntime implements AgentRuntime {
           ...(ref ? [`ref=${ref}`] : []),
         ].join(" "),
         source: "floral",
+        scope: externalSkillApprovalScope(id, action, ref),
       };
       const onEvent = this.#eventHandlers.get(threadId);
       onEvent?.({
@@ -1836,7 +1896,15 @@ export class CodexAppServerRuntime implements AgentRuntime {
           );
           return;
         }
-        const transaction = readExtensionControlTransactionFromSnapshot(systemSnapshot);
+        const transactionId = readOptionalExtensionTransactionId(argumentsValue.transaction_id);
+        if (argumentsValue.transaction_id !== undefined && !transactionId) {
+          this.#respondSafely(
+            request.id,
+            dynamicToolResponse(false, "extension_verification=denied\nreason=invalid-transaction-id"),
+          );
+          return;
+        }
+        const transaction = readExtensionControlTransactionFromSnapshot(systemSnapshot, transactionId);
         if (!transaction) {
           this.#respondSafely(
             request.id,
@@ -1859,6 +1927,29 @@ export class CodexAppServerRuntime implements AgentRuntime {
         this.#respondSafely(
           request.id,
           dynamicToolResponse(true, boundedDynamicToolText(formatExtensionVerification(result))),
+        );
+        return;
+      }
+
+      if (tool === "extension_history") {
+        const systemSnapshot = this.#systemTools.getSnapshot(threadId);
+        if (!systemSnapshot) {
+          this.#respondSafely(
+            request.id,
+            dynamicToolResponse(false, "extension_history=denied\nreason=system-snapshot-unavailable"),
+          );
+          return;
+        }
+        const limit = readOptionalHistoryLimit(argumentsValue.limit);
+        if (argumentsValue.limit !== undefined && limit === undefined) {
+          this.#respondSafely(request.id, dynamicToolResponse(false, "extension_history=denied\nreason=invalid-limit"));
+          return;
+        }
+        const history = readExtensionControlTransactionsFromSnapshot(systemSnapshot)
+          .slice(0, limit ?? 20);
+        this.#respondSafely(
+          request.id,
+          dynamicToolResponse(true, boundedDynamicToolText(formatExtensionControlHistory(history))),
         );
         return;
       }
@@ -1896,6 +1987,28 @@ export class CodexAppServerRuntime implements AgentRuntime {
           return;
         }
 
+        if (kind === "app") {
+          const result = await this.#nativeExtensionTools.applyApp({
+            id,
+            action,
+            cwd,
+            threadId,
+            callId: readString(params?.callId) ?? String(request.id),
+            snapshot,
+            approvalHandler: this.#extensionManagementApprovalHandlers.get(threadId),
+            onApprovalRequested: (approval) => this.#eventHandlers.get(threadId)?.({
+              type: "approval.requested",
+              requestId: approval.requestId,
+              capability: approval.capability,
+              kind: approval.kind,
+              detail: { summary: approval.summary },
+            }),
+          });
+          if (result.mutationPending) this.#extensionMutationPendingVerification.add(threadId);
+          this.#respondSafely(request.id, dynamicToolResponse(result.success, result.text));
+          return;
+        }
+
         if (kind === "mcp") {
           const mcpId = readExternalMcpId(id);
           const mcpAction = readExternalMcpAction(action);
@@ -1907,9 +2020,10 @@ export class CodexAppServerRuntime implements AgentRuntime {
           const approval: AgentApprovalRequest = {
             requestId: `extension-${safeDynamicToolToken(readString(params?.callId) ?? String(request.id))}`,
             kind: "extension-management",
-            capability: "software.install",
+            capability: extensionCapabilityForAction(mcpAction),
             summary: `FLORAL Agent 请求按受控扩展计划修改 External MCP： action=${mcpAction} id=${mcpId}`,
             source: "floral",
+            scope: externalMcpApprovalScope(mcpId, mcpAction),
           };
           this.#eventHandlers.get(threadId)?.({
             type: "approval.requested",
@@ -1954,9 +2068,10 @@ export class CodexAppServerRuntime implements AgentRuntime {
         const approval: AgentApprovalRequest = {
           requestId: `skill-${safeDynamicToolToken(readString(params?.callId) ?? String(request.id))}`,
           kind: "skill-management",
-          capability: "software.install",
+          capability: extensionCapabilityForAction(action),
           summary: `FLORAL Agent 请求按受控扩展计划修改 External Skill： action=${action} id=${skillId}`,
           source: "floral",
+          scope: externalSkillApprovalScope(skillId, action),
         };
         this.#eventHandlers.get(threadId)?.({
           type: "approval.requested",
@@ -1991,116 +2106,15 @@ export class CodexAppServerRuntime implements AgentRuntime {
         return;
       }
 
-      if (tool === "native_status") {
-        if (!snapshot.features) {
-          throw new Error("native feature snapshot unavailable");
-        }
+      const nativeResult = await this.#nativeExtensionTools.handleRead({
+        tool,
+        arguments: argumentsValue,
+        snapshot,
+      });
+      if (nativeResult) {
         this.#respondSafely(
           request.id,
-          dynamicToolResponse(
-            true,
-            formatNativeExtensionStatus(snapshot.features),
-          ),
-        );
-        return;
-      }
-
-      if (tool === "installed_apps") {
-        if (!snapshot.installedApps) {
-          throw new Error("installed App snapshot unavailable");
-        }
-        this.#respondSafely(
-          request.id,
-          dynamicToolResponse(
-            true,
-            formatInstalledAppsForTool(snapshot.installedApps),
-          ),
-        );
-        return;
-      }
-
-      if (tool === "available_apps") {
-        if (!snapshot.availableApps) {
-          throw new Error("available App snapshot unavailable");
-        }
-        this.#respondSafely(
-          request.id,
-          dynamicToolResponse(
-            true,
-            formatAvailableAppsForTool(snapshot.availableApps),
-          ),
-        );
-        return;
-      }
-
-      if (tool === "prepare_app_install") {
-        const appId = readAppId(argumentsValue.app_id);
-        const selected = appId
-          ? snapshot.availableApps?.find((app) => app.id === appId)
-          : undefined;
-        if (!selected || selected.accessible !== true || !selected.installUrl) {
-          this.#respondSafely(
-            request.id,
-            dynamicToolResponse(
-              false,
-              "app_install_handoff=unavailable\nreason=app-not-accessible-or-install-url-missing",
-            ),
-          );
-          return;
-        }
-        const handoff = this.#recordAppInstallHandoff
-          ? await this.#recordAppInstallHandoff(selected.id).catch(() => undefined)
-          : undefined;
-        this.#respondSafely(
-          request.id,
-          dynamicToolResponse(
-            true,
-            [
-              "app_install_handoff=required",
-              `app_id=${safeDynamicToolToken(selected.id)}`,
-              `app_name=${JSON.stringify(selected.runtimeName ?? selected.id)}`,
-              `install_url=${selected.installUrl}`,
-              "surface=codex-supported-app-install-flow",
-              "authentication=user-mediated",
-              ...(handoff ? [`extension_transaction=${safeDynamicToolToken(handoff.transactionId)}`] : []),
-              "verification=pending-fresh-turn-after-user-action",
-              "verification_tool=floral_extensions/verify_extension",
-              "same_turn_verification=forbidden",
-              "post_install=start-new-session-and-verify-app-installed",
-            ].join("\n"),
-          ),
-        );
-        return;
-      }
-
-      if (tool === "read_apps") {
-        const appIds = readAppIdArray(argumentsValue.app_ids);
-        const includeTools = argumentsValue.include_tools;
-        if (
-          !appIds
-          || (includeTools !== undefined && typeof includeTools !== "boolean")
-          || !snapshot.appDetails
-        ) {
-          throw new Error("invalid app read arguments or snapshot unavailable");
-        }
-        const byId = new Map(
-          snapshot.appDetails.apps.map((app) => [app.id, app] as const),
-        );
-        const apps = appIds.flatMap((id) => {
-          const app = byId.get(id);
-          if (!app) return [];
-          if (includeTools === false) {
-            return [{ ...app, tools: [] }];
-          }
-          return [app];
-        });
-        const missingAppIds = appIds.filter((id) => !byId.has(id));
-        this.#respondSafely(
-          request.id,
-          dynamicToolResponse(
-            true,
-            formatAppReadForTool({ apps, missingAppIds }),
-          ),
+          dynamicToolResponse(nativeResult.success, boundedDynamicToolText(nativeResult.text)),
         );
         return;
       }
@@ -2162,13 +2176,14 @@ export class CodexAppServerRuntime implements AgentRuntime {
         const approval: AgentApprovalRequest = {
           requestId: `extension-${String(params?.callId ?? request.id)}`,
           kind: "extension-management",
-          capability: "software.install",
+          capability: extensionCapabilityForAction(action),
           summary: [
             "FLORAL Agent 请求修改共享 External MCP：",
             `action=${action}`,
             `id=${id}`,
           ].join(" "),
           source: "floral",
+          scope: externalMcpApprovalScope(id, action),
         };
         this.#eventHandlers.get(threadId)?.({
           type: "approval.requested",
@@ -2909,11 +2924,26 @@ function readExternalSkillAction(
     : undefined;
 }
 
-function readExternalSkillId(value: unknown): string | undefined {
+function readExternalSkillId(value: unknown): ExternalSkillCatalogId | undefined {
   if (typeof value !== "string") return undefined;
   const id = value.trim();
   return /^[a-z0-9][a-z0-9-]{0,63}$/u.test(id)
-    ? id
+      && id in CURATED_EXTERNAL_SKILLS
+    ? id as ExternalSkillCatalogId
+    : undefined;
+}
+
+function readOptionalExtensionTransactionId(value: unknown): string | undefined {
+  if (value === undefined) return undefined;
+  if (typeof value !== "string") return undefined;
+  const normalized = value.trim().toUpperCase();
+  return /^[A-Z0-9]{8,24}$/u.test(normalized) ? normalized : undefined;
+}
+
+function readOptionalHistoryLimit(value: unknown): number | undefined {
+  if (value === undefined) return undefined;
+  return Number.isInteger(value) && (value as number) >= 1 && (value as number) <= 50
+    ? value as number
     : undefined;
 }
 
@@ -3093,7 +3123,13 @@ function readHttpsUrl(value: unknown): string | undefined {
   if (!normalized || normalized.length > 2_048) return undefined;
   try {
     const url = new URL(normalized);
-    return url.protocol === "https:" ? url.toString() : undefined;
+    const supportedHost = url.hostname === "chatgpt.com"
+      || url.hostname.endsWith(".chatgpt.com");
+    return url.protocol === "https:"
+        && supportedHost
+        && url.pathname.startsWith("/apps/")
+      ? url.toString()
+      : undefined;
   } catch {
     return undefined;
   }

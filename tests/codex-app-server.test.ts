@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, realpath, rm } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, realpath, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -19,6 +19,7 @@ import {
   bootstrapProjectContext,
   readProjectMemoryDocument,
 } from "../src/workspace/project-context.js";
+import { ProjectSkillAuthoringManager } from "../src/skills/project-skill-authoring.js";
 
 const fixture = fileURLToPath(new URL("./fixtures/fake-codex-app-server.mjs", import.meta.url));
 
@@ -31,6 +32,7 @@ function createRuntime(
     approvalsReviewer?: "user" | "auto_review";
     skillRoots?: string[];
     protectedSkillRoots?: string[];
+    skillAuthoringDataRoot?: string;
     externalSkillCatalog?: () => Promise<string>;
     manageExternalSkill?: (request: {
       action: "install" | "update" | "enable" | "disable" | "remove";
@@ -45,7 +47,7 @@ function createRuntime(
       changed: boolean;
       message: string;
       registry: {
-        version: 1;
+        version: 2;
         packages: Array<{
           id: "github-readonly" | "github-owner" | "chrome-devtools";
           enabled: boolean;
@@ -54,6 +56,11 @@ function createRuntime(
         }>;
       };
     }>;
+    recordAppConfigMutation?: (input: {
+      appId: string;
+      action: "enable" | "disable";
+      changed: boolean;
+    }) => Promise<{ transactionId: string }>;
     permissionProfile?: string;
     permissionProfileCwd?: string;
     systemAwareness?: CodexSystemAwarenessOptions;
@@ -248,8 +255,14 @@ describe("CodexAppServerRuntime", () => {
           approvals += 1;
           expect(request).toMatchObject({
             kind: "skill-management",
-            capability: "software.install",
+            capability: "extension.install",
             source: "floral",
+            scope: expect.objectContaining({
+              type: "extension",
+              extensionKind: "skill",
+              targetId: "superpowers",
+              action: "install",
+            }),
           });
           return "approve";
         },
@@ -259,6 +272,76 @@ describe("CodexAppServerRuntime", () => {
       expect(mutations).toBe(1);
     } finally {
       await runtime.stop();
+    }
+  });
+
+  it("publishes a digest-bound Project Skill and verifies it through Codex-native discovery/config", async () => {
+    const root = await mkdtemp(join(tmpdir(), "floral-codex-project-skill-"));
+    const cwd = join(root, "repo");
+    const draft = join(cwd, ".agents", "skill-drafts", "release-summary");
+    const runtimeData = join(root, "runtime");
+    await mkdir(draft, { recursive: true });
+    const description = "Use when the user asks for a governed release summary.";
+    await writeFile(
+      join(draft, "SKILL.md"),
+      `---\nname: release-summary\ndescription: ${description}\n---\n\n# Release summary\n\nRead the project and summarize the release.\n`,
+      "utf8",
+    );
+    await writeFile(
+      join(draft, "proposal.json"),
+      `${JSON.stringify({
+        schemaVersion: 1,
+        name: "release-summary",
+        description,
+        permissions: ["files.read"],
+        expectedTools: [],
+        tests: {
+          shouldTrigger: [
+            { prompt: "Summarize this release", expectedBehavior: "Create a summary" },
+            { prompt: "Write release notes", expectedBehavior: "Use the workflow" },
+          ],
+          shouldNotTrigger: [
+            { prompt: "Delete everything", expectedBehavior: "Do not trigger" },
+          ],
+        },
+      })}\n`,
+      "utf8",
+    );
+    const report = await new ProjectSkillAuthoringManager({ cwd, runtimeDataRoot: runtimeData })
+      .validateDraft("release-summary", []);
+    expect(report.digest).toBeDefined();
+    const builtInRoot = fileURLToPath(new URL("../skills/", import.meta.url));
+    const runtime = createRuntime(`skill-project-publish:${report.digest!}`, 5_000, {
+      skillRoots: [builtInRoot],
+      protectedSkillRoots: [builtInRoot],
+      skillAuthoringDataRoot: runtimeData,
+    });
+    try {
+      await runtime.start();
+      const result = await runtime.run({
+        text: "Publish the validated Project Skill.",
+        cwd,
+        skillManagementApprovalHandler: async (request) => {
+          expect(request).toMatchObject({
+            kind: "skill-management",
+            capability: "skill.publish",
+            scope: {
+              type: "skill-publish",
+              targetName: "release-summary",
+              action: "create",
+              digest: report.digest,
+              permissions: ["files.read"],
+            },
+          });
+          return "approve";
+        },
+      });
+      expect(result.finalText).toBe("project skill publish complete");
+      await expect(readFile(join(cwd, ".agents", "skills", "release-summary", "SKILL.md"), "utf8"))
+        .resolves.toContain("name: release-summary");
+    } finally {
+      await runtime.stop();
+      await rm(root, { recursive: true, force: true });
     }
   });
 
@@ -739,7 +822,7 @@ describe("CodexAppServerRuntime", () => {
           changed: true,
           message: "external_mcp.install=ok\nid=chrome-devtools",
           registry: {
-            version: 1,
+            version: 2,
             packages: [{
               id: "chrome-devtools",
               enabled: true,
@@ -757,7 +840,18 @@ describe("CodexAppServerRuntime", () => {
         cwd: process.cwd(),
         extensionManagementApprovalHandler: async (request) => {
           approvals += 1;
-          expect(request).toMatchObject({ kind: "extension-management", capability: "software.install", source: "floral" });
+          expect(request).toMatchObject({
+            kind: "extension-management",
+            capability: "extension.install",
+            source: "floral",
+            scope: expect.objectContaining({
+              type: "extension",
+              extensionKind: "mcp",
+              targetId: "chrome-devtools",
+              action: "install",
+              sourceVersion: "1.6.0",
+            }),
+          });
           return "approve";
         },
       });
@@ -842,6 +936,17 @@ describe("CodexAppServerRuntime", () => {
     }
   });
 
+  it("drops untrusted App install origins instead of returning a phishing handoff", async () => {
+    const runtime = createRuntime("app-untrusted-install-url");
+    try {
+      await runtime.start();
+      const apps = await runtime.listAvailableApps({ cwd: process.cwd() });
+      expect(apps.find((app) => app.id === "github")?.installUrl).toBeUndefined();
+    } finally {
+      await runtime.stop();
+    }
+  });
+
   it("prepares a supported App installation handoff without silently installing or authenticating", async () => {
     const runtime = createRuntime("extension-app-install-handoff");
     try {
@@ -851,6 +956,141 @@ describe("CodexAppServerRuntime", () => {
         cwd: process.cwd(),
       });
       expect(result.finalText).toBe("extension app handoff complete");
+    } finally {
+      await runtime.stop();
+    }
+  });
+
+  it("reviews App action-tool exposure without treating display metadata as authorization", async () => {
+    const runtime = createRuntime("extension-app-permission-review");
+    try {
+      await runtime.start();
+      const result = await runtime.run({
+        text: "Review the GitHub App permissions.",
+        cwd: process.cwd(),
+      });
+      expect(result.finalText).toBe("extension app permission review complete");
+    } finally {
+      await runtime.stop();
+    }
+  });
+
+  it("keeps Plugin lifecycle on the supported user surface while production RPCs are under development", async () => {
+    const runtime = createRuntime("extension-plugin-handoff");
+    try {
+      await runtime.start();
+      const result = await runtime.run({
+        text: "Prepare installation of the Codex Security Plugin.",
+        cwd: process.cwd(),
+      });
+      expect(result.finalText).toBe("extension plugin handoff complete");
+    } finally {
+      await runtime.stop();
+    }
+  });
+
+  it("uses native Codex config RPC for a planned App disable and records fresh-turn verification", async () => {
+    const registry = createDefaultSystemDefinitionRegistry();
+    let approvals = 0;
+    let receipts = 0;
+    const runtime = createRuntime("extension-app-disable", 5_000, {
+      systemAwareness: {
+        definitions: registry.list(),
+        snapshotProvider: async () => ({
+          schemaVersion: SYSTEM_AWARENESS_SCHEMA_VERSION,
+          generatedAt: "2026-08-10T00:00:00.000Z",
+          definitionFingerprint: registry.fingerprint(),
+          components: registry.list().map((definition) => definition.id === "codex.apps"
+            ? {
+                componentId: definition.id,
+                observed: true,
+                facts: [{
+                  fact: "installed",
+                  resolution: "resolved" as const,
+                  confidence: "authoritative" as const,
+                  value: [{ id: "github", enabled: true, callable: true }],
+                  evidence: [],
+                }],
+              }
+            : { componentId: definition.id, observed: false, facts: [] }),
+          observers: [],
+        }),
+      },
+      recordAppConfigMutation: async (input) => {
+        receipts += 1;
+        expect(input).toEqual({ appId: "github", action: "disable", changed: true });
+        return { transactionId: "APPCONFIG01" };
+      },
+    });
+    try {
+      await runtime.start();
+      const result = await runtime.run({
+        text: "Disable the installed GitHub App through the controlled plan.",
+        cwd: process.cwd(),
+        extensionManagementApprovalHandler: async (request) => {
+          approvals += 1;
+          expect(request).toMatchObject({
+            kind: "extension-management",
+            capability: "extension.disable",
+            scope: {
+              type: "extension",
+              extensionKind: "app",
+              targetId: "github",
+              action: "disable",
+              sourceId: "codex-app-config",
+            },
+          });
+          return "approve";
+        },
+      });
+      expect(result.finalText).toBe("extension app disable complete");
+      expect(approvals).toBe(1);
+      expect(receipts).toBe(1);
+    } finally {
+      await runtime.stop();
+    }
+  });
+
+  it("rolls native App config back when immediate Codex verification disagrees", async () => {
+    const registry = createDefaultSystemDefinitionRegistry();
+    let receipts = 0;
+    const runtime = createRuntime("extension-app-disable-verification-fails", 5_000, {
+      systemAwareness: {
+        definitions: registry.list(),
+        snapshotProvider: async () => ({
+          schemaVersion: SYSTEM_AWARENESS_SCHEMA_VERSION,
+          generatedAt: "2026-08-10T00:00:00.000Z",
+          definitionFingerprint: registry.fingerprint(),
+          components: registry.list().map((definition) => definition.id === "codex.apps"
+            ? {
+                componentId: definition.id,
+                observed: true,
+                facts: [{
+                  fact: "installed",
+                  resolution: "resolved" as const,
+                  confidence: "authoritative" as const,
+                  value: [{ id: "github", enabled: true, callable: true }],
+                  evidence: [],
+                }],
+              }
+            : { componentId: definition.id, observed: false, facts: [] }),
+          observers: [],
+        }),
+      },
+      recordAppConfigMutation: async () => {
+        receipts += 1;
+        return { transactionId: "SHOULDNOTRECORD" };
+      },
+    });
+    try {
+      await runtime.start();
+      const result = await runtime.run({
+        text: "Disable the installed GitHub App and roll back if verification fails.",
+        cwd: process.cwd(),
+        extensionManagementApprovalHandler: async () => "approve",
+      });
+      expect(result.finalText).toBe("extension app rollback complete");
+      expect(receipts).toBe(0);
     } finally {
       await runtime.stop();
     }
@@ -886,7 +1126,7 @@ describe("CodexAppServerRuntime", () => {
           changed: true,
           message: "external_mcp.install=ok\nid=chrome-devtools",
           registry: {
-            version: 1,
+            version: 2,
             packages: [{
               id: "chrome-devtools",
               enabled: true,
@@ -906,8 +1146,14 @@ describe("CodexAppServerRuntime", () => {
           approvals += 1;
           expect(request).toMatchObject({
             kind: "extension-management",
-            capability: "software.install",
+            capability: "extension.install",
             source: "floral",
+            scope: expect.objectContaining({
+              type: "extension",
+              extensionKind: "mcp",
+              targetId: "chrome-devtools",
+              action: "install",
+            }),
           });
           return "approve";
         },
@@ -928,7 +1174,7 @@ describe("CodexAppServerRuntime", () => {
         changed: true,
         message: "external_mcp.install=ok\nid=chrome-devtools",
         registry: {
-          version: 1,
+          version: 2,
           packages: [{
             id: "chrome-devtools",
             enabled: true,
@@ -959,7 +1205,7 @@ describe("CodexAppServerRuntime", () => {
         changed: true,
         message: "external_mcp.install=ok\nid=chrome-devtools",
         registry: {
-          version: 1,
+          version: 2,
           packages: [{
             id: "chrome-devtools",
             enabled: true,

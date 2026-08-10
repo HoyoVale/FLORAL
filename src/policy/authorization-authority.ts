@@ -1,4 +1,4 @@
-import type { Capability, GatewayRole } from "../core/types.js";
+import type { AgentApprovalScope, Capability, GatewayRole } from "../core/types.js";
 import type { McpRuntimeRegistry } from "../config/mcp/mcp-runtime-registry.js";
 import {
   externalMcpCapabilityForTool,
@@ -24,6 +24,7 @@ export interface AuthorizationRequest {
   source: AuthorizationSource;
   mcpServerId?: string | undefined;
   mcpToolName?: string | undefined;
+  scope?: AgentApprovalScope | undefined;
 }
 
 export type AuthorizationDecision =
@@ -41,6 +42,8 @@ export type AuthorizationDecision =
         | "role-capability-denied"
         | "sandbox-capability-denied"
         | "mcp-tool-not-allowlisted"
+        | "mcp-capability-mismatch"
+        | "approval-scope-invalid"
         | "granular-permissions-not-enabled";
     };
 
@@ -92,6 +95,38 @@ export class AuthorizationAuthority {
       };
     }
 
+    if (request.source === "mcp-tool") {
+      const expected = capabilityForMcpTool(
+        request.mcpServerId ?? "",
+        request.mcpToolName ?? "",
+      );
+      if (expected !== request.capability) {
+        return {
+          status: "deny",
+          approvalLevel: defaultLevel,
+          reason: "mcp-capability-mismatch",
+        };
+      }
+    }
+
+    if (isExtensionMutationCapability(request.capability)
+      && !validExtensionApprovalScope(request.capability, request.scope)) {
+      return {
+        status: "deny",
+        approvalLevel: defaultLevel,
+        reason: "approval-scope-invalid",
+      };
+    }
+
+    if (request.capability === "skill.publish"
+      && !validSkillPublishApprovalScope(request.scope)) {
+      return {
+        status: "deny",
+        approvalLevel: defaultLevel,
+        reason: "approval-scope-invalid",
+      };
+    }
+
     if (request.source === "codex-permission-profile") {
       return {
         status: "deny",
@@ -110,9 +145,10 @@ export class AuthorizationAuthority {
     const scopedCodexPermissionGrant = request.source === "codex-permission-request"
       && request.capability === "codex.permission.grant";
     const scopedFloralSkillSupplyChainGrant = request.source === "floral-skill"
-      && request.capability === "software.install";
+      && (isExtensionMutationCapability(request.capability)
+        || request.capability === "skill.publish");
     const scopedFloralExtensionSupplyChainGrant = request.source === "floral-extension"
-      && request.capability === "software.install";
+      && isExtensionMutationCapability(request.capability);
     // Host-owned bounded maintenance is governed separately from the Codex
     // turn sandbox. Crossing that sandbox ceiling is valid only for the exact
     // FLORAL maintenance source and still requires the capability's
@@ -123,6 +159,11 @@ export class AuthorizationAuthority {
       && request.capability === "browser.submit"
       && Boolean(request.mcpServerId)
       && isCuratedExternalMcpServer(request.mcpServerId!);
+    const scopedExternalGithubGrant = request.source === "mcp-tool"
+      && (request.capability === "github.issue.write"
+        || request.capability === "github.pull-request.write"
+        || request.capability === "github.actions.run")
+      && request.mcpServerId === "github-owner";
 
     if (
       !sandboxAllows(this.options.sandboxMode, request.capability)
@@ -133,6 +174,7 @@ export class AuthorizationAuthority {
       && !scopedFloralExtensionSupplyChainGrant
       && !scopedFloralMaintenanceGrant
       && !scopedExternalBrowserGrant
+      && !scopedExternalGithubGrant
     ) {
       return {
         status: "deny",
@@ -227,9 +269,47 @@ function sandboxAllows(
     "files.read",
     "shell.execute",
     "web.search",
+    "github.repository.read",
+    "browser.inspect",
   ]);
   if (mode === "read-only") return readOnlyCapabilities.has(capability);
 
   if (readOnlyCapabilities.has(capability)) return true;
   return capability === "files.write" || capability === "application.open";
+}
+
+export function isExtensionMutationCapability(
+  capability: Capability,
+): capability is Extract<Capability, `extension.${string}`> {
+  return capability === "extension.install"
+    || capability === "extension.update"
+    || capability === "extension.remove"
+    || capability === "extension.enable"
+    || capability === "extension.disable";
+}
+
+function validExtensionApprovalScope(
+  capability: Extract<Capability, `extension.${string}`>,
+  scope: AgentApprovalScope | undefined,
+): boolean {
+  if (!scope || scope.type !== "extension") return false;
+  if (capability !== `extension.${scope.action}`) return false;
+  if (!/^[A-Za-z0-9][A-Za-z0-9._-]{0,159}$/u.test(scope.targetId)) return false;
+  if (!scope.sourceId.trim() || !scope.sourceVersion.trim()) return false;
+  if (scope.integrity !== undefined && !/^sha256:[0-9a-f]{64}$/u.test(scope.integrity)) {
+    return false;
+  }
+  return scope.permissions.length > 0
+    && scope.permissions.every((permission) => typeof permission === "string");
+}
+
+function validSkillPublishApprovalScope(
+  scope: AgentApprovalScope | undefined,
+): boolean {
+  if (!scope || scope.type !== "skill-publish") return false;
+  if (!/^[0-9a-f]{64}$/u.test(scope.projectId)) return false;
+  if (!/^[a-z0-9]+(?:-[a-z0-9]+)*$/u.test(scope.targetName)
+    || scope.targetName.length > 64) return false;
+  if (!/^sha256:[0-9a-f]{64}$/u.test(scope.digest)) return false;
+  return scope.permissions.every((permission) => typeof permission === "string");
 }

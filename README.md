@@ -214,3 +214,9 @@ Codex app-server is currently an experimental integration surface. The project k
 See `docs/CODEX_APP_SERVER_PHASE1.md`, `docs/ENVIRONMENT_SETUP.md`, `docs/SECURITY_BASELINE.md`, and `docs/IMPLEMENTATION_ROADMAP.md` before enabling real machine control.
 
 Phase 5F.4C adds a provenance-bound AgentArtifact outbound egress policy before Visual MCP.
+
+## Autonomous extension governance
+
+Phase 9 adds governed Agent self-management for Project Skills, curated external Skills and MCP packages, and Codex-native Apps. Mutations require a frozen plan, an exact-scope approval, a durable transaction, and fresh-turn verification; validation or native readback failures roll back. App authentication and Plugin lifecycle remain user-mediated through supported Codex/ChatGPT surfaces, and production does not depend on under-development Plugin RPC methods.
+
+See `docs/PHASE9_AUTONOMOUS_EXTENSION_GOVERNANCE.md` for the 9A–9F contract, failure matrix, and Windows/macOS/Feishu acceptance gates.

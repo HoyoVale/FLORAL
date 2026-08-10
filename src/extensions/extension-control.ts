@@ -1,12 +1,16 @@
 import { randomBytes } from "node:crypto";
-import { chmod, mkdir, readFile, rename, rm, writeFile } from "node:fs/promises";
+import { chmod, mkdir, readFile, readdir, rename, rm, writeFile } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
 import { CURATED_EXTERNAL_MCP, type ExternalMcpCatalogId } from "./external-mcp-registry.js";
 import { CURATED_EXTERNAL_SKILLS, type ExternalSkillCatalogId } from "../skills/external-skill-registry.js";
 import type { SystemFactSnapshot, SystemSnapshot } from "../system-awareness/system-types.js";
 import type { DurableJournal, DurableJournalStatus } from "../core/contracts.js";
+import {
+  extensionCapabilityForAction,
+  type ExtensionMutationCapability,
+} from "./extension-approval.js";
 
-export const EXTENSION_CONTROL_SCHEMA_VERSION = 1 as const;
+export const EXTENSION_CONTROL_SCHEMA_VERSION = 2 as const;
 
 export type ExtensionControlKind = "external-mcp" | "external-skill" | "app";
 export type ExtensionControlAction = "install" | "update" | "enable" | "disable" | "remove" | "install-handoff";
@@ -16,7 +20,11 @@ export type ExtensionControlStatus =
   | "verified"
   | "prerequisite-required"
   | "degraded"
-  | "failed";
+  | "failed"
+  | "cancelled"
+  | "superseded"
+  | "rolled-back"
+  | "expired";
 
 export interface ExtensionControlTransaction {
   schemaVersion: typeof EXTENSION_CONTROL_SCHEMA_VERSION;
@@ -32,6 +40,8 @@ export interface ExtensionControlTransaction {
   expectedSkillNames?: string[] | undefined;
   verification?: string | undefined;
   errorType?: string | undefined;
+  expiresAt?: string | undefined;
+  supersededBy?: string | undefined;
 }
 
 export type ExtensionPlanIntent = "activate" | "update" | "disable" | "remove";
@@ -52,7 +62,7 @@ export interface ExtensionPlan {
   status: ExtensionPlanStatus;
   currentState: string;
   recommendedAction?: Exclude<ExtensionControlAction, "install-handoff"> | "prepare-app-install" | undefined;
-  capability?: "software.install" | undefined;
+  capability?: ExtensionMutationCapability | undefined;
   approval?: "chat-confirmation" | "user-mediated" | undefined;
   verificationInterface: string;
   prerequisite?: string | undefined;
@@ -78,17 +88,23 @@ export class ExtensionControlLedger {
   readonly #now: () => Date;
   readonly #createId: () => string;
   readonly #journal: DurableJournal | undefined;
+  readonly #verificationTtlMs: number;
+  readonly #userActionTtlMs: number;
 
   constructor(options: {
     directory: string;
     now?: (() => Date) | undefined;
     createId?: (() => string) | undefined;
     journal?: DurableJournal | undefined;
+    verificationTtlMs?: number | undefined;
+    userActionTtlMs?: number | undefined;
   }) {
     this.#directory = resolve(options.directory);
     this.#now = options.now ?? (() => new Date());
     this.#createId = options.createId ?? (() => randomBytes(8).toString("hex").toUpperCase());
     this.#journal = options.journal;
+    this.#verificationTtlMs = positiveTtl(options.verificationTtlMs ?? 24 * 60 * 60 * 1_000);
+    this.#userActionTtlMs = positiveTtl(options.userActionTtlMs ?? 7 * 24 * 60 * 60 * 1_000);
   }
 
   async initialize(): Promise<void> {
@@ -96,22 +112,26 @@ export class ExtensionControlLedger {
     await mkdir(join(this.#directory, "transactions"), { recursive: true, mode: 0o700 });
     await chmod(this.#directory, 0o700).catch(() => undefined);
     await chmod(join(this.#directory, "transactions"), 0o700).catch(() => undefined);
+    await this.reconcile();
     const latest = await readLatestExtensionControlTransaction(this.#directory);
     if (latest) this.#recordDurableState(latest);
   }
 
   async recordMutation(input: {
-    kind: "external-mcp" | "external-skill";
+    kind: "external-mcp" | "external-skill" | "app";
     targetId: string;
     action: Exclude<ExtensionControlAction, "install-handoff">;
     changed: boolean;
     expectedServerId?: string | undefined;
     expectedSkillNames?: readonly string[] | undefined;
   }): Promise<ExtensionControlTransaction> {
-    const now = this.#now().toISOString();
+    const nowDate = this.#now();
+    const now = nowDate.toISOString();
+    const id = this.#allocateId();
+    await this.#supersedePending(input.kind, input.targetId, id);
     const transaction: ExtensionControlTransaction = {
       schemaVersion: EXTENSION_CONTROL_SCHEMA_VERSION,
-      id: this.#allocateId(),
+      id,
       kind: input.kind,
       targetId: boundedId(input.targetId),
       action: input.action,
@@ -124,6 +144,7 @@ export class ExtensionControlLedger {
         ? { expectedSkillNames: [...new Set(input.expectedSkillNames.map(boundedSkillName))].sort() }
         : {}),
       verification: "fresh-turn-required",
+      expiresAt: new Date(nowDate.getTime() + this.#verificationTtlMs).toISOString(),
     };
     await writeExtensionControlTransaction(this.#directory, transaction);
     this.#recordDurableState(transaction);
@@ -131,10 +152,13 @@ export class ExtensionControlLedger {
   }
 
   async recordAppHandoff(appId: string): Promise<ExtensionControlTransaction> {
-    const now = this.#now().toISOString();
+    const nowDate = this.#now();
+    const now = nowDate.toISOString();
+    const id = this.#allocateId();
+    await this.#supersedePending("app", appId, id);
     const transaction: ExtensionControlTransaction = {
       schemaVersion: EXTENSION_CONTROL_SCHEMA_VERSION,
-      id: this.#allocateId(),
+      id,
       kind: "app",
       targetId: boundedId(appId),
       action: "install-handoff",
@@ -142,6 +166,7 @@ export class ExtensionControlLedger {
       requestedAt: now,
       updatedAt: now,
       verification: "user-mediated-install-or-authentication-pending",
+      expiresAt: new Date(nowDate.getTime() + this.#userActionTtlMs).toISOString(),
     };
     await writeExtensionControlTransaction(this.#directory, transaction);
     this.#recordDurableState(transaction);
@@ -149,15 +174,17 @@ export class ExtensionControlLedger {
   }
 
   async recordFailure(input: {
-    kind: "external-mcp" | "external-skill";
+    kind: "external-mcp" | "external-skill" | "app";
     targetId: string;
     action: Exclude<ExtensionControlAction, "install-handoff">;
     error: unknown;
   }): Promise<ExtensionControlTransaction> {
     const now = this.#now().toISOString();
+    const id = this.#allocateId();
+    await this.#supersedePending(input.kind, input.targetId, id);
     const transaction: ExtensionControlTransaction = {
       schemaVersion: EXTENSION_CONTROL_SCHEMA_VERSION,
-      id: this.#allocateId(),
+      id,
       kind: input.kind,
       targetId: boundedId(input.targetId),
       action: input.action,
@@ -173,8 +200,8 @@ export class ExtensionControlLedger {
   }
 
   async recordVerification(result: ExtensionVerificationResult): Promise<ExtensionControlTransaction | undefined> {
-    const current = await readLatestExtensionControlTransaction(this.#directory);
-    if (!current || current.id !== result.transactionId) return undefined;
+    const current = await readExtensionControlTransaction(this.#directory, result.transactionId);
+    if (!current || isTerminalExtensionStatus(current.status)) return current;
     const next: ExtensionControlTransaction = {
       ...current,
       status: result.status,
@@ -188,6 +215,84 @@ export class ExtensionControlLedger {
 
   async latest(): Promise<ExtensionControlTransaction | undefined> {
     return await readLatestExtensionControlTransaction(this.#directory);
+  }
+
+  async get(id: string): Promise<ExtensionControlTransaction | undefined> {
+    return await readExtensionControlTransaction(this.#directory, id);
+  }
+
+  async list(limit = 50): Promise<ExtensionControlTransaction[]> {
+    return await listExtensionControlTransactions(this.#directory, limit);
+  }
+
+  async cancel(id: string): Promise<ExtensionControlTransaction | undefined> {
+    return await this.#setTerminal(id, "cancelled", "cancelled-by-owner-or-host");
+  }
+
+  async markRolledBack(id: string): Promise<ExtensionControlTransaction | undefined> {
+    return await this.#setTerminal(id, "rolled-back", "mutation-rolled-back");
+  }
+
+  async reconcile(): Promise<ExtensionControlTransaction[]> {
+    const transactions = await listExtensionControlTransactions(this.#directory, 500);
+    const now = this.#now().getTime();
+    const expired: ExtensionControlTransaction[] = [];
+    for (const transaction of transactions) {
+      if (transaction.status !== "pending-verification" && transaction.status !== "pending-user-action") continue;
+      const fallbackTtl = transaction.status === "pending-user-action"
+        ? this.#userActionTtlMs
+        : this.#verificationTtlMs;
+      const expiresAt = transaction.expiresAt
+        ? Date.parse(transaction.expiresAt)
+        : Date.parse(transaction.requestedAt) + fallbackTtl;
+      if (Number.isFinite(expiresAt) && expiresAt <= now) {
+        const next = await this.#setTerminal(transaction.id, "expired", "verification-window-expired");
+        if (next) expired.push(next);
+      }
+    }
+    return expired;
+  }
+
+  async #supersedePending(
+    kind: ExtensionControlKind,
+    targetId: string,
+    supersededBy: string,
+  ): Promise<void> {
+    const transactions = await listExtensionControlTransactions(this.#directory, 500);
+    for (const transaction of transactions) {
+      if (
+        transaction.kind !== kind
+        || transaction.targetId !== targetId
+        || (transaction.status !== "pending-verification" && transaction.status !== "pending-user-action")
+      ) continue;
+      const next: ExtensionControlTransaction = {
+        ...transaction,
+        status: "superseded",
+        supersededBy,
+        verification: "superseded-by-newer-transaction",
+        updatedAt: this.#now().toISOString(),
+      };
+      await writeExtensionControlTransaction(this.#directory, next);
+      this.#recordDurableState(next);
+    }
+  }
+
+  async #setTerminal(
+    id: string,
+    status: Extract<ExtensionControlStatus, "cancelled" | "rolled-back" | "expired">,
+    verification: string,
+  ): Promise<ExtensionControlTransaction | undefined> {
+    const current = await readExtensionControlTransaction(this.#directory, id);
+    if (!current || isTerminalExtensionStatus(current.status)) return current;
+    const next: ExtensionControlTransaction = {
+      ...current,
+      status,
+      verification,
+      updatedAt: this.#now().toISOString(),
+    };
+    await writeExtensionControlTransaction(this.#directory, next);
+    this.#recordDurableState(next);
+    return next;
   }
 
   #allocateId(): string {
@@ -222,7 +327,8 @@ export class ExtensionControlLedger {
 
 function extensionJournalStatus(status: ExtensionControlStatus): DurableJournalStatus {
   if (status === "verified") return "completed";
-  if (status === "failed") return "failed";
+  if (status === "failed" || status === "expired") return "failed";
+  if (status === "cancelled" || status === "superseded" || status === "rolled-back") return "cancelled";
   return "waiting";
 }
 
@@ -285,11 +391,56 @@ export function formatExtensionVerification(result: ExtensionVerificationResult)
 
 export function readExtensionControlTransactionFromSnapshot(
   snapshot: SystemSnapshot,
+  transactionId?: string | undefined,
 ): ExtensionControlTransaction | undefined {
+  if (transactionId) {
+    const history = fact(snapshot, "floral.extension_control", "recent_transactions");
+    if (history?.resolution === "resolved" && Array.isArray(history.value)) {
+      for (const value of history.value) {
+        if (!isRecord(value) || value.id !== transactionId) continue;
+        return transactionFromEvidenceRecord(value);
+      }
+    }
+    return undefined;
+  }
   const latest = fact(snapshot, "floral.extension_control", "last_transaction");
   if (!latest || latest.resolution !== "resolved" || !isRecord(latest.value)) return undefined;
-  const value = latest.value;
-  const schemaVersion = value.schemaVersion === EXTENSION_CONTROL_SCHEMA_VERSION
+  return transactionFromEvidenceRecord(latest.value);
+}
+
+export function readExtensionControlTransactionsFromSnapshot(
+  snapshot: SystemSnapshot,
+): ExtensionControlTransaction[] {
+  const history = fact(snapshot, "floral.extension_control", "recent_transactions");
+  if (history?.resolution !== "resolved" || !Array.isArray(history.value)) return [];
+  return history.value
+    .map((value) => isRecord(value) ? transactionFromEvidenceRecord(value) : undefined)
+    .filter((value): value is ExtensionControlTransaction => Boolean(value));
+}
+
+export function formatExtensionControlHistory(
+  transactions: readonly ExtensionControlTransaction[],
+): string {
+  return [
+    "FLORAL Controlled Extension History",
+    `count=${String(transactions.length)}`,
+    ...transactions.flatMap((transaction, index) => [
+      `transaction.${String(index + 1)}.id=${transaction.id}`,
+      `transaction.${String(index + 1)}.kind=${transaction.kind}`,
+      `transaction.${String(index + 1)}.target=${safeToken(transaction.targetId)}`,
+      `transaction.${String(index + 1)}.action=${transaction.action}`,
+      `transaction.${String(index + 1)}.status=${transaction.status}`,
+      `transaction.${String(index + 1)}.updated_at=${transaction.updatedAt}`,
+      `transaction.${String(index + 1)}.verification=${safeToken(transaction.verification ?? "none")}`,
+    ]),
+    "execution_performed=false",
+  ].join("\n");
+}
+
+function transactionFromEvidenceRecord(
+  value: Record<string, unknown>,
+): ExtensionControlTransaction | undefined {
+  const schemaVersion = value.schemaVersion === 1 || value.schemaVersion === EXTENSION_CONTROL_SCHEMA_VERSION
     ? EXTENSION_CONTROL_SCHEMA_VERSION
     : undefined;
   const id = stringValue(value.id);
@@ -311,6 +462,8 @@ export function readExtensionControlTransactionFromSnapshot(
     : [];
   const verificationValue = stringValue(value.verification);
   const errorType = stringValue(value.errorType);
+  const expiresAt = stringValue(value.expiresAt);
+  const supersededBy = stringValue(value.supersededBy);
   const transaction: ExtensionControlTransaction = {
     schemaVersion,
     id,
@@ -325,6 +478,8 @@ export function readExtensionControlTransactionFromSnapshot(
     ...(expectedSkillNames.length > 0 ? { expectedSkillNames } : {}),
     ...(verificationValue ? { verification: verificationValue } : {}),
     ...(errorType ? { errorType } : {}),
+    ...(expiresAt ? { expiresAt } : {}),
+    ...(supersededBy ? { supersededBy } : {}),
   };
   return isTransaction(transaction) ? transaction : undefined;
 }
@@ -333,13 +488,50 @@ export async function readLatestExtensionControlTransaction(
   directory: string,
 ): Promise<ExtensionControlTransaction | undefined> {
   try {
-    const parsed = JSON.parse(await readFile(join(resolve(directory), "latest.json"), "utf8")) as Partial<ExtensionControlTransaction>;
-    if (!isTransaction(parsed)) throw new Error("Invalid extension control transaction ledger");
-    return parsed;
+    return parseTransactionJson(await readFile(join(resolve(directory), "latest.json"), "utf8"));
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code === "ENOENT") return undefined;
     throw error;
   }
+}
+
+export async function readExtensionControlTransaction(
+  directory: string,
+  id: string,
+): Promise<ExtensionControlTransaction | undefined> {
+  const normalized = id.trim().toUpperCase();
+  if (!/^[A-Z0-9]{8,24}$/u.test(normalized)) return undefined;
+  try {
+    return parseTransactionJson(
+      await readFile(join(resolve(directory), "transactions", `${normalized}.json`), "utf8"),
+    );
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return undefined;
+    throw error;
+  }
+}
+
+export async function listExtensionControlTransactions(
+  directory: string,
+  limit = 50,
+): Promise<ExtensionControlTransaction[]> {
+  const boundedLimit = Math.max(1, Math.min(500, Math.trunc(limit)));
+  const root = join(resolve(directory), "transactions");
+  let names: string[];
+  try {
+    names = await readdir(root);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return [];
+    throw error;
+  }
+  const transactions: ExtensionControlTransaction[] = [];
+  for (const name of names) {
+    if (!/^[A-Z0-9]{8,24}\.json$/u.test(name)) continue;
+    transactions.push(parseTransactionJson(await readFile(join(root, name), "utf8")));
+  }
+  return transactions
+    .sort((a, b) => b.requestedAt.localeCompare(a.requestedAt) || b.id.localeCompare(a.id))
+    .slice(0, boundedLimit);
 }
 
 export async function writeExtensionControlTransaction(
@@ -350,10 +542,22 @@ export async function writeExtensionControlTransaction(
   const root = resolve(directory);
   const transactions = join(root, "transactions");
   await mkdir(transactions, { recursive: true, mode: 0o700 });
-  await Promise.all([
-    writeAtomicPrivateJson(join(transactions, `${transaction.id}.json`), transaction),
-    writeAtomicPrivateJson(join(root, "latest.json"), transaction),
-  ]);
+  await writeAtomicPrivateJson(join(transactions, `${transaction.id}.json`), transaction);
+  const latest = await readLatestExtensionControlTransaction(root);
+  if (!latest || latest.id === transaction.id || transaction.requestedAt >= latest.requestedAt) {
+    await writeAtomicPrivateJson(join(root, "latest.json"), transaction);
+  }
+}
+
+function parseTransactionJson(text: string): ExtensionControlTransaction {
+  const value = JSON.parse(text) as Record<string, unknown>;
+  if (value.schemaVersion === 1) value.schemaVersion = EXTENSION_CONTROL_SCHEMA_VERSION;
+  if (!isTransaction(value as Partial<ExtensionControlTransaction>)) {
+    throw new Error("Invalid extension control transaction ledger");
+  }
+  const transaction = value as unknown as ExtensionControlTransaction;
+  validateTransaction(transaction);
+  return transaction;
 }
 
 function planMcp(snapshot: SystemSnapshot, id: string, intent: ExtensionPlanIntent): ExtensionPlan {
@@ -422,7 +626,9 @@ function planSkill(snapshot: SystemSnapshot, id: string, intent: ExtensionPlanIn
 }
 
 function planApp(snapshot: SystemSnapshot, id: string, intent: ExtensionPlanIntent): ExtensionPlan {
-  if (intent !== "activate") return unsupported("app", id, intent, "FLORAL exposes App installation only as an upstream user-mediated handoff; update/disable/remove are not production actions.");
+  if (intent === "update" || intent === "remove") {
+    return unsupported("app", id, intent, "App installation, update, removal, authentication, and grants remain upstream user-mediated actions.");
+  }
   const installedFact = fact(snapshot, "codex.apps", "installed");
   if (!installedFact || installedFact.resolution !== "resolved") {
     return unknownPlan("app", id, intent, "Installed/callable App authority is unavailable or conflicting; directory visibility cannot be upgraded to installation state.");
@@ -430,6 +636,13 @@ function planApp(snapshot: SystemSnapshot, id: string, intent: ExtensionPlanInte
   const installed = rowsFromFact(installedFact) ?? [];
   const existing = installed.find((entry) => stringValue(entry.id) === id);
   if (existing) {
+    const enabled = booleanValue(existing.enabled);
+    if (intent === "disable") {
+      return enabled === false
+        ? noOp("app", id, intent, "installed-disabled", "The installed App is already disabled in effective Codex configuration.")
+        : appActionPlan(id, intent, "installed-enabled", "disable");
+    }
+    if (enabled === false) return appActionPlan(id, intent, "installed-disabled", "enable");
     const callable = booleanValue(existing.callable);
     if (callable === true) return noOp("app", id, intent, "installed-callable", "The App is already installed and callable.");
     return {
@@ -438,6 +651,7 @@ function planApp(snapshot: SystemSnapshot, id: string, intent: ExtensionPlanInte
       prerequisite: "upstream-authentication-or-grant", reason: "The App is installed but not currently callable; upstream authentication/grant state is user-mediated.",
     };
   }
+  if (intent === "disable") return noOp("app", id, intent, "not-installed", "The App is not installed, so there is no enabled runtime state to disable.");
   const directory = resolvedRows(snapshot, "codex.apps", "directory");
   if (!directory) return unknownPlan("app", id, intent, "App directory authority is unavailable.");
   const candidate = directory.find((entry) => stringValue(entry.id) === id);
@@ -531,7 +745,18 @@ function verifyApp(snapshot: SystemSnapshot, tx: ExtensionControlTransaction): E
   }
   const rows = rowsFromFact(installedFact) ?? [];
   const row = rows.find((entry) => stringValue(entry.id) === tx.targetId);
+  if (tx.action === "disable") {
+    if (!row) return verification(tx, "verified", "app-not-installed-or-runtime-absent", ["installed=false"]);
+    const enabled = booleanValue(row.enabled);
+    const callable = booleanValue(row.callable);
+    return enabled === false && callable !== true
+      ? verification(tx, "verified", "app-disabled-and-not-callable", ["installed=true", "enabled=false", `callable=${String(callable ?? "unknown")}`])
+      : verification(tx, "degraded", "app-disable-not-adopted", ["installed=true", `enabled=${String(enabled ?? "unknown")}`, `callable=${String(callable ?? "unknown")}`]);
+  }
   if (!row) return verification(tx, "pending-user-action", "upstream-install-not-yet-observed", ["installed=false"]);
+  if (tx.action === "enable" && booleanValue(row.enabled) !== true) {
+    return verification(tx, "degraded", "app-enable-not-adopted", ["installed=true", `enabled=${String(booleanValue(row.enabled) ?? "unknown")}`]);
+  }
   const callable = booleanValue(row.callable);
   if (callable === true) return verification(tx, "verified", "installed-and-callable", ["installed=true", "callable=true"]);
   return verification(tx, "prerequisite-required", "installed-but-upstream-auth-or-grant-pending", ["installed=true", `callable=${String(callable ?? "unknown")}`]);
@@ -544,7 +769,12 @@ function expectedMcpServer(snapshot: SystemSnapshot, tx: ExtensionControlTransac
 }
 
 function actionPlan(kind: "mcp" | "skill", id: string, intent: ExtensionPlanIntent, currentState: string, action: Exclude<ExtensionControlAction, "install-handoff">): ExtensionPlan {
-  return { kind, id, intent, status: "action-required", currentState, recommendedAction: action, capability: "software.install", approval: "chat-confirmation", verificationInterface: "floral_extensions/verify_extension", reason: `The curated ${kind === "mcp" ? "MCP" : "Skill package"} lifecycle requires ${action} to satisfy the requested state.` };
+  const capability = extensionCapabilityForAction(action);
+  return { kind, id, intent, status: "action-required", currentState, recommendedAction: action, capability, approval: capability === "extension.enable" || capability === "extension.disable" ? undefined : "chat-confirmation", verificationInterface: "floral_extensions/verify_extension", reason: `The curated ${kind === "mcp" ? "MCP" : "Skill package"} lifecycle requires ${action} to satisfy the requested state.` };
+}
+function appActionPlan(id: string, intent: ExtensionPlanIntent, currentState: string, action: "enable" | "disable"): ExtensionPlan {
+  const capability = extensionCapabilityForAction(action);
+  return { kind: "app", id, intent, status: "action-required", currentState, recommendedAction: action, capability, verificationInterface: "floral_extensions/verify_extension", reason: `Codex App effective configuration requires ${action} to satisfy the requested state; authentication and connector grants remain upstream-owned.` };
 }
 function noOp(kind: ExtensionPlanKind, id: string, intent: ExtensionPlanIntent, currentState: string, reason: string): ExtensionPlan { return { kind, id, intent, status: "no-op", currentState, verificationInterface: "floral_extensions/verify_extension", reason }; }
 function unknownPlan(kind: ExtensionPlanKind, id: string, intent: ExtensionPlanIntent, reason: string): ExtensionPlan { return { kind, id, intent, status: "unknown", currentState: "unknown", verificationInterface: "floral_extensions/verify_extension", reason }; }
@@ -577,9 +807,13 @@ function isTransaction(value: Partial<ExtensionControlTransaction>): value is Ex
       && value.expectedSkillNames.every((name) => typeof name === "string" && name.length > 0 && name.length <= 160 && !/[\u0000-\u001F\u007F]/u.test(name))
     ))
     && (value.verification === undefined || (typeof value.verification === "string" && value.verification.length <= 240))
-    && (value.errorType === undefined || (typeof value.errorType === "string" && /^[A-Za-z][A-Za-z0-9_.-]{0,63}$/u.test(value.errorType)));
+    && (value.errorType === undefined || (typeof value.errorType === "string" && /^[A-Za-z][A-Za-z0-9_.-]{0,63}$/u.test(value.errorType)))
+    && (value.expiresAt === undefined || (typeof value.expiresAt === "string" && Number.isFinite(Date.parse(value.expiresAt))))
+    && (value.supersededBy === undefined || (typeof value.supersededBy === "string" && /^[A-Z0-9]{8,24}$/u.test(value.supersededBy)));
 }
 function validateTransaction(value: ExtensionControlTransaction): void { if (!isTransaction(value) || !Number.isFinite(Date.parse(value.requestedAt)) || !Number.isFinite(Date.parse(value.updatedAt))) throw new Error("Invalid extension control transaction"); }
 function isAction(value: unknown): value is ExtensionControlAction { return value === "install" || value === "update" || value === "enable" || value === "disable" || value === "remove" || value === "install-handoff"; }
-function isStatus(value: unknown): value is ExtensionControlStatus { return value === "pending-verification" || value === "pending-user-action" || value === "verified" || value === "prerequisite-required" || value === "degraded" || value === "failed"; }
+function isStatus(value: unknown): value is ExtensionControlStatus { return value === "pending-verification" || value === "pending-user-action" || value === "verified" || value === "prerequisite-required" || value === "degraded" || value === "failed" || value === "cancelled" || value === "superseded" || value === "rolled-back" || value === "expired"; }
+export function isTerminalExtensionStatus(status: ExtensionControlStatus): boolean { return status === "verified" || status === "failed" || status === "cancelled" || status === "superseded" || status === "rolled-back" || status === "expired"; }
+function positiveTtl(value: number): number { if (!Number.isFinite(value) || value < 1_000) throw new Error("Extension control TTL must be at least 1000 ms"); return Math.trunc(value); }
 async function writeAtomicPrivateJson(path: string, value: unknown): Promise<void> { await mkdir(dirname(path), { recursive: true, mode: 0o700 }); const temporary = `${path}.tmp-${String(process.pid)}-${Date.now().toString(36)}`; try { await writeFile(temporary, `${JSON.stringify(value)}\n`, { encoding: "utf8", mode: 0o600 }); await chmod(temporary, 0o600).catch(() => undefined); await rename(temporary, path); await chmod(path, 0o600).catch(() => undefined); } finally { await rm(temporary, { force: true }).catch(() => undefined); } }

@@ -58,7 +58,7 @@ export const DEFAULT_SYSTEM_DEFINITIONS: readonly SystemDefinition[] = [
     owner: authority("floral", "FLORAL", "Owns bounded extension-control planning, lifecycle handoff receipts, and verification records."),
     authority: authority("floral", "ExtensionControlLedger", "Is authoritative for the latest FLORAL-controlled extension transaction receipt; runtime readiness remains authoritative in the owning extension/runtime observers."),
     stateSources: [
-      source("extension-control-ledger", "filesystem", "authoritative", ["last_transaction"], "Latest bounded controlled-extension transaction receipt; contains no credential values, shell commands, arbitrary package sources, or authentication tokens."),
+      source("extension-control-ledger", "filesystem", "authoritative", ["last_transaction", "recent_transactions"], "Latest and recent bounded controlled-extension transaction receipts; contain no credential values, shell commands, arbitrary package sources, or authentication tokens."),
     ],
     managementActions: [
       action("read", "Read the latest controlled-extension receipt.", "automatic", "automatic", "machine.status.read"),
@@ -230,6 +230,8 @@ export const DEFAULT_SYSTEM_DEFINITIONS: readonly SystemDefinition[] = [
     managementActions: [
       action("read", "Read installed runtime evidence, directory candidates, and App metadata.", "automatic", "automatic", "machine.status.read"),
       action("install", "Prepare a supported App installation handoff; user completes upstream installation/authentication.", "user-mediated", "user-mediated", undefined, "floral_extensions/prepare_app_install", "floral_extensions/verify_extension"),
+      action("enable", "Enable an installed App through Codex native config/value/write after exact planning and authorization.", "automatic", "automatic", "extension.enable", "floral_extensions/apply_extension", "floral_extensions/verify_extension"),
+      action("disable", "Disable an installed App through Codex native config/value/write after exact planning and authorization.", "automatic", "automatic", "extension.disable", "floral_extensions/apply_extension", "floral_extensions/verify_extension"),
       action("remove", "App removal is not exposed as a FLORAL production management action.", "unsupported", "not-applicable"),
     ],
     failureDomain: "codex",
@@ -266,7 +268,8 @@ export const DEFAULT_SYSTEM_DEFINITIONS: readonly SystemDefinition[] = [
     ],
     managementActions: [
       action("read", "Read native Plugin/App feature state.", "automatic", "automatic", "machine.status.read"),
-      action("install", "Plugin installation is not exposed through FLORAL production App Server write RPCs.", "unsupported", "not-applicable"),
+      action("install", "Prepare the supported Codex CLI /plugins or ChatGPT Plugin Directory user handoff; under-development App Server Plugin RPCs are not called.", "user-mediated", "user-mediated", undefined, "floral_extensions/prepare_plugin_management"),
+      action("remove", "Prepare the supported Plugin management user handoff; production FLORAL does not call under-development uninstall RPCs.", "user-mediated", "user-mediated", undefined, "floral_extensions/prepare_plugin_management"),
     ],
     failureDomain: "codex",
     tags: ["plugin", "extension"],
@@ -485,10 +488,10 @@ function extensionLifecycleActions(
 ): readonly ManagementActionDefinition[] {
   return [
     action("read", "Read curated installation/enabled metadata.", "automatic", "automatic", "machine.status.read"),
-    action("install", "Install an approved curated extension.", "approval-gated", "chat-confirmation", "software.install", executor, verification),
-    action("update", "Update an approved curated extension.", "approval-gated", "chat-confirmation", "software.install", executor, verification),
-    action("enable", "Enable an installed curated extension.", "approval-gated", "chat-confirmation", "software.install", executor, verification),
-    action("disable", "Disable an installed curated extension.", "approval-gated", "chat-confirmation", "software.install", executor, verification),
-    action("remove", "Remove an installed curated extension.", "approval-gated", "chat-confirmation", "software.install", executor, verification),
+    action("install", "Install an approved curated extension.", "approval-gated", "chat-confirmation", "extension.install", executor, verification),
+    action("update", "Update an approved curated extension.", "approval-gated", "chat-confirmation", "extension.update", executor, verification),
+    action("enable", "Enable an installed curated extension.", "automatic", "automatic", "extension.enable", executor, verification),
+    action("disable", "Disable an installed curated extension.", "automatic", "automatic", "extension.disable", executor, verification),
+    action("remove", "Remove an installed curated extension.", "approval-gated", "chat-confirmation", "extension.remove", executor, verification),
   ];
 }

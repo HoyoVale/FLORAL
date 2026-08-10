@@ -113,6 +113,29 @@ interface ManagedRuntimeSlot {
   scope?: ProjectRuntimeScope | undefined;
 }
 
+interface ManagedRuntimeExecution {
+  approvalPolicy: "never" | "on-request" | "untrusted";
+  sandboxMode: "read-only" | "workspace-write";
+  approvalsReviewer: "user";
+  skillRoots: string[];
+  protectedSkillRoots: string[];
+  skillAuthoringDataRoot: string;
+  externalSkillCatalog: () => Promise<string>;
+  manageExternalSkill: (request: ExternalSkillMutationRequest) => Promise<ExternalSkillManagementResult>;
+  externalMcpCatalog: () => Promise<string>;
+  manageExternalMcp: (request: ExternalMcpMutationRequest) => Promise<ExternalMcpManagementResult>;
+  recordAppInstallHandoff: (appId: string) => Promise<{ transactionId: string }>;
+  recordAppConfigMutation: (input: {
+    appId: string;
+    action: "enable" | "disable";
+    changed: boolean;
+  }) => Promise<{ transactionId: string }>;
+  recordExtensionVerification: (result: ExtensionVerificationResult) => Promise<void>;
+  permissionProfile?: string | undefined;
+  permissionProfileCwd?: string | undefined;
+  durableJournal?: DurableJournal | undefined;
+}
+
 export interface ManagedCodexDeepSeekDependencies {
   createToken?: (() => string) | undefined;
   checkSearch?: (() => Promise<SearchEndpoint>) | undefined;
@@ -125,27 +148,9 @@ export interface ManagedCodexDeepSeekDependencies {
       modelCatalog?: string | undefined;
     },
   ) => Promise<ManagedWorkspace>) | undefined;
-  createRuntime?: ((options: {
+  createRuntime?: ((options: ManagedRuntimeExecution & {
     codexHome: string;
     bridgeToken: string;
-    approvalPolicy: "never" | "on-request" | "untrusted";
-    sandboxMode: "read-only" | "workspace-write";
-    approvalsReviewer: "user";
-    skillRoots: string[];
-    protectedSkillRoots: string[];
-    externalSkillCatalog: () => Promise<string>;
-    manageExternalSkill: (
-      request: ExternalSkillMutationRequest,
-    ) => Promise<ExternalSkillManagementResult>;
-    externalMcpCatalog: () => Promise<string>;
-    manageExternalMcp: (
-      request: ExternalMcpMutationRequest,
-    ) => Promise<ExternalMcpManagementResult>;
-    recordAppInstallHandoff: (appId: string) => Promise<{ transactionId: string }>;
-    recordExtensionVerification: (result: ExtensionVerificationResult) => Promise<void>;
-    permissionProfile?: string | undefined;
-    permissionProfileCwd?: string | undefined;
-    durableJournal?: DurableJournal | undefined;
   }) => AgentRuntime) | undefined;
   resolveExternalSkillRoots?: (() => Promise<string[]>) | undefined;
   externalSkillCatalog?: (() => Promise<string>) | undefined;
@@ -442,6 +447,11 @@ export class ManagedCodexDeepSeekRuntime implements AgentRuntime {
     await this.#extensionControlLedgerForRuntime().initialize();
     this.#externalMcpRegistry = await (this.dependencies.readExternalMcpRegistry?.()
       ?? this.#externalMcpManagerForRuntime().readRegistry());
+    if (!this.dependencies.readExternalMcpRegistry) {
+      await this.#externalMcpManagerForRuntime().reconcileRuntimePackages(
+        this.#externalMcpRegistry,
+      );
+    }
     process.stderr.write(
       `agent.stack.external_mcp.registry=${externalMcpRegistryFingerprint(this.#externalMcpRegistry)}\n`,
     );
@@ -505,10 +515,10 @@ export class ManagedCodexDeepSeekRuntime implements AgentRuntime {
     const managedCodexHome = resolve(this.env.CODEX_MANAGED_HOME);
     const modelCatalog = renderCodexModelCatalog(this.env.DEEPSEEK_MODEL);
     let workspace = await this.#createWorkspace(
-      renderExternalMcpOverlay(adoption.productionConfig, this.#externalMcpRegistry),
+      renderExternalMcpOverlay(adoption.productionConfig, this.#externalMcpRegistry, this.#externalMcpRenderOptions()),
       managedCodexHome,
       adoption.fallbackConfig
-        ? renderExternalMcpOverlay(adoption.fallbackConfig, this.#externalMcpRegistry)
+        ? renderExternalMcpOverlay(adoption.fallbackConfig, this.#externalMcpRegistry, this.#externalMcpRenderOptions())
         : undefined,
       modelCatalog,
     );
@@ -548,6 +558,7 @@ export class ManagedCodexDeepSeekRuntime implements AgentRuntime {
         const fallbackWithExternalMcp = renderExternalMcpOverlay(
           adoption.fallbackConfig,
           this.#externalMcpRegistry,
+          this.#externalMcpRenderOptions(),
         );
         if (workspace.replaceConfig) {
           await workspace.replaceConfig(fallbackWithExternalMcp);
@@ -668,6 +679,7 @@ export class ManagedCodexDeepSeekRuntime implements AgentRuntime {
       approvalsReviewer,
       skillRoots,
       protectedSkillRoots: [resolve(process.cwd(), "skills")],
+      skillAuthoringDataRoot: resolve(process.cwd(), this.env.DATA_DIR, "skill-authoring"),
       externalSkillCatalog: async () => await this.#externalSkillCatalogText(),
       manageExternalSkill: async (request: ExternalSkillMutationRequest) =>
         await this.#manageExternalSkill(request),
@@ -676,6 +688,17 @@ export class ManagedCodexDeepSeekRuntime implements AgentRuntime {
         await this.#manageExternalMcp(request),
       recordAppInstallHandoff: async (appId: string) => {
         const transaction = await this.#extensionControlLedgerForRuntime().recordAppHandoff(appId);
+        return { transactionId: transaction.id };
+      },
+      recordAppConfigMutation: async (
+        input: Parameters<ManagedRuntimeExecution["recordAppConfigMutation"]>[0],
+      ) => {
+        const transaction = await this.#extensionControlLedgerForRuntime().recordMutation({
+          kind: "app",
+          targetId: input.appId,
+          action: input.action,
+          changed: input.changed,
+        });
         return { transactionId: transaction.id };
       },
       recordExtensionVerification: async (result: ExtensionVerificationResult) => {
@@ -785,6 +808,18 @@ export class ManagedCodexDeepSeekRuntime implements AgentRuntime {
       process.cwd(),
       this.env.DATA_DIR,
     ).packagesRoot;
+  }
+
+  #externalMcpRenderOptions(): {
+    repositoryRoot: string;
+    dataDir: string;
+    nodeExecutable: string;
+  } {
+    return {
+      repositoryRoot: process.cwd(),
+      dataDir: this.env.DATA_DIR,
+      nodeExecutable: process.execPath,
+    };
   }
 
   async #applySharedSkillRoots(
@@ -937,7 +972,7 @@ export class ManagedCodexDeepSeekRuntime implements AgentRuntime {
           )
         : baseConfig;
       await target.workspace.replaceConfig(
-        renderExternalMcpOverlay(scopedBase, registry),
+        renderExternalMcpOverlay(scopedBase, registry, this.#externalMcpRenderOptions()),
       );
     }));
 
@@ -1089,6 +1124,7 @@ export class ManagedCodexDeepSeekRuntime implements AgentRuntime {
         this.#externalSkillPackagesRoot(),
       ),
       this.#externalMcpRegistry,
+      this.#externalMcpRenderOptions(),
     );
     const workspace = await this.#createWorkspace(
       scopedConfig,
@@ -1190,26 +1226,7 @@ function createCodexRuntime(
   env: AppEnv,
   codexHome: string,
   bridgeToken: string,
-  execution: {
-    approvalPolicy: "never" | "on-request" | "untrusted";
-    sandboxMode: "read-only" | "workspace-write";
-    approvalsReviewer: "user";
-    skillRoots: string[];
-    protectedSkillRoots: string[];
-    externalSkillCatalog: () => Promise<string>;
-    manageExternalSkill: (
-      request: ExternalSkillMutationRequest,
-    ) => Promise<ExternalSkillManagementResult>;
-    externalMcpCatalog: () => Promise<string>;
-    manageExternalMcp: (
-      request: ExternalMcpMutationRequest,
-    ) => Promise<ExternalMcpManagementResult>;
-    recordAppInstallHandoff: (appId: string) => Promise<{ transactionId: string }>;
-    recordExtensionVerification: (result: ExtensionVerificationResult) => Promise<void>;
-    permissionProfile?: string | undefined;
-    permissionProfileCwd?: string | undefined;
-    durableJournal?: DurableJournal | undefined;
-  },
+  execution: ManagedRuntimeExecution,
   systemAwareness?: ManagedSystemAwarenessOptions | undefined,
 ): AgentRuntime {
   const processEnv: NodeJS.ProcessEnv = {
@@ -1258,11 +1275,13 @@ function createCodexRuntime(
     processCwd: env.CODEX_CWD,
     skillRoots: execution.skillRoots,
     protectedSkillRoots: execution.protectedSkillRoots,
+    skillAuthoringDataRoot: execution.skillAuthoringDataRoot,
     externalSkillCatalog: execution.externalSkillCatalog,
     manageExternalSkill: execution.manageExternalSkill,
     externalMcpCatalog: execution.externalMcpCatalog,
     manageExternalMcp: execution.manageExternalMcp,
     recordAppInstallHandoff: execution.recordAppInstallHandoff,
+    recordAppConfigMutation: execution.recordAppConfigMutation,
     recordExtensionVerification: execution.recordExtensionVerification,
     durableJournal: execution.durableJournal,
     permissionProfile: execution.permissionProfile,

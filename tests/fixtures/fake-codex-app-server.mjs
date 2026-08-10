@@ -1,3 +1,4 @@
+import { existsSync } from "node:fs";
 import { isAbsolute, resolve } from "node:path";
 import { createInterface } from "node:readline";
 
@@ -10,6 +11,8 @@ let activeTurnId = "turn_1";
 let waitingForApproval = false;
 let extraSkillRoots = [];
 const skillEnabled = new Map();
+let appEnabled = true;
+let appConfigWriteCount = 0;
 
 function send(message) {
   process.stdout.write(`${JSON.stringify(message)}\n`);
@@ -46,9 +49,11 @@ function hasFloralSkillTools(params) {
   if (!namespace || !Array.isArray(namespace.tools)) return false;
   const names = namespace.tools.map((tool) => tool?.name).sort();
   return JSON.stringify(names) === JSON.stringify([
+    "draft_status",
     "external_catalog",
     "list",
-    "manage_external",
+    "publication_history",
+    "publish_draft",
     "refresh",
     "set_enabled",
   ]);
@@ -63,15 +68,17 @@ function hasFloralExtensionTools(params) {
   if (!namespace || !Array.isArray(namespace.tools)) return false;
   const names = namespace.tools.map((tool) => tool?.name).sort();
   return JSON.stringify(names) === JSON.stringify([
+    "app_permission_review",
     "apply_extension",
     "available_apps",
+    "extension_history",
     "installed_apps",
-    "manage_mcp",
     "mcp_catalog",
     "mcp_status",
     "native_status",
     "plan_extension",
     "prepare_app_install",
+    "prepare_plugin_management",
     "read_apps",
     "verify_extension",
   ]);
@@ -263,6 +270,17 @@ lines.on("line", (line) => {
                 ) ?? true,
               }]
             : []),
+          ...(existsSync(resolve(cwd, ".agents", "skills", "release-summary", "SKILL.md"))
+            ? [{
+                name: "release-summary",
+                description: "Use when the user asks for a governed release summary.",
+                path: resolve(cwd, ".agents", "skills", "release-summary", "SKILL.md"),
+                scope: "repo",
+                enabled: skillEnabled.get(
+                  resolve(cwd, ".agents", "skills", "release-summary", "SKILL.md"),
+                ) ?? false,
+              }]
+            : []),
         ]
       : [];
     send({ id: message.id, result: { data: [{ cwd, skills, errors: [] }] } });
@@ -332,8 +350,8 @@ lines.on("line", (line) => {
           {
             id: "github",
             runtimeName: "GitHub",
-            enabled: true,
-            callable: true,
+            enabled: scenario === "extension-app-disable-verification-fails" ? true : appEnabled,
+            callable: scenario === "extension-app-disable-verification-fails" ? true : appEnabled,
           },
           {
             id: "disabled-app",
@@ -357,7 +375,9 @@ lines.on("line", (line) => {
             id: "github",
             name: "GitHub",
             description: "GitHub connector directory entry",
-            installUrl: "https://chatgpt.com/apps/github/github",
+            installUrl: scenario === "app-untrusted-install-url"
+              ? "https://evil.example/apps/github/github"
+              : "https://chatgpt.com/apps/github/github",
             isAccessible: true,
             isEnabled: true,
           },
@@ -373,6 +393,21 @@ lines.on("line", (line) => {
         nextCursor: null,
       },
     });
+    return;
+  }
+
+  if (message.method === "config/value/write") {
+    if (
+      message.params?.keyPath !== "apps.github.enabled"
+      || typeof message.params?.value !== "boolean"
+      || message.params?.mergeStrategy !== "upsert"
+    ) {
+      send({ id: message.id, error: { code: -32602, message: "invalid app config write" } });
+      return;
+    }
+    appConfigWriteCount += 1;
+    appEnabled = message.params.value;
+    send({ id: message.id, result: {} });
     return;
   }
 
@@ -1141,6 +1176,54 @@ lines.on("line", (line) => {
         return;
       }
 
+      if (scenario === "extension-app-permission-review") {
+        send({
+          id: "dynamic_1",
+          method: "item/tool/call",
+          params: {
+            threadId: activeThreadId,
+            turnId: activeTurnId,
+            callId: "call_extensions_app_permission_1",
+            namespace: "floral_extensions",
+            tool: "app_permission_review",
+            arguments: { app_id: "github" },
+          },
+        });
+        return;
+      }
+
+      if (scenario === "extension-plugin-handoff") {
+        send({
+          id: "dynamic_1",
+          method: "item/tool/call",
+          params: {
+            threadId: activeThreadId,
+            turnId: activeTurnId,
+            callId: "call_extensions_plugin_handoff_1",
+            namespace: "floral_extensions",
+            tool: "prepare_plugin_management",
+            arguments: { action: "install", plugin_name: "Codex Security" },
+          },
+        });
+        return;
+      }
+
+      if (scenario === "extension-app-disable" || scenario === "extension-app-disable-verification-fails") {
+        send({
+          id: "dynamic_1",
+          method: "item/tool/call",
+          params: {
+            threadId: activeThreadId,
+            turnId: activeTurnId,
+            callId: "call_extensions_app_disable_1",
+            namespace: "floral_extensions",
+            tool: "apply_extension",
+            arguments: { kind: "app", action: "disable", id: "github" },
+          },
+        });
+        return;
+      }
+
       if (scenario === "extension-mcp-status") {
         send({
           id: "dynamic_1",
@@ -1227,6 +1310,25 @@ lines.on("line", (line) => {
             arguments: {
               name: "superpowers:brainstorming",
               enabled: false,
+            },
+          },
+        });
+        return;
+      }
+
+      if (scenario.startsWith("skill-project-publish:")) {
+        send({
+          id: "dynamic_1",
+          method: "item/tool/call",
+          params: {
+            threadId: activeThreadId,
+            turnId: activeTurnId,
+            callId: "call_skill_publish_1",
+            namespace: "floral_skills",
+            tool: "publish_draft",
+            arguments: {
+              name: "release-summary",
+              digest: scenario.slice("skill-project-publish:".length),
             },
           },
         });
@@ -1548,6 +1650,15 @@ lines.on("line", (line) => {
   if (message.id === "dynamic_1" && "result" in message) {
     const success = message.result?.success;
     const text = message.result?.contentItems?.[0]?.text ?? "";
+    if (
+      scenario.startsWith("skill-project-publish:")
+      && success === true
+      && text.includes("project_skill_publish=verified")
+      && text.includes("verification=codex-native-discovery")
+    ) {
+      sendSuccess(activeThreadId, activeTurnId, "project skill publish complete");
+      return;
+    }
     if (scenario === "context-propose-apply" && success === true) {
       const proposalId = /^proposal_id=(ctx-[a-f0-9]{20})$/mu.exec(text)?.[1];
       if (proposalId && text.includes("context_proposal=created") && text.includes("next=apply_update")) {
@@ -1682,6 +1793,47 @@ lines.on("line", (line) => {
       && text.includes("install_url=https://chatgpt.com/apps/github/github")
     ) {
       sendSuccess(activeThreadId, activeTurnId, "extension app handoff complete");
+      return;
+    }
+    if (
+      scenario === "extension-app-permission-review"
+      && success === true
+      && text.includes("codex_app_permission_review=complete")
+      && text.includes("tools_read_only=1")
+      && text.includes("oauth_scopes=not-exposed-by-app-read")
+    ) {
+      sendSuccess(activeThreadId, activeTurnId, "extension app permission review complete");
+      return;
+    }
+    if (
+      scenario === "extension-plugin-handoff"
+      && success === true
+      && text.includes("plugin_management_handoff=required")
+      && text.includes("supported_surface=codex-cli-/plugins-or-chatgpt-plugin-directory")
+      && text.includes("app_server_plugin_list_read_install_uninstall=not-called")
+    ) {
+      sendSuccess(activeThreadId, activeTurnId, "extension plugin handoff complete");
+      return;
+    }
+    if (
+      scenario === "extension-app-disable"
+      && success === true
+      && text.includes("codex_app.disable=accepted")
+      && text.includes("executor=codex-app-server-config/value/write")
+      && text.includes("verification=pending-fresh-turn")
+    ) {
+      sendSuccess(activeThreadId, activeTurnId, "extension app disable complete");
+      return;
+    }
+    if (
+      scenario === "extension-app-disable-verification-fails"
+      && success === false
+      && text.includes("codex_app.config=rolled-back")
+      && text.includes("reason=native-write-or-verification-failed")
+      && appEnabled === true
+      && appConfigWriteCount === 2
+    ) {
+      sendSuccess(activeThreadId, activeTurnId, "extension app rollback complete");
       return;
     }
     if (

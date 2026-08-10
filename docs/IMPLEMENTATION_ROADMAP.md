@@ -288,3 +288,15 @@
 - backup/restore and incident lockout
 - long-run resource and log-retention soak tests
 - release/upgrade rollback procedure
+
+## Phase 9 — autonomous extension governance
+
+- 9A: bind fine-grained extension capabilities to exact approval scopes and deterministic tool allowlists.
+- 9B: pin external Skill/MCP sources and verify immutable refs plus content/package integrity before activation.
+- 9C: make extension changes durable transactions with expiry, supersede, cancellation, fresh-turn verification, and rollback history.
+- 9D: let the Agent draft and publish project-local Codex Skills through a governed exact-digest workflow.
+- 9E: use Codex-native App discovery/configuration while keeping App authentication and Plugin lifecycle on supported user surfaces.
+- 9F: freeze structure budgets, inject rollback failures, isolate runtime data from Git, and close Windows/macOS/Feishu acceptance.
+
+The detailed contract and release matrix are in
+`docs/PHASE9_AUTONOMOUS_EXTENSION_GOVERNANCE.md`.

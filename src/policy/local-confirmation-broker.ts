@@ -387,6 +387,7 @@ function fingerprintRequest(scope: LocalConfirmationScope, request: AgentApprova
     source: request.source,
     mcpServerId: request.mcpServerId ?? null,
     mcpToolName: request.mcpToolName ?? null,
+    scope: request.scope ?? null,
   }));
 }
 

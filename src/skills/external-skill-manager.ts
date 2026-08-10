@@ -48,6 +48,8 @@ export interface ExternalSkillPackageStatus {
   repository: string;
   ref?: string | undefined;
   commit?: string | undefined;
+  integrity?: string | undefined;
+  pinned: boolean;
 }
 
 export interface ExternalSkillManagerOptions {
@@ -82,6 +84,8 @@ export class ExternalSkillManager {
         enabled: installed?.enabled ?? false,
         repository: catalog.repository,
         ...(installed ? { ref: installed.ref, commit: installed.commit } : {}),
+        ...(installed?.integrity ? { integrity: installed.integrity } : {}),
+        pinned: installed?.commit === catalog.pinnedCommit,
       };
     });
   }
@@ -96,6 +100,8 @@ export class ExternalSkillManager {
         `enabled=${String(entry.enabled)}`,
         ...(entry.ref ? [`ref=${entry.ref}`] : []),
         ...(entry.commit ? [`commit=${entry.commit}`] : []),
+        ...(entry.integrity ? [`integrity=${entry.integrity}`] : []),
+        `pinned=${String(entry.pinned)}`,
         `source=${entry.repository}`,
       ].join(" ")),
     ].join("\n");
@@ -146,9 +152,10 @@ export class ExternalSkillManager {
       throw new Error(`${id} is not installed; use install first`);
     }
 
-    const ref = validateGitRef(
-      refOverride ?? existing?.ref ?? catalog.defaultRef,
-    );
+    const ref = validateGitRef(refOverride ?? catalog.defaultRef);
+    if (ref !== catalog.pinnedCommit) {
+      throw new Error(`${id} ref is not the source-controlled pinned commit`);
+    }
     await mkdir(this.#paths.root, { recursive: true, mode: 0o700 });
     await mkdir(this.#paths.packagesRoot, { recursive: true, mode: 0o700 });
     const staging = await mkdtemp(
@@ -167,9 +174,13 @@ export class ExternalSkillManager {
         "--filter=blob:none",
         "--depth", "1",
         "--single-branch",
-        "--branch", ref,
+        "--branch", catalog.branch,
+        "--no-checkout",
         catalog.repository,
         checkout,
+      ]);
+      await runGit(this.#repositoryRoot, [
+        "-C", checkout, "checkout", "--detach", catalog.pinnedCommit,
       ]);
 
       const origin = (
@@ -188,6 +199,9 @@ export class ExternalSkillManager {
       ).trim().toLowerCase();
       if (!/^[0-9a-f]{40}$/u.test(commit)) {
         throw new Error(`Unable to resolve a full commit for ${id}`);
+      }
+      if (commit !== catalog.pinnedCommit) {
+        throw new Error(`Pinned commit verification failed for ${id}`);
       }
 
       const validated = await validateExternalSkillCheckout(
@@ -216,6 +230,7 @@ export class ExternalSkillManager {
         repository: catalog.repository,
         ref,
         commit,
+        integrity: validated.integrity,
         enabled: willEnable,
         skillSubdir: catalog.skillSubdir,
         installedAt: existing?.installedAt ?? now,
@@ -256,6 +271,7 @@ export class ExternalSkillManager {
           `enabled=${String(willEnable)}`,
           `ref=${ref}`,
           `commit=${commit}`,
+          `integrity=${validated.integrity}`,
           `skills=${String(validated.skillNames.length)}`,
         ].join("\n"),
       };
@@ -293,6 +309,7 @@ export class ExternalSkillManager {
     }
 
     let skillNames: string[] | undefined;
+    let integrity: string | undefined;
     {
       const checkout = join(
         this.#paths.packagesRoot,
@@ -304,6 +321,10 @@ export class ExternalSkillManager {
         existing.skillSubdir,
       );
       skillNames = validated.skillNames;
+      integrity = validated.integrity;
+      if (existing.integrity && existing.integrity !== validated.integrity) {
+        throw new Error(`External Skill integrity mismatch: ${id}`);
+      }
       if (enabled) {
         await this.#assertNoEnabledSkillNameCollisions(
           id,
@@ -320,6 +341,7 @@ export class ExternalSkillManager {
           ? {
               ...entry,
               enabled,
+              ...(integrity ? { integrity } : {}),
               updatedAt: new Date().toISOString(),
             }
           : entry
@@ -335,6 +357,7 @@ export class ExternalSkillManager {
         `enabled=${String(enabled)}`,
         `ref=${existing.ref}`,
         `commit=${existing.commit}`,
+        ...(integrity ? [`integrity=${integrity}`] : []),
         ...(skillNames ? [`skills=${String(skillNames.length)}`] : []),
       ].join("\n"),
     };

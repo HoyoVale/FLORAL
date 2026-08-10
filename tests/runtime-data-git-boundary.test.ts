@@ -8,7 +8,7 @@ describe("runtime data Git boundary", () => {
   it("never tracks runtime-generated data", async () => {
     const { stdout } = await execFileAsync(
       "git",
-      ["ls-files", "--", "data", "artifacts", "logs", ".codex-schemas"],
+      ["ls-files", "--", "data", "artifacts", "logs", ".codex-schemas", ".agents/skill-drafts"],
       { cwd: process.cwd() },
     );
 

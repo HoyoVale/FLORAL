@@ -11,7 +11,8 @@ describe("skill-manager Skill", () => {
     const text = await readFile(skillPath, "utf8");
     expect(text).toContain("<cwd>/.agents/skills/<skill-name>/SKILL.md");
     expect(text).toContain("floral_skills/set_enabled");
-    expect(text).toContain("floral_skills/manage_external");
+    expect(text).toContain("floral_skills/draft_status");
+    expect(text).toContain("floral_skills/publish_draft");
     expect(text).toContain("skills/config/write");
     expect(text).toContain("FLORAL builtin Skills are protected");
     expect(text).toContain("Do not install from arbitrary Git URLs through shell");

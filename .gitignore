@@ -13,6 +13,9 @@ data/extension-control/latest.json
 data/extension-control/transactions/*.json
 logs/
 artifacts/
+.agents/skill-drafts/
+.agents/.skill-staging-*/
+.agents/skills/*.backup-*/
 .codex-schemas/
 .DS_Store
 *.log

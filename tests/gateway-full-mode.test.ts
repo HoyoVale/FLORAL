@@ -111,9 +111,18 @@ class FullProbeRuntime implements AgentRuntime {
       this.extensionApprovalDecision = await request.extensionManagementApprovalHandler({
         requestId: "extension-1",
         kind: "extension-management",
-        capability: "software.install",
+        capability: "extension.install",
         summary: "Install curated extension",
         source: "floral",
+        scope: {
+          type: "extension",
+          extensionKind: "mcp",
+          targetId: "chrome-devtools",
+          action: "install",
+          sourceId: "npm:@modelcontextprotocol/server-chrome-devtools",
+          sourceVersion: "1.0.0",
+          permissions: ["browser.inspect"],
+        },
       });
     }
     return { threadId: "thread-1", finalText: "done" };
@@ -208,7 +217,7 @@ describe("Gateway full-auto authority", () => {
         eventType: "authorization.trusted_owner_auto_approved",
         payload: expect.objectContaining({
           kind: "extension-management",
-          capability: "software.install",
+          capability: "extension.install",
         }),
       }));
 

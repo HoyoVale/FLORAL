@@ -12,8 +12,8 @@ Use the FLORAL/Codex native extension control plane. Do not edit managed Codex c
 For a capability gap or lifecycle request, use this order:
 
 1. Call `floral_extensions/plan_extension` with the exact kind/id and requested intent.
-2. If the plan is `action-required`, call `floral_extensions/apply_extension` only with the exact `recommended_action`. External MCP/Skill mutations remain one-shot `software.install` approval-gated.
-3. If the plan is `user-handoff`, use the supported App handoff (`prepare_app_install`) and let the user complete upstream installation/authentication.
+2. If the plan is `action-required`, call `floral_extensions/apply_extension` only with the exact `recommended_action`. External MCP/Skill mutations are governed by the exact `extension.<action>` capability and structured target/source/integrity scope.
+3. If the plan is `user-handoff`, call `app_permission_review`, then use the supported App handoff (`prepare_app_install`) and let the user complete upstream installation/authentication.
 4. After any mutation or App handoff, stop mutation work for the current turn. Report `verification pending`.
 5. On a fresh next turn, call `floral_extensions/verify_extension`. Treat its fresh frozen evidence as the controlled-extension verification result.
 6. If verification is `degraded`, `prerequisite-required`, or still pending, re-plan from the new snapshot or use `floral_system/diagnose`. Do not reinstall merely to try.
@@ -42,6 +42,8 @@ Use these as supporting views when needed:
 - `installed_apps` for installed/callable App runtime authority.
 - `available_apps` for App directory visibility separately from installation.
 - `read_apps` for App metadata and display-only tool summaries.
+- `app_permission_review` for enabled/action tool counts and explicit upstream OAuth-scope uncertainty.
+- `prepare_plugin_management` for a supported Plugin browser/install/uninstall/enable/disable handoff.
 - `mcp_catalog` for curated External MCP installation/auth prerequisites.
 - `mcp_status` for Codex MCP startup/auth/tool discovery state.
 - `floral_system/component_status` / `diagnose` for ownership, evidence, and fault-domain interpretation.
@@ -51,6 +53,10 @@ A feature flag, directory row, registry entry, or package installation is never 
 ## Apps/connectors
 
 Directory visibility is not runtime installation evidence. If `plan_extension(kind=app, intent=activate)` returns `user-handoff`, call `prepare_app_install` with the exact App id. Return the supported install URL/handoff and let the user complete authentication or connector grants on the upstream surface.
+
+For an installed App, `plan_extension` may return `action-required` with `enable` or `disable`. Call `apply_extension` only with that exact action. FLORAL then uses Codex App Server `config/value/write`, performs immediate native acceptance checking with `app/installed`, records a transaction, and still requires fresh-turn `verify_extension` because the turn's System Awareness snapshot predates the mutation.
+
+Before install, enable, authentication, or first use, call `app_permission_review`. Tool summaries distinguish read-only tools from action tools but are display-only metadata, not authorization. App Server does not expose the provider's complete OAuth scopes through `app/read`; the user must review them on the upstream install/authentication surface. Source-system authorization remains separate from Plugin availability, connector access, Codex runtime policy, and FLORAL approval.
 
 Do not use shell, GUI automation, or Plugin write RPCs to silently install/authenticate an App. The App handoff creates a controlled-extension receipt but does not mean the App was installed.
 
@@ -90,11 +96,11 @@ After mutation, fresh-turn `verify_extension` checks the External Skill registry
 
 ## Plugins
 
-The supported installation/handoff surface is the Codex CLI `/plugins` browser. Keep Plugin lifecycle user-mediated there unless a future FLORAL contract explicitly promotes a write RPC.
+The supported installation/handoff surfaces are the Codex CLI `/plugins` browser and the ChatGPT Plugin Directory. Use `prepare_plugin_management` to explain the exact user action and new-session verification requirement.
 
 Do not call App Server `plugin/list`, `plugin/read`, `plugin/install`, or `plugin/uninstall` from the production Agent as a substitute for the supported surface; those Plugin RPCs remain upstream/under-development rather than FLORAL's managed lifecycle. Do not use shell/Codex storage edits as a bypass.
 
-If the user asks for a Plugin capability not represented by a currently supported App/Skill/MCP route, explain the Codex CLI `/plugins` handoff clearly. Do not manufacture a Phase 8E mutation path that FLORAL has not declared.
+If the user asks for a Plugin capability not represented by a currently supported App/Skill/MCP route, call `prepare_plugin_management`. Do not manufacture a mutation path that FLORAL has not declared.
 
 ## Completion standard
 

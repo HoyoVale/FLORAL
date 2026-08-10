@@ -9,6 +9,17 @@ export type Capability =
   | "files.delete"
   | "shell.execute"
   | "software.install"
+  | "extension.install"
+  | "extension.update"
+  | "extension.remove"
+  | "extension.enable"
+  | "extension.disable"
+  | "skill.publish"
+  | "github.repository.read"
+  | "github.issue.write"
+  | "github.pull-request.write"
+  | "github.actions.run"
+  | "browser.inspect"
   | "application.open"
   | "application.control"
   | "browser.submit"
@@ -31,6 +42,37 @@ export type AgentApprovalKind =
 export type AgentApprovalDecision = "approve" | "approve-session" | "deny";
 export type AgentLocalApprovalDecision = Exclude<AgentApprovalDecision, "approve-session">;
 
+export type ExtensionApprovalAction =
+  | "install"
+  | "update"
+  | "remove"
+  | "enable"
+  | "disable";
+
+export interface AgentExtensionApprovalScope {
+  type: "extension";
+  extensionKind: "mcp" | "skill" | "plugin" | "app";
+  targetId: string;
+  action: ExtensionApprovalAction;
+  sourceId: string;
+  sourceVersion: string;
+  integrity?: string | undefined;
+  permissions: Capability[];
+}
+
+export interface AgentSkillPublishApprovalScope {
+  type: "skill-publish";
+  projectId: string;
+  targetName: string;
+  action: "create" | "update";
+  digest: string;
+  permissions: Capability[];
+}
+
+export type AgentApprovalScope =
+  | AgentExtensionApprovalScope
+  | AgentSkillPublishApprovalScope;
+
 export interface AgentApprovalRequest {
   requestId: string;
   kind: AgentApprovalKind;
@@ -39,6 +81,7 @@ export interface AgentApprovalRequest {
   source: "codex" | "mcp" | "floral";
   mcpServerId?: string | undefined;
   mcpToolName?: string | undefined;
+  scope?: AgentApprovalScope | undefined;
 }
 
 export type AgentApprovalHandler = (

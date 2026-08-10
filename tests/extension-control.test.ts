@@ -59,7 +59,7 @@ describe("Phase 8E controlled extension planning and verification", () => {
       status: "action-required",
       currentState: "absent",
       recommendedAction: "install",
-      capability: "software.install",
+      capability: "extension.install",
       approval: "chat-confirmation",
     });
   });
@@ -120,6 +120,60 @@ describe("Phase 8E controlled extension planning and verification", () => {
 
     expect(result.status).toBe("pending-user-action");
     expect(result.verification).toBe("upstream-install-not-yet-observed");
+  });
+
+  it("plans installed App enable/disable through Codex native config while keeping install user-mediated", () => {
+    const disabled = snapshot([
+      resolvedComponent("codex.apps", {
+        installed: [{ id: "github", enabled: false, callable: false }],
+        directory: [{ id: "github", accessible: true, installSupported: true }],
+      }),
+    ]);
+    expect(buildExtensionPlan(disabled, {
+      kind: "app",
+      id: "github",
+      intent: "activate",
+    })).toMatchObject({
+      status: "action-required",
+      recommendedAction: "enable",
+      capability: "extension.enable",
+    });
+
+    const enabled = snapshot([
+      resolvedComponent("codex.apps", {
+        installed: [{ id: "github", enabled: true, callable: true }],
+      }),
+    ]);
+    expect(buildExtensionPlan(enabled, {
+      kind: "app",
+      id: "github",
+      intent: "disable",
+    })).toMatchObject({
+      status: "action-required",
+      recommendedAction: "disable",
+      capability: "extension.disable",
+    });
+  });
+
+  it("verifies an App disable only from fresh installed-runtime evidence", () => {
+    const result = buildExtensionVerification(snapshot([
+      resolvedComponent("codex.apps", {
+        installed: [{ id: "github", enabled: false, callable: false }],
+      }),
+    ]), {
+      schemaVersion: EXTENSION_CONTROL_SCHEMA_VERSION,
+      id: "APPCONFIG01",
+      kind: "app",
+      targetId: "github",
+      action: "disable",
+      status: "pending-verification",
+      requestedAt: "2026-08-10T00:00:00.000Z",
+      updatedAt: "2026-08-10T00:00:00.000Z",
+    });
+    expect(result).toMatchObject({
+      status: "verified",
+      verification: "app-disabled-and-not-callable",
+    });
   });
 
   it("persists a bounded receipt that can be reconstructed from System Awareness", async () => {
