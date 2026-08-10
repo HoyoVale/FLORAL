@@ -25,7 +25,8 @@ export type AgentApprovalKind =
   | "permission-profile"
   | "mcp-tool"
   | "skill-management"
-  | "extension-management";
+  | "extension-management"
+  | "system-maintenance";
 
 export type AgentApprovalDecision = "approve" | "approve-session" | "deny";
 export type AgentLocalApprovalDecision = Exclude<AgentApprovalDecision, "approve-session">;
@@ -43,6 +44,28 @@ export interface AgentApprovalRequest {
 export type AgentApprovalHandler = (
   request: AgentApprovalRequest,
 ) => Promise<AgentApprovalDecision>;
+
+export interface AgentSystemMaintenanceRequest {
+  componentId: string;
+  actionId: string;
+  rationale: string;
+}
+
+export type AgentSystemMaintenanceResult =
+  | {
+      status: "queued";
+      transactionId: string;
+      message: string;
+    }
+  | {
+      status: "denied" | "failed";
+      transactionId?: string | undefined;
+      reason: string;
+    };
+
+export type AgentSystemMaintenanceHandler = (
+  request: AgentSystemMaintenanceRequest,
+) => Promise<AgentSystemMaintenanceResult>;
 
 export interface ExternalIdentity {
   transport: TransportKind;
@@ -178,6 +201,8 @@ export interface AgentRunRequest {
   mcpToolApprovalHandler?: AgentApprovalHandler;
   skillManagementApprovalHandler?: AgentApprovalHandler;
   extensionManagementApprovalHandler?: AgentApprovalHandler;
+  systemMaintenanceApprovalHandler?: AgentApprovalHandler;
+  systemMaintenanceHandler?: AgentSystemMaintenanceHandler;
   artifactRegistrationHandler?: AgentArtifactRegistrationHandler;
   artifactDeliveryHandler?: AgentArtifactDeliveryHandler;
 }

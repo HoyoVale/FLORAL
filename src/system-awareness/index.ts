@@ -10,3 +10,4 @@ export * from "./observers/service-state-system-observer.js";
 export * from "./observers/codex-runtime-system-observer.js";
 export * from "./observers/external-extension-system-observer.js";
 export * from "./observers/execution-context-system-observer.js";
+export * from "./observers/maintenance-system-observer.js";

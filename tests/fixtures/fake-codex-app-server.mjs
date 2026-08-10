@@ -26,6 +26,15 @@ function hasFloralRoutingPolicy(params) {
     && instructions.includes("Do not inspect ~/.codex");
 }
 
+function hasFloralSystemPolicy(params) {
+  const instructions = params?.developerInstructions;
+  return typeof instructions === "string"
+    && instructions.includes("FLORAL runtime self-awareness, diagnostics, and governed maintenance policy")
+    && instructions.includes("For a broad FLORAL health/diagnosis request, call floral_system/diagnose first")
+    && instructions.includes("Do not opportunistically run shell commands")
+    && instructions.includes("Governed self-maintenance is exposed only through floral_system/maintain");
+}
+
 function hasFloralSkillTools(params) {
   const dynamicTools = params?.dynamicTools;
   if (!Array.isArray(dynamicTools)) return false;
@@ -76,6 +85,7 @@ function hasFloralSystemTools(params) {
     "component_status",
     "current_context",
     "diagnose",
+    "maintain",
     "system_summary",
   ]);
 }
@@ -462,15 +472,13 @@ lines.on("line", (line) => {
       send({ id: message.id, error: { code: -32602, message: "missing FLORAL developer instructions" } });
       return;
     }
-    if ((scenario === "system-awareness" || scenario === "runtime-self-awareness" || scenario === "self-diagnostics") && !hasFloralSystemTools(message.params)) {
+    if ((scenario === "system-awareness" || scenario === "runtime-self-awareness" || scenario === "self-diagnostics" || scenario === "self-maintenance") && !hasFloralSystemTools(message.params)) {
       send({ id: message.id, error: { code: -32602, message: "missing FLORAL system dynamic tools" } });
       return;
     }
     if (
-      (scenario === "system-awareness" || scenario === "runtime-self-awareness" || scenario === "self-diagnostics")
-      && (typeof message.params?.developerInstructions !== "string"
-        || !message.params.developerInstructions.includes("FLORAL runtime self-awareness and diagnostics policy")
-        || !message.params.developerInstructions.includes("Self-maintenance remains disabled in Phase 8C"))
+      (scenario === "system-awareness" || scenario === "runtime-self-awareness" || scenario === "self-diagnostics" || scenario === "self-maintenance")
+      && !hasFloralSystemPolicy(message.params)
     ) {
       send({ id: message.id, error: { code: -32602, message: "missing FLORAL system awareness policy" } });
       return;
@@ -521,8 +529,12 @@ lines.on("line", (line) => {
   }
 
   if (message.method === "thread/resume") {
-    if (scenario === "resume" && !hasFloralRoutingPolicy(message.params)) {
+    if ((scenario === "resume" || scenario === "resume-system-awareness") && !hasFloralRoutingPolicy(message.params)) {
       send({ id: message.id, error: { code: -32602, message: "resume missing FLORAL developer instructions" } });
+      return;
+    }
+    if (scenario === "resume-system-awareness" && !hasFloralSystemPolicy(message.params)) {
+      send({ id: message.id, error: { code: -32602, message: "resume missing FLORAL system awareness policy" } });
       return;
     }
     if (scenario === "stale-resume") {
@@ -648,7 +660,7 @@ lines.on("line", (line) => {
         return;
       }
     }
-    if (scenario === "resume" && !resumed) {
+    if ((scenario === "resume" || scenario === "resume-system-awareness") && !resumed) {
       send({ id: message.id, error: { code: -32602, message: "thread was not resumed" } });
       return;
     }
@@ -687,7 +699,7 @@ lines.on("line", (line) => {
     }
 
     activeThreadId = message.params.threadId;
-    activeTurnId = scenario === "resume" ? "turn_resumed" : "turn_1";
+    activeTurnId = (scenario === "resume" || scenario === "resume-system-awareness") ? "turn_resumed" : "turn_1";
     send({ id: message.id, result: { turn: { id: activeTurnId, status: "inProgress" } } });
 
     setImmediate(() => {
@@ -935,6 +947,26 @@ lines.on("line", (line) => {
             namespace: "floral_system",
             tool: "diagnose",
             arguments: { component_id: "floral.service" },
+          },
+        });
+        return;
+      }
+
+      if (scenario === "self-maintenance") {
+        send({
+          id: "dynamic_1",
+          method: "item/tool/call",
+          params: {
+            threadId: activeThreadId,
+            turnId: activeTurnId,
+            callId: "call_maintain_1",
+            namespace: "floral_system",
+            tool: "maintain",
+            arguments: {
+              component_id: "floral.service",
+              action_id: "restart",
+              rationale: "service diagnosis requires a governed restart",
+            },
           },
         });
         return;
@@ -1381,7 +1413,7 @@ lines.on("line", (line) => {
       sendSuccess(
         activeThreadId,
         activeTurnId,
-        scenario === "resume"
+        (scenario === "resume" || scenario === "resume-system-awareness")
           ? "resumed final"
           : scenario === "stale-resume"
             ? "recovered final"
@@ -1454,6 +1486,18 @@ lines.on("line", (line) => {
       && text.includes("maintenance_enabled=false")
     ) {
       sendSuccess(activeThreadId, activeTurnId, "self diagnostics complete");
+      return;
+    }
+    if (
+      scenario === "self-maintenance"
+      && success === true
+      && text.includes("system_maintenance=queued")
+      && text.includes("component=floral.service")
+      && text.includes("action=restart")
+      && text.includes("execution_performed=false")
+      && text.includes("verification=pending-next-service-instance")
+    ) {
+      sendSuccess(activeThreadId, activeTurnId, "self maintenance queued");
       return;
     }
     if (

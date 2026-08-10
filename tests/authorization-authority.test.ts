@@ -200,6 +200,30 @@ describe("AuthorizationAuthority", () => {
     })).toMatchObject({ status: "deny", reason: "mcp-tool-not-allowlisted" });
   });
 
+  it("lets only bounded FLORAL maintenance reach Mac-local restart confirmation across a Codex sandbox", () => {
+    expect(authority("read-only").evaluate({
+      role: "owner",
+      capability: "system.restart",
+      source: "floral-maintenance",
+    })).toEqual({
+      status: "approval-required",
+      approvalLevel: "local-confirmation",
+      reason: "policy",
+    });
+
+    expect(authority("read-only").evaluate({
+      role: "owner",
+      capability: "system.restart",
+      source: "floral",
+    })).toMatchObject({ status: "deny", reason: "sandbox-capability-denied" });
+
+    expect(authority("read-only").evaluate({
+      role: "operator",
+      capability: "system.restart",
+      source: "floral-maintenance",
+    })).toMatchObject({ status: "deny", reason: "role-capability-denied" });
+  });
+
   it("requires local confirmation for system administration", () => {
     expect(authority("danger-full-access").evaluate({
       role: "owner",

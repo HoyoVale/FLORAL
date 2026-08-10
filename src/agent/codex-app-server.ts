@@ -17,6 +17,8 @@ import type {
   AgentEvent,
   AgentRunRequest,
   AgentRunResult,
+  AgentSystemMaintenanceHandler,
+  AgentSystemMaintenanceResult,
 } from "../core/types.js";
 import {
   CodexRuntimeError,
@@ -41,6 +43,7 @@ import {
 } from "./codex-rpc-client.js";
 import {
   SystemDefinitionRegistry,
+  buildSystemDiagnosticReport,
   formatSystemCapabilities,
   formatSystemComponentStatus,
   formatSystemDiagnostics,
@@ -257,14 +260,20 @@ export const FLORAL_AGENT_DEVELOPER_INSTRUCTIONS = [
 ].join("\n");
 
 const FLORAL_SYSTEM_DEVELOPER_INSTRUCTIONS = [
-  "FLORAL runtime self-awareness and diagnostics policy:",
-  "- Developer instructions are routing and safety invariants, not evidence of current system state. When a claim depends on current FLORAL availability, ownership, health, permissions, or management authority, query floral_system instead of relying on memorized architecture prose.",
+  "FLORAL runtime self-awareness, diagnostics, and governed maintenance policy:",
+  "- floral_system is the primary control-plane interface for questions about FLORAL itself. Developer instructions are routing and safety invariants, not evidence of current state. When a claim depends on current FLORAL availability, ownership, health, permissions, or management authority, query floral_system instead of relying on memorized architecture prose.",
+  "- If floral_system is unavailable on a resumed legacy thread, state that the thread lacks the current System Awareness tool surface and ask the owner to start /new. Do not fall back to shell, filesystem enumeration, process inspection, or network probing as an imitation of the missing control plane.",
+  "- For a broad FLORAL health/diagnosis request, call floral_system/diagnose first. If it reports healthy and the user did not explicitly request independent host-level investigation, answer from that evidence-backed result. Do not opportunistically run shell commands, list dot-directories, inspect process tables, read ad-hoc context files, or probe the network merely to add more certainty.",
+  "- If the user asks only to diagnose, inspect, explain, or says not to modify/repair anything, do not call floral_system/maintain and do not request mutation approvals. Read-only checks listed by diagnose are recommendations, not automatic tool calls. Only perform a listed supplemental check when the user asked for deeper investigation and the named governed/read-only interface is actually available.",
+  "- Never treat .floral/CONTEXT.md, .floral/DECISIONS.md, .floral/KNOWN_ISSUES.md, arbitrary repository files, shell output, or generic model environment prose as a substitute for System Awareness authority unless the user explicitly asks for an independent project/host investigation outside the System Map.",
   "- Use floral_system/current_context before claiming the current FLORAL control mode, requested sandbox, effective Codex permission selector, approval policy, or reviewer. turn.* facts under floral.execution are the FLORAL authority for what this host actually sent to Codex for the current turn.",
   "- Configured defaults are intent, not the effective turn selector. Generic Codex/model environment or sandbox prose is not a FLORAL evidence source and must not be presented as a competing FLORAL authority. If such context disagrees with floral.execution, report the FLORAL evidence and do not invent a reconciliation.",
   "- system_summary, component_status, current_context, capabilities, and diagnose are read-only views or deterministic derivations of a snapshot captured before the current turn. Treat unknown and conflict as valid states; never use shell, config files, or guesswork to upgrade them into certainty.",
   "- Use floral_system/diagnose when the user asks why a FLORAL component is unavailable, degraded, conflicting, or not exposing an expected capability. Diagnostic findings are derived hypotheses over evidence, not new authoritative facts; preserve their confidence, failure-domain ordering, limitations, and read-only check sequence.",
+  "- Governed self-maintenance is exposed only through floral_system/maintain for actions explicitly declared by floral_system/capabilities. Never use shell, launchctl, direct config edits, or generic command execution as a maintenance bypass. Before proposing maintain, inspect diagnose and capabilities; the host independently enforces the declared action, capability, approval requirement, bounded executor, and verification contract.",
+  "- floral_system/maintain is a mutation. It must not be called during diagnosis-only requests. A service restart requires Mac-local confirmation and is queued for post-reply handoff; the initiating turn cannot claim success. Verification comes from the maintenance receipt in a fresh turn after the service returns.",
   "- The per-turn snapshot is frozen. A mutation performed later in the same turn does not refresh floral_system; use a fresh next turn or an owner-facing status command for post-mutation verification.",
-  "- floral_system/capabilities describes declared ownership, management disposition, approval requirements, and verification contracts only. It grants no authorization and performs no maintenance action. Self-maintenance remains disabled in Phase 8C; diagnostics may propose read-only checks but must not execute repair actions.",
+  "- floral_system/capabilities describes declared ownership, management disposition, approval requirements, and verification contracts only. It grants no authorization. A maintenance tool call is separately governed and never inherits authorization from diagnostic metadata.",
 ].join("\n");
 
 const FLORAL_DELIVERY_DYNAMIC_TOOLS = [
@@ -552,7 +561,7 @@ const FLORAL_SYSTEM_DYNAMIC_TOOLS = [
   {
     type: "namespace",
     name: "floral_system",
-    description: "Read-only FLORAL system awareness and deterministic self-diagnostics. Facts come from a bounded per-turn snapshot with explicit authority, evidence, unknown, and conflict semantics. Diagnostics are derived hypotheses only. This namespace never performs maintenance or grants authorization.",
+    description: "FLORAL system control plane: authoritative read-only awareness/diagnostics plus narrowly governed maintenance. Diagnose before maintenance. Never substitute shell or ad-hoc filesystem probing for System Awareness. Maintenance is limited to declared actions and requires independent host authorization.",
     tools: [
       {
         type: "function",
@@ -597,7 +606,7 @@ const FLORAL_SYSTEM_DYNAMIC_TOOLS = [
       {
         type: "function",
         name: "diagnose",
-        description: "Derive bounded evidence-backed diagnostic findings, likely failure domains, limitations, and an ordered read-only check plan for the whole system or one component. This never executes maintenance or grants authorization.",
+        description: "PRIMARY/FIRST tool for broad FLORAL health or diagnosis requests. Derive bounded evidence-backed findings, likely failure domains, limitations, and an ordered read-only check plan for the whole system or one component. If this reports healthy, do not supplement it with shell/filesystem/process/network probing unless the user explicitly requested independent host-level investigation. This never executes maintenance or grants authorization.",
         inputSchema: {
           type: "object",
           properties: {
@@ -607,6 +616,33 @@ const FLORAL_SYSTEM_DYNAMIC_TOOLS = [
               maxLength: 96,
             },
           },
+          additionalProperties: false,
+        },
+        deferLoading: false,
+      },
+      {
+        type: "function",
+        name: "maintain",
+        description: "Request one declared governed maintenance action. MUTATING: never call for diagnosis-only or no-change requests. Phase 8D initially supports only floral.service/restart, requires Mac-local system.restart confirmation, queues execution until after the Agent reply, and verifies via a persisted maintenance receipt after restart. Never use shell/launchctl as a substitute.",
+        inputSchema: {
+          type: "object",
+          properties: {
+            component_id: {
+              type: "string",
+              enum: ["floral.service"],
+            },
+            action_id: {
+              type: "string",
+              enum: ["restart"],
+            },
+            rationale: {
+              type: "string",
+              minLength: 1,
+              maxLength: 320,
+              description: "Concise evidence-backed reason for requesting this maintenance action.",
+            },
+          },
+          required: ["component_id", "action_id", "rationale"],
           additionalProperties: false,
         },
         deferLoading: false,
@@ -668,6 +704,8 @@ export class CodexAppServerRuntime implements AgentRuntime {
   readonly #mcpToolApprovalHandlers = new Map<string, AgentApprovalHandler>();
   readonly #skillManagementApprovalHandlers = new Map<string, AgentApprovalHandler>();
   readonly #extensionManagementApprovalHandlers = new Map<string, AgentApprovalHandler>();
+  readonly #systemMaintenanceApprovalHandlers = new Map<string, AgentApprovalHandler>();
+  readonly #systemMaintenanceHandlers = new Map<string, AgentSystemMaintenanceHandler>();
   readonly #artifactRegistrationHandlers = new Map<string, AgentArtifactRegistrationHandler>();
   readonly #artifactDeliveryHandlers = new Map<string, AgentArtifactDeliveryHandler>();
   readonly #threadCwds = new Map<string, string>();
@@ -1071,6 +1109,8 @@ export class CodexAppServerRuntime implements AgentRuntime {
     this.#mcpToolApprovalHandlers.delete(normalized);
     this.#skillManagementApprovalHandlers.delete(normalized);
     this.#extensionManagementApprovalHandlers.delete(normalized);
+    this.#systemMaintenanceApprovalHandlers.delete(normalized);
+    this.#systemMaintenanceHandlers.delete(normalized);
     this.#artifactRegistrationHandlers.delete(normalized);
     this.#artifactDeliveryHandlers.delete(normalized);
     this.#threadCwds.delete(normalized);
@@ -1108,6 +1148,15 @@ export class CodexAppServerRuntime implements AgentRuntime {
         threadId,
         request.extensionManagementApprovalHandler,
       );
+    }
+    if (request.systemMaintenanceApprovalHandler) {
+      this.#systemMaintenanceApprovalHandlers.set(
+        threadId,
+        request.systemMaintenanceApprovalHandler,
+      );
+    }
+    if (request.systemMaintenanceHandler) {
+      this.#systemMaintenanceHandlers.set(threadId, request.systemMaintenanceHandler);
     }
     if (request.artifactRegistrationHandler) {
       this.#artifactRegistrationHandlers.set(threadId, request.artifactRegistrationHandler);
@@ -1431,6 +1480,8 @@ export class CodexAppServerRuntime implements AgentRuntime {
       this.#mcpToolApprovalHandlers.delete(threadId);
       this.#skillManagementApprovalHandlers.delete(threadId);
       this.#extensionManagementApprovalHandlers.delete(threadId);
+      this.#systemMaintenanceApprovalHandlers.delete(threadId);
+      this.#systemMaintenanceHandlers.delete(threadId);
       this.#artifactRegistrationHandlers.delete(threadId);
       this.#artifactDeliveryHandlers.delete(threadId);
       this.#threadCwds.delete(threadId);
@@ -1465,6 +1516,8 @@ export class CodexAppServerRuntime implements AgentRuntime {
     this.#mcpToolApprovalHandlers.clear();
     this.#skillManagementApprovalHandlers.clear();
     this.#extensionManagementApprovalHandlers.clear();
+    this.#systemMaintenanceApprovalHandlers.clear();
+    this.#systemMaintenanceHandlers.clear();
     this.#artifactRegistrationHandlers.clear();
     this.#artifactDeliveryHandlers.clear();
     this.#threadCwds.clear();
@@ -1526,9 +1579,14 @@ export class CodexAppServerRuntime implements AgentRuntime {
 
     // Resuming only restores conversation history. Current approval/sandbox
     // policy is always re-applied by the following turn/start request.
+    const systemAwarenessEnabled = Boolean(
+      this.#systemSnapshotProvider && this.#systemDefinitionRegistry,
+    );
     const response = await this.#client.request<ThreadResponse>("thread/resume", {
       threadId,
-      developerInstructions: this.#developerInstructions,
+      developerInstructions: systemAwarenessEnabled
+        ? `${this.#developerInstructions}\n${FLORAL_SYSTEM_DEVELOPER_INSTRUCTIONS}`
+        : this.#developerInstructions,
     });
     const resumedId = response.thread?.id;
     if (!resumedId) {
@@ -2254,6 +2312,114 @@ export class CodexAppServerRuntime implements AgentRuntime {
           dynamicToolResponse(
             true,
             boundedDynamicToolText(formatSystemDiagnostics(model, componentId)),
+          ),
+        );
+        return;
+      }
+
+      if (tool === "maintain") {
+        const componentId = readString(argumentsValue.component_id);
+        const actionId = readString(argumentsValue.action_id);
+        const rationale = readString(argumentsValue.rationale)?.trim();
+        const definition = componentId && registry.has(componentId)
+          ? registry.require(componentId)
+          : undefined;
+        const action = definition?.managementActions.find((candidate) => candidate.id === actionId);
+        const approvalHandler = this.#systemMaintenanceApprovalHandlers.get(threadId);
+        const maintenanceHandler = this.#systemMaintenanceHandlers.get(threadId);
+        if (
+          componentId !== "floral.service"
+          || actionId !== "restart"
+          || !rationale
+          || rationale.length > 320
+          || !action
+          || action.disposition !== "host-only"
+          || action.approval !== "local-confirmation"
+          || action.capability !== "system.restart"
+          || !approvalHandler
+          || !maintenanceHandler
+        ) {
+          this.#respondSafely(
+            request.id,
+            dynamicToolResponse(false, "system_maintenance=denied\nreason=invalid-or-undeclared-action"),
+          );
+          return;
+        }
+
+        // Host-side preflight keeps the maintenance pipeline evidence-linked even
+        // when the model already called diagnose. A healthy preflight does not
+        // silently deny an explicit owner-requested restart; local confirmation
+        // remains the final authority for this bounded host action.
+        const preflight = buildSystemDiagnosticReport(model, componentId);
+        const approval: AgentApprovalRequest = {
+          requestId: `maintenance-${safeDynamicToolToken(readString(params?.callId) ?? String(request.id))}`,
+          kind: "system-maintenance",
+          capability: "system.restart",
+          summary: [
+            "FLORAL Agent 请求执行受治理的系统维护。",
+            `component=${componentId}`,
+            `action=${actionId}`,
+            `diagnostic_status=${preflight.overallStatus}`,
+            `diagnostic_findings=${preflight.findings.length}`,
+            `rationale=${rationale.slice(0, 180)}`,
+            "execution=post-reply-handoff",
+            "verification=maintenance-receipt-next-turn",
+          ].join(" "),
+          source: "floral",
+        };
+        this.#eventHandlers.get(threadId)?.({
+          type: "approval.requested",
+          requestId: approval.requestId,
+          capability: approval.capability,
+          kind: approval.kind,
+          detail: { summary: approval.summary },
+        });
+        const decision = await approvalHandler(approval).catch(() => "deny" as const);
+        if (decision !== "approve") {
+          this.#respondSafely(
+            request.id,
+            dynamicToolResponse(false, "system_maintenance=denied\nreason=local-confirmation"),
+          );
+          return;
+        }
+        const result: AgentSystemMaintenanceResult = await maintenanceHandler({
+          componentId,
+          actionId,
+          rationale,
+        }).catch((error): AgentSystemMaintenanceResult => ({
+          status: "failed",
+          reason: safeDynamicToolToken(error instanceof Error ? error.name : "Error"),
+        }));
+        if (result.status !== "queued") {
+          this.#respondSafely(
+            request.id,
+            dynamicToolResponse(
+              false,
+              [
+                `system_maintenance=${result.status}`,
+                `reason=${safeDynamicToolToken(result.reason)}`,
+                ...(result.transactionId ? [`transaction_id=${safeDynamicToolToken(result.transactionId)}`] : []),
+              ].join("\n"),
+            ),
+          );
+          return;
+        }
+        this.#respondSafely(
+          request.id,
+          dynamicToolResponse(
+            true,
+            [
+              "system_maintenance=queued",
+              `component=${componentId}`,
+              `action=${actionId}`,
+              `transaction_id=${safeDynamicToolToken(result.transactionId)}`,
+              `diagnostic_status=${preflight.overallStatus}`,
+              `diagnostic_findings=${preflight.findings.length}`,
+              "execution_performed=false",
+              "handoff=after-agent-reply",
+              "verification=pending-next-service-instance",
+              "next=use-floral_system/component_status-floral.maintenance-on-a-fresh-turn",
+            ].join("\n"),
           ),
         );
         return;

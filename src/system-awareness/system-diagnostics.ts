@@ -91,6 +91,7 @@ export function buildSystemDiagnosticReport(
 
   for (const definition of targetDefinitions) {
     if (definition.id === "floral.service") diagnoseService(model, definition, findings);
+    if (definition.id === "floral.maintenance") diagnoseMaintenance(model, definition, findings);
     if (definition.id === "codex.apps") diagnoseApps(model, definition, findings);
     if (definition.id === "extensions.external_mcp") {
       diagnoseExternalMcp(model, definition, findings);
@@ -143,6 +144,7 @@ export function formatSystemDiagnostics(
     `errors=${String(errors)} warnings=${String(warnings)} info=${String(infos)}`,
     "execution_performed=false",
     "maintenance_enabled=false",
+    "governed_maintenance_interface=floral_system/maintain",
   ];
 
   if (report.findings.length === 0) {
@@ -306,6 +308,52 @@ function diagnoseService(
         check(2, "service-logs", "Inspect the service logs for the bounded failure type and startup boundary.", "service:logs"),
       ],
       limitations: ["The service-state record alone does not prove the underlying root cause."],
+    });
+  }
+}
+
+function diagnoseMaintenance(
+  model: SystemReadModel,
+  definition: SystemDefinition,
+  findings: SystemDiagnosticFinding[],
+): void {
+  const transaction = factSnapshot(model, definition.id, "last_transaction");
+  const value = resolvedRecord(transaction);
+  if (!value) return;
+  const status = readString(value.status);
+  if (status === "failed") {
+    findings.push({
+      id: "floral.maintenance.last-transaction-failed",
+      componentId: definition.id,
+      severity: "warning",
+      status: "degraded",
+      impact: "degraded",
+      confidence: "high",
+      summary: "The latest governed maintenance transaction failed before post-action verification completed.",
+      candidateFailureDomains: ["host", "floral"],
+      evidence: compactEvidenceRefs([evidenceRefIf(definition.id, transaction)]),
+      checks: [
+        check(1, "maintenance-receipt", "Read the latest maintenance receipt and its bounded error type.", "floral_system/component_status"),
+        check(2, "service-state", "Read FLORAL service state before considering another maintenance request.", "floral_system/component_status"),
+      ],
+      limitations: ["The receipt error type is bounded metadata and does not by itself prove the root cause."],
+    });
+  }
+  if (status === "cancelled") {
+    findings.push({
+      id: "floral.maintenance.last-transaction-cancelled",
+      componentId: definition.id,
+      severity: "info",
+      status: "inactive",
+      impact: "none",
+      confidence: "high",
+      summary: "The latest approved maintenance transaction was cancelled before host handoff, so no restart was executed by that transaction.",
+      candidateFailureDomains: ["floral"],
+      evidence: compactEvidenceRefs([evidenceRefIf(definition.id, transaction)]),
+      checks: [
+        check(1, "maintenance-receipt", "Read the maintenance receipt to confirm the pre-handoff cancellation state.", "floral_system/component_status"),
+      ],
+      limitations: ["Cancellation describes the transaction lifecycle and is not evidence that the FLORAL service itself is unhealthy."],
     });
   }
 }

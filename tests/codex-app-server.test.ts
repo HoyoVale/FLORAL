@@ -610,6 +610,58 @@ describe("CodexAppServerRuntime", () => {
     }
   });
 
+  it("queues declared FLORAL service maintenance only after independent approval", async () => {
+    const registry = createDefaultSystemDefinitionRegistry();
+    let approvals = 0;
+    let queued = 0;
+    const runtime = createRuntime("self-maintenance", 5_000, {
+      systemAwareness: {
+        definitions: registry.list(),
+        snapshotProvider: async () => ({
+          schemaVersion: SYSTEM_AWARENESS_SCHEMA_VERSION,
+          generatedAt: "2026-08-10T00:00:00.000Z",
+          definitionFingerprint: registry.fingerprint(),
+          components: registry.list().map((definition) => ({
+            componentId: definition.id,
+            observed: definition.id === "floral.service",
+            facts: [],
+          })),
+          observers: [],
+        }),
+      },
+    });
+    try {
+      await runtime.start();
+      const result = await runtime.run({
+        text: "Restart FLORAL through the governed maintenance interface.",
+        cwd: process.cwd(),
+        systemMaintenanceApprovalHandler: async (request) => {
+          approvals += 1;
+          expect(request.kind).toBe("system-maintenance");
+          expect(request.capability).toBe("system.restart");
+          return "approve";
+        },
+        systemMaintenanceHandler: async (request) => {
+          queued += 1;
+          expect(request).toMatchObject({
+            componentId: "floral.service",
+            actionId: "restart",
+          });
+          return {
+            status: "queued",
+            transactionId: "MAINT1234",
+            message: "queued",
+          };
+        },
+      });
+      expect(result.finalText).toBe("self maintenance queued");
+      expect(approvals).toBe(1);
+      expect(queued).toBe(1);
+    } finally {
+      await runtime.stop();
+    }
+  });
+
   it("exposes read-only FLORAL extension discovery as client-hosted dynamic tools", async () => {
     const runtime = createRuntime("extension-installed-apps");
     try {
@@ -794,6 +846,37 @@ describe("CodexAppServerRuntime", () => {
       const result = await runtime.run({
         threadId: "thr_existing",
         text: "continue",
+        cwd: process.cwd(),
+      });
+      expect(result).toEqual({ threadId: "thr_existing", finalText: "resumed final" });
+    } finally {
+      await runtime.stop();
+    }
+  });
+
+  it("re-injects FLORAL System Awareness routing policy when resuming a system-aware thread", async () => {
+    const registry = createDefaultSystemDefinitionRegistry();
+    const runtime = createRuntime("resume-system-awareness", 5_000, {
+      systemAwareness: {
+        definitions: registry.list(),
+        snapshotProvider: async () => ({
+          schemaVersion: SYSTEM_AWARENESS_SCHEMA_VERSION,
+          generatedAt: "2026-08-10T00:00:00.000Z",
+          definitionFingerprint: registry.fingerprint(),
+          components: registry.list().map((definition) => ({
+            componentId: definition.id,
+            observed: false,
+            facts: [],
+          })),
+          observers: [],
+        }),
+      },
+    });
+    try {
+      await runtime.start();
+      const result = await runtime.run({
+        threadId: "thr_existing",
+        text: "Diagnose FLORAL without shell probing.",
         cwd: process.cwd(),
       });
       expect(result).toEqual({ threadId: "thr_existing", finalText: "resumed final" });

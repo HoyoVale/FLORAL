@@ -176,7 +176,8 @@ export class QqApprovalBroker {
             ttlMs: this.options.ttlMs,
             allowSession: request.kind !== "mcp-tool"
               && request.kind !== "skill-management"
-              && request.kind !== "extension-management",
+              && request.kind !== "extension-management"
+              && request.kind !== "system-maintenance",
           });
           presentation = "interactive";
         } catch (error) {
@@ -233,7 +234,9 @@ export class QqApprovalBroker {
     }
 
     if (
-      pending.request.kind === "skill-management"
+      (pending.request.kind === "skill-management"
+        || pending.request.kind === "extension-management"
+        || pending.request.kind === "system-maintenance")
       && decision === "approve-session"
     ) {
       await this.#audit(
@@ -327,7 +330,7 @@ export class QqApprovalBroker {
 
 function sourceFor(
   request: AgentApprovalRequest,
-): "codex-command" | "codex-file-change" | "codex-permission-request" | "codex-permission-profile" | "mcp-tool" | "floral-skill" | "floral-extension" | "floral" {
+): "codex-command" | "codex-file-change" | "codex-permission-request" | "codex-permission-profile" | "mcp-tool" | "floral-skill" | "floral-extension" | "floral-maintenance" | "floral" {
   if (request.kind === "command-execution") return "codex-command";
   if (request.kind === "file-change") return "codex-file-change";
   if (request.kind === "permission-request") return "codex-permission-request";
@@ -335,6 +338,7 @@ function sourceFor(
   if (request.kind === "mcp-tool") return "mcp-tool";
   if (request.kind === "skill-management") return "floral-skill";
   if (request.kind === "extension-management") return "floral-extension";
+  if (request.kind === "system-maintenance") return "floral-maintenance";
   return "floral";
 }
 
@@ -371,7 +375,12 @@ function approvalPrompt(
     `有效期=${seconds} 秒`,
     `允许一次：/approve ${publicId}`,
   ];
-  if (request.kind !== "mcp-tool" && request.kind !== "extension-management") {
+  if (
+    request.kind !== "mcp-tool"
+    && request.kind !== "skill-management"
+    && request.kind !== "extension-management"
+    && request.kind !== "system-maintenance"
+  ) {
     lines.push(`本会话允许：/approve-session ${publicId}`);
   }
   lines.push(

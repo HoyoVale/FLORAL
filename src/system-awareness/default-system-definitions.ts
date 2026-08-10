@@ -27,10 +27,27 @@ export const DEFAULT_SYSTEM_DEFINITIONS: readonly SystemDefinition[] = [
     ],
     managementActions: [
       action("read", "Read service state and liveness evidence.", "automatic", "automatic", "machine.status.read"),
-      action("restart", "Restart the LaunchAgent-backed FLORAL service through the host lifecycle wrapper.", "host-only", "local-confirmation", "system.restart", "scripts/service.ts", "service-state"),
+      action("restart", "Restart the LaunchAgent-backed FLORAL service through the bounded maintenance handoff worker.", "host-only", "local-confirmation", "system.restart", "system-maintenance/service-restart-worker", "maintenance-receipt"),
     ],
     failureDomain: "host",
     tags: ["control-plane", "service"],
+  }),
+  definition({
+    id: "floral.maintenance",
+    displayName: "FLORAL Maintenance Ledger",
+    description: "Bounded receipts for governed self-maintenance actions and their post-action verification result.",
+    kind: "runtime",
+    owner: authority("floral", "FLORAL", "Owns maintenance transaction recording and verification receipts."),
+    authority: authority("floral", "SystemMaintenanceController", "Is authoritative for queued maintenance handoff and worker verification receipts."),
+    parentId: "floral.service",
+    stateSources: [
+      source("maintenance-receipt", "filesystem", "authoritative", ["last_transaction"], "Latest bounded system-maintenance transaction receipt; contains no command text or secrets."),
+    ],
+    managementActions: [
+      action("read", "Read the latest governed maintenance receipt.", "automatic", "automatic", "machine.status.read"),
+    ],
+    failureDomain: "floral",
+    tags: ["control-plane", "maintenance", "audit"],
   }),
   definition({
     id: "floral.configuration",

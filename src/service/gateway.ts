@@ -35,6 +35,7 @@ import {
 import type { AuthorizationAuthority } from "../policy/authorization-authority.js";
 import { QqApprovalBroker } from "../policy/qq-approval-broker.js";
 import type { LocalConfirmationBroker } from "../policy/local-confirmation-broker.js";
+import type { SystemMaintenanceController } from "../system-maintenance/system-maintenance.js";
 import {
   formatSystemComponentStatus,
   formatSystemDiagnostics,
@@ -93,6 +94,9 @@ export interface GatewayOptions {
     policy: ArtifactEgressPolicy;
   } | undefined;
   systemAwareness?: SystemAwarenessReadProvider | undefined;
+  systemMaintenance?: {
+    controller: SystemMaintenanceController;
+  } | undefined;
 }
 
 interface ArtifactCatalogEntry {
@@ -127,6 +131,7 @@ interface ActiveRun {
   waitingForApproval: boolean;
   latestToolName?: string | undefined;
   artifactEgressTail: Promise<void>;
+  maintenanceTransactions: string[];
   artifactBudget?: ArtifactEgressRunBudget | undefined;
 }
 
@@ -1700,6 +1705,7 @@ export class GatewayService {
       visibleActivitySatisfied: false,
       waitingForApproval: false,
       artifactEgressTail: Promise.resolve(),
+      maintenanceTransactions: [],
       ...(this.options.artifactEgress
         ? { artifactBudget: this.options.artifactEgress.policy.createRunBudget() }
         : {}),
@@ -1810,6 +1816,35 @@ export class GatewayService {
                 active,
                 request,
               ),
+            ...(this.options.systemMaintenance ? {
+              systemMaintenanceApprovalHandler: async (request) =>
+                await this.#requestRemoteApproval(
+                  message.identity.conversationId,
+                  resolved,
+                  active,
+                  request,
+                ),
+              systemMaintenanceHandler: async (request) => {
+                if (active.maintenanceTransactions.length > 0) {
+                  return { status: "denied" as const, reason: "one-maintenance-action-per-run" };
+                }
+                const prepared = await this.options.systemMaintenance!.controller.prepare(request);
+                if (prepared.result.status === "queued" && prepared.transactionId) {
+                  active.maintenanceTransactions.push(prepared.transactionId);
+                  await this.store.appendAudit({
+                    userId: resolved.userId,
+                    conversationId: resolved.conversationId,
+                    eventType: "system.maintenance_queued",
+                    payload: {
+                      transactionId: prepared.transactionId,
+                      componentId: request.componentId,
+                      actionId: request.actionId,
+                    },
+                  }).catch(() => undefined);
+                }
+                return prepared.result;
+              },
+            } : {}),
           } : {}),
         },
         (event) => this.#handleAgentEvent(
@@ -1838,13 +1873,73 @@ export class GatewayService {
       });
       this.#cancelVisibleActivityFallback(active);
       this.#setConversationActivity(message.identity.conversationId, "idle");
-      await this.#deliverWithAudit(
+      const replyDelivered = await this.#deliverWithAudit(
         message.identity.conversationId,
         result.finalText,
         resolved,
         "agent_reply",
       );
+      if (active.maintenanceTransactions.length > 0 && this.options.systemMaintenance) {
+        if (!replyDelivered) {
+          for (const transactionId of active.maintenanceTransactions) {
+            const cancelled = await this.options.systemMaintenance.controller
+              .cancelQueued(transactionId, "final-reply-delivery-failed")
+              .catch(() => false);
+            if (cancelled) {
+              await this.store.appendAudit({
+                userId: resolved.userId,
+                conversationId: resolved.conversationId,
+                eventType: "system.maintenance_cancelled",
+                payload: { transactionId, reason: "final-reply-delivery-failed" },
+              }).catch(() => undefined);
+            }
+          }
+        } else {
+          for (const transactionId of active.maintenanceTransactions) {
+            try {
+              await this.options.systemMaintenance.controller.execute(transactionId);
+              await this.store.appendAudit({
+                userId: resolved.userId,
+                conversationId: resolved.conversationId,
+                eventType: "system.maintenance_handoff",
+                payload: { transactionId },
+              }).catch(() => undefined);
+            } catch (error) {
+              await this.store.appendAudit({
+                userId: resolved.userId,
+                conversationId: resolved.conversationId,
+                eventType: "system.maintenance_handoff_failed",
+                payload: {
+                  transactionId,
+                  errorType: error instanceof Error ? error.name : "Error",
+                },
+              }).catch(() => undefined);
+              await this.#deliverWithAudit(
+                message.identity.conversationId,
+                `FLORAL 维护交接失败。transaction=${transactionId}。未执行通用 shell 回退；请在下一回合检查 floral.maintenance。`,
+                resolved,
+                "agent_failure",
+              ).catch(() => undefined);
+            }
+          }
+        }
+      }
     } catch (error) {
+      if (active.maintenanceTransactions.length > 0 && this.options.systemMaintenance) {
+        for (const transactionId of active.maintenanceTransactions) {
+          const cancelled = await this.options.systemMaintenance.controller
+            .cancelQueued(transactionId)
+            .catch(() => false);
+          if (cancelled) {
+            await this.store.appendAudit({
+              userId: resolved.userId,
+              conversationId: resolved.conversationId,
+              eventType: "system.maintenance_cancelled",
+              payload: { transactionId, reason: "run-ended-before-handoff" },
+            }).catch(() => undefined);
+          }
+        }
+      }
       this.#cancelVisibleActivityFallback(active);
       this.#setConversationActivity(message.identity.conversationId, "idle");
       process.stderr.write(`${formatSafeAgentFailure(error)}\n`);
@@ -2351,9 +2446,10 @@ export class GatewayService {
     text: string,
     resolved: ResolvedGatewayIdentity,
     kind: "agent_reply" | "agent_failure",
-  ): Promise<void> {
+  ): Promise<boolean> {
     try {
       await this.#send(conversationId, text);
+      return true;
     } catch (error) {
       await this.store.appendAudit({
         userId: resolved.userId,
@@ -2365,6 +2461,7 @@ export class GatewayService {
           errorType: error instanceof Error ? error.name : "unknown",
         },
       });
+      return false;
     }
   }
 

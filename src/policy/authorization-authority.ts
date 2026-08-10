@@ -15,6 +15,7 @@ export type AuthorizationSource =
   | "mcp-tool"
   | "floral-skill"
   | "floral-extension"
+  | "floral-maintenance"
   | "floral";
 
 export interface AuthorizationRequest {
@@ -102,6 +103,12 @@ export class AuthorizationAuthority {
       && request.capability === "software.install";
     const scopedFloralExtensionSupplyChainGrant = request.source === "floral-extension"
       && request.capability === "software.install";
+    // Host-owned bounded maintenance is governed separately from the Codex
+    // turn sandbox. Crossing that sandbox ceiling is valid only for the exact
+    // FLORAL maintenance source and still requires the capability's
+    // Mac-local confirmation below.
+    const scopedFloralMaintenanceGrant = request.source === "floral-maintenance"
+      && request.capability === "system.restart";
     const scopedExternalBrowserGrant = request.source === "mcp-tool"
       && request.capability === "browser.submit"
       && Boolean(request.mcpServerId)
@@ -114,6 +121,7 @@ export class AuthorizationAuthority {
       && !scopedCodexPermissionGrant
       && !scopedFloralSkillSupplyChainGrant
       && !scopedFloralExtensionSupplyChainGrant
+      && !scopedFloralMaintenanceGrant
       && !scopedExternalBrowserGrant
     ) {
       return {

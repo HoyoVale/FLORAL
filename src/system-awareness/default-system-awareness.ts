@@ -11,6 +11,8 @@ import { ConfigurationSystemObserver } from "./observers/configuration-system-ob
 import { ExternalExtensionSystemObserver } from "./observers/external-extension-system-observer.js";
 import { ExecutionContextSystemObserver } from "./observers/execution-context-system-observer.js";
 import { ServiceStateSystemObserver } from "./observers/service-state-system-observer.js";
+import { MaintenanceSystemObserver } from "./observers/maintenance-system-observer.js";
+import { resolveSystemMaintenanceDirectory } from "../system-maintenance/system-maintenance.js";
 
 export interface DefaultSystemAwarenessOptions {
   repositoryRoot: string;
@@ -47,6 +49,13 @@ export function createDefaultSystemObservers(
       repositoryRoot: options.repositoryRoot,
       dataDir: options.authority.effective.floral.data_dir,
       environment: options.environment ?? process.env,
+      ...(now ? { now } : {}),
+    }),
+    new MaintenanceSystemObserver({
+      directory: resolveSystemMaintenanceDirectory(
+        options.repositoryRoot,
+        options.authority.effective.floral.data_dir,
+      ),
       ...(now ? { now } : {}),
     }),
   ];

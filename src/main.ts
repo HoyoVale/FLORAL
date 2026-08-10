@@ -40,6 +40,10 @@ import { FeishuTransport } from "./transport/feishu/feishu-transport.js";
 import { MockQqTransport } from "./transport/qq/mock-qq-transport.js";
 import { QqRuntimeAdoptionTransport } from "./transport/qq/qq-runtime-adoption-transport.js";
 import { ProjectWorkspaceRoot } from "./workspace/project-workspace.js";
+import {
+  SystemMaintenanceController,
+  resolveSystemMaintenanceDirectory,
+} from "./system-maintenance/system-maintenance.js";
 
 loadProjectEnv();
 const env = loadEnv();
@@ -126,6 +130,18 @@ const systemAwareness = createDefaultSystemAwarenessReader({
   environment: process.env,
 });
 
+const systemMaintenance = serviceState
+  ? new SystemMaintenanceController({
+      directory: resolveSystemMaintenanceDirectory(
+        repositoryRoot,
+        authority.effective.floral.data_dir,
+      ),
+      serviceStatePath: resolve(repositoryRoot, env.FLORAL_SERVICE_STATE_PATH),
+      workerPath: resolve(repositoryRoot, "dist", "src", "system-maintenance", "service-restart-worker.js"),
+    })
+  : undefined;
+await systemMaintenance?.initialize();
+
 const runtimeManagedHomeForCwd = async (cwd: string): Promise<string> => {
   if (supportsAgentProjectRuntimeStorage(agent)) {
     return await agent.resolveRuntimeHome({ cwd });
@@ -172,6 +188,7 @@ const gateway = new GatewayService(
       policy: artifactEgressPolicy,
     },
     systemAwareness,
+    ...(systemMaintenance ? { systemMaintenance: { controller: systemMaintenance } } : {}),
     runtimeStatusLines: async (cwd) => {
       const managedHome = await runtimeManagedHomeForCwd(cwd);
       const [snapshot, nativeMemory] = await Promise.all([
