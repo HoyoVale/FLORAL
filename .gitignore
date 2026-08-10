@@ -1,6 +1,7 @@
 node_modules/
 dist/
 .env
+data
 data/*.sqlite
 data/*.sqlite-*
 data/qq-session/
@@ -8,6 +9,8 @@ data/codex-runtime/
 data/floral.lock
 data/service-state.json
 data/service-state.json.tmp-*
+data/extension-control/latest.json
+data/extension-control/transactions/*.json
 logs/
 artifacts/
 .codex-schemas/
