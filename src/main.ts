@@ -10,7 +10,7 @@ import {
   renderCodexNativeMemoryRuntimeLines,
 } from "./agent/codex-native-memory-status.js";
 import { MockAgentRuntime } from "./agent/mock-agent.js";
-import { loadEnv } from "./config/env.js";
+import { loadEnv, normalizeEnvCompatibility } from "./config/env.js";
 import {
   resolveConfigurationAuthority,
   resolveEffectiveChatTransport,
@@ -47,7 +47,18 @@ import {
 import { MaintenanceAutonomySupervisor } from "./system-maintenance/maintenance-autonomy-supervisor.js";
 
 loadProjectEnv();
-const env = loadEnv();
+const envCompatibility = normalizeEnvCompatibility(process.env);
+for (const notice of envCompatibility.notices) {
+  process.stderr.write(`config.compatibility=${notice.code} ${notice.message}\n`);
+}
+const env = loadEnv(envCompatibility.source);
+// Keep the current process aligned with the compatibility-normalized machine
+// policy values. Several host-owned managers intentionally consume
+// process.env directly so secret-bearing values never flow through generated
+// config objects; without this small synchronization a recovered ceiling typo
+// could still reappear in those downstream host paths.
+process.env.FLORAL_REMOTE_MODE_CEILING = env.FLORAL_REMOTE_MODE_CEILING;
+process.env.FLORAL_MAINTENANCE_MODE_CEILING = env.FLORAL_MAINTENANCE_MODE_CEILING;
 const repositoryRoot = process.cwd();
 const projectWorkspace = env.FLORAL_WORKSPACE_ROOT
   ? new ProjectWorkspaceRoot(env.FLORAL_WORKSPACE_ROOT)
@@ -56,7 +67,7 @@ await projectWorkspace?.initialize();
 
 const authority = await resolveConfigurationAuthority({
   repositoryRoot,
-  environment: process.env,
+  environment: envCompatibility.source,
 });
 const lock = await acquireProcessLock(resolve(env.FLORAL_INSTANCE_LOCK_PATH));
 const serviceState = env.FLORAL_SERVICE_MODE === "launchagent"
@@ -79,7 +90,7 @@ const agent: AgentRuntime = env.CODEX_MODE === "real"
       systemAwareness: {
         repositoryRoot,
         authority,
-        environment: process.env,
+        environment: envCompatibility.source,
       },
     })
   : new MockAgentRuntime();
@@ -128,7 +139,7 @@ const systemAwareness = createDefaultSystemAwarenessReader({
   authority,
   env,
   runtime: agent,
-  environment: process.env,
+  environment: envCompatibility.source,
 });
 
 const systemMaintenance = serviceState
@@ -265,12 +276,12 @@ function createChatTransport(
       repositoryRoot,
       authority,
       env,
-      process.env,
+      envCompatibility.source,
     );
   }
 
   const contract = buildFeishuRuntimeOptionsContract(authority.effective);
-  const credentials = resolveFeishuRuntimeCredentials(authority, process.env);
+  const credentials = resolveFeishuRuntimeCredentials(authority, envCompatibility.source);
   return new FeishuTransport({
     appId: credentials.appId,
     appSecret: credentials.appSecret,

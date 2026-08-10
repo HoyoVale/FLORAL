@@ -45,7 +45,7 @@ describe("Phase 8A read-only observers", () => {
           sandboxMode: "danger-full-access",
           approvalPolicy: "untrusted",
           approvalsReviewer: "user",
-          approvalRoute: "full-auto-codex-native",
+          approvalRoute: "full-auto-owner-trusted",
         },
         turn: {
           selector: "permission-profile",

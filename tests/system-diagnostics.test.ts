@@ -24,7 +24,7 @@ describe("Phase 8C deterministic self-diagnostics", () => {
     const report = buildSystemDiagnosticReport(model, "floral.service");
     expect(report.overallStatus).toBe("unavailable");
     expect(report.executionPerformed).toBe(false);
-    expect(report.maintenanceEnabled).toBe(false);
+    expect(report.maintenanceEnabled).toBe(true);
     expect(report.findings).toContainEqual(expect.objectContaining({
       id: "floral.service.ready-but-process-dead",
       impact: "unavailable",

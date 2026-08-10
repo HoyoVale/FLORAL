@@ -67,7 +67,9 @@ Use `plan_extension(kind=mcp, ...)` first. Never call `apply_extension` with a d
 
 After an approved mutation, hot reload may be scheduled. The current turn's snapshot predates the mutation, so do not claim readiness and do not perform same-turn shell verification. On the next turn, `verify_extension` checks registry state, credential presence where applicable, Codex server state, and discovered tools.
 
-Treat MCP capability as ready only when verification reaches `verified` (normally expected server `ready` with non-empty tools). `starting` remains pending. `failed`, `cancelled`, ready-without-tools, or missing expected runtime server are not success.
+Treat MCP capability as ready only when verification reaches `verified` (normally the fresh Codex MCP view reports `status=ready` with non-empty tools). The current turn's `mcp_status` snapshot predates a same-turn mutation and is not post-change proof. `starting` remains pending. `failed`, `cancelled`, ready-without-tools, or missing expected runtime server are not success.
+
+Do not inspect `~/.codex`, managed package directories, process tables, or registries to create an alternate readiness proof. Do not request a second shell approval for verification: finish the mutation turn with `verification pending`, then use `verify_extension` on a fresh turn.
 
 ### GitHub authentication
 
@@ -76,7 +78,7 @@ Treat MCP capability as ready only when verification reaches `verified` (normall
 If planning/verification reports a missing credential:
 
 - tell the owner the trusted Mac service environment/untracked `.env` must provide `GITHUB_PAT_TOKEN`;
-- do not ask them to paste it into chat;
+- do not ask the user to paste the secret into chat;
 - do not reinstall the MCP as a credential workaround;
 - after the parent service environment changes, restart FLORAL through the governed maintenance surface if needed, then verify on a fresh turn.
 
@@ -88,9 +90,11 @@ After mutation, fresh-turn `verify_extension` checks the External Skill registry
 
 ## Plugins
 
-App Server Plugin write RPCs remain outside FLORAL's production contract. Do not call `plugin/install`, `plugin/uninstall`, or use shell/Codex storage edits as a bypass.
+The supported installation/handoff surface is the Codex CLI `/plugins` browser. Keep Plugin lifecycle user-mediated there unless a future FLORAL contract explicitly promotes a write RPC.
 
-If the user asks for a Plugin capability not represented by a currently supported App/Skill/MCP route, explain that installation remains user-mediated on the supported Codex surface. Do not manufacture a Phase 8E mutation path that FLORAL has not declared.
+Do not call App Server `plugin/list`, `plugin/read`, `plugin/install`, or `plugin/uninstall` from the production Agent as a substitute for the supported surface; those Plugin RPCs remain upstream/under-development rather than FLORAL's managed lifecycle. Do not use shell/Codex storage edits as a bypass.
+
+If the user asks for a Plugin capability not represented by a currently supported App/Skill/MCP route, explain the Codex CLI `/plugins` handoff clearly. Do not manufacture a Phase 8E mutation path that FLORAL has not declared.
 
 ## Completion standard
 

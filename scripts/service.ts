@@ -12,7 +12,7 @@ import { constants } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { loadEnv, resolveChatTransport } from "../src/config/env.js";
+import { loadEnv, normalizeEnvCompatibility, resolveChatTransport, type AppEnv } from "../src/config/env.js";
 import { loadProjectEnv } from "../src/config/load-project-env.js";
 import { readServiceState } from "../src/runtime/service-state.js";
 import { waitForLaunchAgentShutdown } from "../src/service/launchagent-lifecycle.js";
@@ -43,12 +43,29 @@ if (process.platform !== "darwin") {
   throw new Error("FLORAL LaunchAgent commands must run on macOS");
 }
 
-loadProjectEnv(join(repositoryRoot, ".env"));
-const env = loadEnv(process.env);
+let projectEnvLoadError: unknown;
+try {
+  loadProjectEnv(join(repositoryRoot, ".env"));
+} catch (error) {
+  projectEnvLoadError = error;
+}
+const envCompatibility = normalizeEnvCompatibility(process.env);
+for (const notice of envCompatibility.notices) {
+  console.error(`service.config_compatibility=${notice.code} ${notice.message}`);
+}
+let env: AppEnv | undefined;
+let envLoadError: unknown;
+if (!projectEnvLoadError) {
+  try {
+    env = loadEnv(envCompatibility.source);
+  } catch (error) {
+    envLoadError = error;
+  }
+}
 const launchAgentUserPaths = resolveLaunchAgentUserPaths(homedir());
 const paths = {
-  lock: resolve(repositoryRoot, env.FLORAL_INSTANCE_LOCK_PATH),
-  state: resolve(repositoryRoot, env.FLORAL_SERVICE_STATE_PATH),
+  lock: resolve(repositoryRoot, servicePathEnv("FLORAL_INSTANCE_LOCK_PATH", "./data/floral.lock")),
+  state: resolve(repositoryRoot, servicePathEnv("FLORAL_SERVICE_STATE_PATH", "./data/service-state.json")),
   runner: join(repositoryRoot, "dist", "src", "service", "launchagent-runner.js"),
   entry: join(repositoryRoot, "dist", "src", "main.js"),
   stdout: launchAgentUserPaths.stdout,
@@ -89,22 +106,48 @@ switch (command) {
     throw new Error(`Unknown service command: ${command}`);
 }
 
+function servicePathEnv(name: "FLORAL_INSTANCE_LOCK_PATH" | "FLORAL_SERVICE_STATE_PATH", fallback: string): string {
+  const value = envCompatibility.source[name]?.trim();
+  return value || fallback;
+}
+
+function requireValidEnv(): AppEnv {
+  if (env) return env;
+  throw new Error([
+    `FLORAL runtime configuration is invalid: ${serviceConfigurationErrorSummary()}`,
+    "Recovery commands remain available: service:status, service:logs, service:stop, service:uninstall.",
+    "Fix the local .env before service:start/service:restart/service:install.",
+  ].join("\n"));
+}
+
+function serviceConfigurationErrorSummary(): string {
+  const error = projectEnvLoadError ?? envLoadError;
+  if (!(error instanceof Error)) return "unknown";
+  return error.message
+    .replace(/[\u0000-\u001f\u007f]+/gu, " ")
+    .replace(/((?:api[_-]?key|token|secret|password)\s*[=:]\s*)[^\s,;]+/giu, "$1<redacted>")
+    .replace(/\s+/gu, " ")
+    .trim()
+    .slice(0, 320) || error.name;
+}
+
 async function doctor(): Promise<void> {
+  const runtimeEnv = requireValidEnv();
   await ensureBuild();
-  await ensurePrivateEnv();
-  const codex = await resolveExecutable(env.CODEX_COMMAND);
+  await ensurePrivateEnv(runtimeEnv);
+  const codex = await resolveExecutable(runtimeEnv.CODEX_COMMAND);
   const npx = await resolveExecutable("npx");
   const node = process.execPath;
   await access(node, constants.X_OK);
   const search = await checkSearxng(
-    env.SEARXNG_URL,
-    env.SEARXNG_REQUEST_TIMEOUT_MS,
+    runtimeEnv.SEARXNG_URL,
+    runtimeEnv.SEARXNG_REQUEST_TIMEOUT_MS,
   );
 
   console.log("service.doctor.platform=ok");
   console.log("service.doctor.build=ok");
   console.log("service.doctor.env_permissions=ok");
-  console.log(`service.doctor.chat_transport=${resolveChatTransport(env)}`);
+  console.log(`service.doctor.chat_transport=${resolveChatTransport(runtimeEnv)}`);
   console.log(`service.doctor.node=${node}`);
   console.log(`service.doctor.codex=${codex}`);
   console.log(`service.doctor.npx=${npx}`);
@@ -115,6 +158,7 @@ async function doctor(): Promise<void> {
 }
 
 async function install(): Promise<void> {
+  const runtimeEnv = requireValidEnv();
   await doctor();
   await mkdir(dirname(launchAgentPath), { recursive: true, mode: 0o700 });
   await prepareLaunchAgentUserPaths(launchAgentUserPaths);
@@ -122,7 +166,7 @@ async function install(): Promise<void> {
 
   const servicePath = await buildServicePath([
     process.execPath,
-    env.CODEX_COMMAND,
+    runtimeEnv.CODEX_COMMAND,
     "npx",
   ]);
   const plist = renderLaunchAgentPlist({
@@ -160,8 +204,9 @@ async function install(): Promise<void> {
 }
 
 async function start(): Promise<void> {
+  const runtimeEnv = requireValidEnv();
   await ensureBuild();
-  await ensurePrivateEnv();
+  await ensurePrivateEnv(runtimeEnv);
   await prepareLaunchAgentUserPaths(launchAgentUserPaths);
   if (!(await fileExists(launchAgentPath))) {
     throw new Error("LaunchAgent plist is not installed; run service:install");
@@ -180,6 +225,8 @@ async function status(): Promise<void> {
   const loaded = await isLoaded();
   const state = await readServiceState(paths.state);
   const pidAlive = state ? isProcessAlive(state.pid) : false;
+  console.log(`service.config=${env ? "ok" : "invalid"}`);
+  if (!env) console.log(`service.config_error=${serviceConfigurationErrorSummary()}`);
   console.log(`service.loaded=${loaded}`);
   console.log(`service.state=${state?.phase ?? "unknown"}`);
   console.log(`service.pid=${state?.pid ?? "none"}`);
@@ -190,6 +237,7 @@ async function status(): Promise<void> {
 }
 
 async function restart(): Promise<void> {
+  requireValidEnv();
   const previous = await readServiceState(paths.state);
   await stopLoadedLaunchAgent(previous?.pid);
   await start();
@@ -219,6 +267,7 @@ async function logs(): Promise<void> {
 }
 
 async function recoveryProbe(): Promise<void> {
+  requireValidEnv();
   if (!(await isLoaded())) throw new Error("LaunchAgent is not loaded");
   const before = await readServiceState(paths.state);
   if (!before || before.phase !== "ready" || !isProcessAlive(before.pid)) {
@@ -245,17 +294,17 @@ async function ensureBuild(): Promise<void> {
   await access(paths.entry, constants.R_OK);
 }
 
-async function ensurePrivateEnv(): Promise<void> {
+async function ensurePrivateEnv(runtimeEnv: AppEnv): Promise<void> {
   const envPath = join(repositoryRoot, ".env");
   const metadata = await stat(envPath);
   if (!metadata.isFile()) throw new Error(".env must be a regular file");
   if ((metadata.mode & 0o077) !== 0) {
     throw new Error(".env permissions are too broad; run chmod 600 .env");
   }
-  if (resolveChatTransport(env) === "mock" || env.CODEX_MODE !== "real") {
+  if (resolveChatTransport(runtimeEnv) === "mock" || runtimeEnv.CODEX_MODE !== "real") {
     throw new Error("LaunchAgent requires a real chat transport and CODEX_MODE=real");
   }
-  if (env.MOCK_TRUST_OWNER) {
+  if (runtimeEnv.MOCK_TRUST_OWNER) {
     throw new Error("LaunchAgent requires MOCK_TRUST_OWNER=false");
   }
 }

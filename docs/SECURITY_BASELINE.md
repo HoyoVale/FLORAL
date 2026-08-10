@@ -74,8 +74,8 @@ This section supersedes the conflicting Phase 5.2/5.3 bullets above for Codex-na
 - `auto` keeps `workspace-write + untrusted` and selects Codex `auto_review`; FLORAL does not silently widen the sandbox.
 - `full` is unavailable by default. It requires both the paired `owner` role and the Mac-local startup ceiling `FLORAL_REMOTE_MODE_CEILING=full`.
 - The ceiling defaults to `auto`, is read by the FLORAL parent process, and is removed from the Codex child-process environment.
-- `full` uses Codex `dangerFullAccess` with `untrusted`, not `never`. FLORAL automatically accepts only Codex-native command/file/structured-permission approval requests. Keeping the native approval event preserves the hard GUI-shell bypass rejection before any automatic grant.
-- MCP capability authorization and artifact DLP remain separate FLORAL boundaries in every execution mode. `full` does not convert a prompted MCP mutation into an automatic grant.
+- `full` is a paired-owner trusted-operation mode. It uses Codex `dangerFullAccess` with `untrusted`, not `never`, and automatically accepts any **chat-confirmation** request only after the existing `AuthorizationAuthority`, role checks, MCP/tool allowlists, curated extension boundaries, and artifact policy have accepted the request. Mac-local capabilities such as `system.restart`/`system.admin` remain separately governed by maintenance autonomy or local confirmation. The model is still not an authorization boundary.
+- MCP capability authorization and artifact DLP remain separate FLORAL boundaries in every execution mode. In `full`, an allowlisted MCP action whose policy level is `chat-confirmation` may be auto-approved for the paired owner, but unsupported/unallowlisted tools, local-only capabilities, and artifact egress denials remain blocked.
 - Execution-mode selection is in-memory and conversation-scoped; service restart returns every conversation to `ask`.
 
 ## Phase 7.2A workspace/project/chat routing

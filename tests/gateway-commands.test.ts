@@ -11,6 +11,7 @@ import type {
 } from "../src/core/contracts.js";
 import type {
   AgentEvent,
+  AuditEventInput,
   AgentRunRequest,
   AgentRunResult,
   IncomingMessage,
@@ -240,6 +241,77 @@ class DeferredAgent implements AgentRuntime {
     this.completion.reject(new Error("interrupted"));
   }
 
+  async stop(): Promise<void> {}
+}
+
+
+class QueueProbeAgent implements AgentRuntime {
+  readonly name = "queue-probe-agent";
+  readonly requests: AgentRunRequest[] = [];
+  readonly firstStarted = deferred<void>();
+  readonly releaseFirst = deferred<void>();
+
+  async start(): Promise<void> {}
+
+  async run(
+    request: AgentRunRequest,
+    onEvent?: (event: AgentEvent) => void,
+  ): Promise<AgentRunResult> {
+    this.requests.push(request);
+    const index = this.requests.length;
+    const threadId = `thread-queue-${String(index)}`;
+    onEvent?.({ type: "run.started", threadId });
+    if (index === 1) {
+      this.firstStarted.resolve(undefined);
+      await this.releaseFirst.promise;
+    }
+    const finalText = `reply:${request.text}`;
+    onEvent?.({ type: "run.completed", threadId, finalText });
+    return { threadId, finalText };
+  }
+
+  async interrupt(): Promise<void> {}
+  async stop(): Promise<void> {}
+}
+
+class DelayedThreadLookupStore extends MemoryThreadStore {
+  readonly firstLookupStarted = deferred<void>();
+  readonly releaseFirstLookup = deferred<void>();
+  #lookups = 0;
+
+  override async getActiveThread(conversationId: string): Promise<string | undefined> {
+    this.#lookups += 1;
+    if (this.#lookups === 1) {
+      this.firstLookupStarted.resolve(undefined);
+      await this.releaseFirstLookup.promise;
+    }
+    return await super.getActiveThread(conversationId);
+  }
+}
+
+class RunTelemetryFailingStore extends MemoryThreadStore {
+  override async appendAudit(event: AuditEventInput): Promise<void> {
+    if (
+      event.eventType === "agent.run_requested"
+      || event.eventType === "agent.run_completed"
+      || event.eventType === "agent.run_failed"
+    ) {
+      throw new Error("telemetry unavailable");
+    }
+    await super.appendAudit(event);
+  }
+}
+
+class FailingAgent implements AgentRuntime {
+  readonly name = "failing-agent";
+
+  async start(): Promise<void> {}
+
+  async run(): Promise<AgentRunResult> {
+    throw Object.assign(new Error("provider unavailable"), { kind: "provider" });
+  }
+
+  async interrupt(): Promise<void> {}
   async stop(): Promise<void> {}
 }
 
@@ -987,6 +1059,139 @@ describe("GatewayService identity and commands", () => {
     await gateway.stop();
   });
 
+  it("reserves a conversation during async run preflight so simultaneous messages cannot start overlapping turns", async () => {
+    const transport = new TestTransport();
+    const agent = new TestAgent();
+    const store = new DelayedThreadLookupStore();
+    const gateway = new GatewayService(
+      transport,
+      agent,
+      store,
+      { cwd: ".", trustMockOwner: true },
+    );
+    await gateway.start();
+
+    const first = transport.receive(incoming({ id: "preflight-queue-1", text: "first task", transport: "mock" }));
+    await store.firstLookupStarted.promise;
+    const second = transport.receive(incoming({ id: "preflight-queue-2", text: "second task", transport: "mock" }));
+    await second;
+    expect(transport.sent.at(-1)?.text).toContain("已排队（1/3）");
+    expect(agent.requests).toHaveLength(0);
+
+    store.releaseFirstLookup.resolve(undefined);
+    await first;
+    await new Promise((resolve) => setImmediate(resolve));
+    await new Promise((resolve) => setImmediate(resolve));
+
+    expect(agent.requests.map((request) => request.text)).toEqual([
+      "first task",
+      "second task",
+    ]);
+    await gateway.stop();
+  });
+
+  it("lets /stop cancel a run that is still in async preflight and clears its queued follow-ups", async () => {
+    const transport = new TestTransport();
+    const agent = new TestAgent();
+    const store = new DelayedThreadLookupStore();
+    const gateway = new GatewayService(
+      transport,
+      agent,
+      store,
+      { cwd: ".", trustMockOwner: true },
+    );
+    await gateway.start();
+
+    const first = transport.receive(incoming({
+      id: "preflight-stop-1",
+      text: "slow preflight",
+      transport: "mock",
+    }));
+    await store.firstLookupStarted.promise;
+    await transport.receive(incoming({
+      id: "preflight-stop-2",
+      text: "queued follow-up",
+      transport: "mock",
+    }));
+    await transport.receive(incoming({
+      id: "preflight-stop-3",
+      text: "/stop",
+      transport: "mock",
+    }));
+    const stopReply = transport.sent.at(-1)?.text ?? "";
+    expect(stopReply).toContain("已取消正在准备中的任务");
+    expect(stopReply).toContain("已同时取消 1 条排队消息");
+
+    store.releaseFirstLookup.resolve(undefined);
+    await first;
+    await new Promise((resolve) => setImmediate(resolve));
+    expect(agent.requests).toHaveLength(0);
+    await gateway.stop();
+  });
+
+  it("queues a small number of normal follow-up messages instead of dropping them while a task is active", async () => {
+    const transport = new TestTransport();
+    const agent = new QueueProbeAgent();
+    const gateway = new GatewayService(
+      transport,
+      agent,
+      new MemoryThreadStore(),
+      { cwd: ".", trustMockOwner: true },
+    );
+    await gateway.start();
+
+    const first = transport.receive(incoming({ id: "queue-1", text: "first task", transport: "mock" }));
+    await agent.firstStarted.promise;
+    await transport.receive(incoming({ id: "queue-2", text: "second task", transport: "mock" }));
+    expect(transport.sent.at(-1)?.text).toContain("已排队（1/3）");
+
+    agent.releaseFirst.resolve(undefined);
+    await first;
+    await new Promise((resolve) => setImmediate(resolve));
+    await new Promise((resolve) => setImmediate(resolve));
+
+    expect(agent.requests.map((request) => request.text)).toEqual([
+      "first task",
+      "second task",
+    ]);
+    expect(transport.sent.some((entry) => entry.text === "reply:second task")).toBe(true);
+    await gateway.stop();
+  });
+
+  it("keeps Agent replies working when best-effort run telemetry cannot be persisted", async () => {
+    const transport = new TestTransport();
+    const agent = new TestAgent();
+    const gateway = new GatewayService(
+      transport,
+      agent,
+      new RunTelemetryFailingStore(),
+      { cwd: ".", trustMockOwner: true },
+    );
+    await gateway.start();
+
+    await transport.receive(incoming({ id: "audit-soft-fail-1", text: "still answer", transport: "mock" }));
+
+    expect(agent.requests).toHaveLength(1);
+    expect(transport.sent.some((entry) => entry.text === "reply:still answer")).toBe(true);
+    await gateway.stop();
+  });
+
+  it("still returns bounded Agent failure guidance when failure telemetry persistence is unavailable", async () => {
+    const transport = new TestTransport();
+    const gateway = new GatewayService(
+      transport,
+      new FailingAgent(),
+      new RunTelemetryFailingStore(),
+      { cwd: ".", trustMockOwner: true },
+    );
+    await gateway.start();
+
+    await transport.receive(incoming({ id: "audit-soft-fail-2", text: "fail safely", transport: "mock" }));
+
+    expect(transport.sent.at(-1)?.text).toContain("上游模型/网络暂时不可用");
+    await gateway.stop();
+  });
+
   it("runs evidence-backed /diagnose without starting an agent turn", async () => {
     const transport = new TestTransport();
     const agent = new TestAgent();
@@ -1049,7 +1254,7 @@ describe("GatewayService identity and commands", () => {
     expect(reply).toContain("FLORAL Self-Diagnostics");
     expect(reply).toContain("finding=floral.service.ready-but-process-dead");
     expect(reply).toContain("execution_performed=false");
-    expect(reply).toContain("maintenance_enabled=false");
+    expect(reply).toContain("maintenance_enabled=true");
     expect(reads).toBe(1);
     expect(agent.requests).toHaveLength(0);
     await gateway.stop();

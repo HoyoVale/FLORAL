@@ -57,12 +57,14 @@ recommendation_semantics=checks-are-read-only-plans-and-are-not-executed-by-this
 management_semantics=use-floral_system-capabilities-separately-before-discussing-any-governed-repair-action
 ```
 
-Every report also carries:
+At Phase 8C closure every report also carried:
 
 ```text
 execution_performed=false
 maintenance_enabled=false
 ```
+
+> **Current behavior (superseded by Phase 8D.1):** `execution_performed=false` still means diagnostics are non-mutating, while `maintenance_enabled=true` is now reported when the separately governed maintenance surface is declared and available. The flag describes availability of that controlled surface, not whether the diagnostic call performed maintenance.
 
 ## First deterministic rule set
 

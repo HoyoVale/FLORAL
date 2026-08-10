@@ -143,7 +143,7 @@ describe("Phase 8A.5 read-only System Awareness interface", () => {
       evidence("gateway.requested_sandbox", "danger-full-access", "gateway-execution-policy", "conversation"),
       evidence("gateway.requested_approval_policy", "untrusted", "gateway-execution-policy", "conversation"),
       evidence("gateway.requested_approvals_reviewer", "user", "gateway-execution-policy", "conversation"),
-      evidence("gateway.approval_route", "full-auto-codex-native", "gateway-execution-policy", "conversation"),
+      evidence("gateway.approval_route", "full-auto-owner-trusted", "gateway-execution-policy", "conversation"),
       evidence("turn.selector", "permission-profile", "codex-turn-execution", "runtime"),
       evidence("turn.sandbox_mode", "not-applicable", "codex-turn-execution", "runtime"),
       evidence("turn.permission_profile", "floral-project", "codex-turn-execution", "runtime"),
