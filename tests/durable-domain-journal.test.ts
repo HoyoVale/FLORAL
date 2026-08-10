@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, rm } from "node:fs/promises";
+import { mkdir, mkdtemp, realpath, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
@@ -14,7 +14,9 @@ import { bootstrapProjectContext } from "../src/workspace/project-context.js";
 
 describe("unified durable domain journal", () => {
   it("mirrors extension, context, and maintenance lifecycles into SQLite", async () => {
-    const directory = await mkdtemp(join(tmpdir(), "floral-domain-journal-"));
+    const directory = await realpath(
+      await mkdtemp(join(tmpdir(), "floral-domain-journal-")),
+    );
     const store = await SqliteGatewayStore.open(join(directory, "gateway.sqlite"));
     const journal = new SqliteDurableJournal(store.durability);
     try {
@@ -105,7 +107,9 @@ describe("unified durable domain journal", () => {
   });
 
   it("reconciles a worker-completed maintenance receipt during startup", async () => {
-    const directory = await mkdtemp(join(tmpdir(), "floral-maintenance-reconcile-"));
+    const directory = await realpath(
+      await mkdtemp(join(tmpdir(), "floral-maintenance-reconcile-")),
+    );
     const store = await SqliteGatewayStore.open(join(directory, "gateway.sqlite"));
     const maintenanceDirectory = join(directory, "maintenance");
     try {
@@ -136,7 +140,9 @@ describe("unified durable domain journal", () => {
   });
 
   it("fails a stale interrupted maintenance handoff instead of wedging recovery", async () => {
-    const directory = await mkdtemp(join(tmpdir(), "floral-maintenance-interrupted-"));
+    const directory = await realpath(
+      await mkdtemp(join(tmpdir(), "floral-maintenance-interrupted-")),
+    );
     const store = await SqliteGatewayStore.open(join(directory, "gateway.sqlite"));
     const maintenanceDirectory = join(directory, "maintenance");
     try {
