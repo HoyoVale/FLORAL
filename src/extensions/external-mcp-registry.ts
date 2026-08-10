@@ -135,7 +135,7 @@ export const CURATED_EXTERNAL_MCP: Readonly<Record<ExternalMcpCatalogId, Externa
       name: "chrome-devtools-mcp",
       version: CHROME_DEVTOOLS_MCP_VERSION,
       integrity: "sha512-VZX6f/OjQSYhy2BGGRs+y3LsrsAQAz/HwZCWKBLVyST/4r/3zjVEjjVW7gMCVbRDuspnVdcp5hQDPrQ5UFrdZw==",
-      entrypoint: "node_modules/chrome-devtools-mcp/build/src/bin.js",
+      entrypoint: "node_modules/chrome-devtools-mcp/build/src/bin/chrome-devtools-mcp.js",
       args: [
         "--slim",
         "--headless",

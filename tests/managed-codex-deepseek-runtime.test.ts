@@ -333,7 +333,8 @@ describe("ManagedCodexDeepSeekRuntime", () => {
       await new Promise<void>((resolvePromise) => setImmediate(resolvePromise));
       expect(workspaceConfigs.at(-1)).toContain("[mcp_servers.chrome-devtools]");
       expect(workspaceConfigs.at(-1)).toContain("chrome-devtools-mcp");
-      expect(workspaceConfigs.at(-1)).toContain("build\\\\src\\\\bin.js");
+      expect(workspaceConfigs.at(-1)?.replaceAll("\\\\", "/"))
+        .toContain("build/src/bin/chrome-devtools-mcp.js");
       expect(workspaceConfigs.at(-1)).not.toContain('command = "npx"\nargs = ["-y", "chrome-devtools-mcp@1.6.0"');
       expect(workspaceConfigs.at(-1)).toContain('default_tools_approval_mode = "writes"');
       expect(runtime.mcpReloads).toBe(1);

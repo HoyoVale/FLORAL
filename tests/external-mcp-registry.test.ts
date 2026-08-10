@@ -51,7 +51,8 @@ describe("External MCP registry", () => {
     expect(CHROME_DEVTOOLS_MCP_VERSION).toBe("1.6.0");
     expect(config).toContain("[mcp_servers.chrome-devtools]");
     expect(config).toContain("chrome-devtools-mcp");
-    expect(config).toContain("build\\\\src\\\\bin.js");
+    expect(config.replaceAll("\\\\", "/"))
+      .toContain("build/src/bin/chrome-devtools-mcp.js");
     expect(config).not.toContain("npx");
     expect(config).toContain('default_tools_approval_mode = "writes"');
     expect(config).toContain('CHROME_DEVTOOLS_MCP_NO_UPDATE_CHECKS = "1"');

@@ -148,7 +148,9 @@ export class ExternalMcpPackageCache {
       const lock = JSON.parse(await readFile(join(directory, "package-lock.json"), "utf8")) as {
         packages?: Record<string, { version?: unknown; integrity?: unknown }>;
       };
-      const locked = lock.packages?.[`node_modules/${runtimePackage.name}`];
+      const locked = Object.entries(lock.packages ?? {}).find(([key]) =>
+        packageLockKeyMatches(key, runtimePackage.name)
+      )?.[1];
       if (locked?.version !== runtimePackage.version || locked.integrity !== runtimePackage.integrity) {
         return false;
       }
@@ -227,6 +229,12 @@ async function runProcess(command: string, args: string[]): Promise<void> {
 function isInside(root: string, candidate: string): boolean {
   const normalized = `${resolve(root)}${process.platform === "win32" ? "\\" : "/"}`;
   return candidate === resolve(root) || candidate.startsWith(normalized);
+}
+
+function packageLockKeyMatches(key: string, packageName: string): boolean {
+  const normalized = key.replaceAll("\\", "/");
+  return normalized === `node_modules/${packageName}`
+    || normalized.endsWith(`/node_modules/${packageName}`);
 }
 
 function isMissing(error: unknown): boolean {

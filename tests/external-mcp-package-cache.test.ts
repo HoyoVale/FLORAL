@@ -1,6 +1,6 @@
 import { mkdtemp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { ExternalMcpPackageCache } from "../src/extensions/external-mcp-package-cache.js";
 import {
@@ -20,8 +20,8 @@ describe("ExternalMcpPackageCache", () => {
       install: async (directory) => {
         installs += 1;
         const packageRoot = join(directory, "node_modules", runtimePackage.name);
-        const entrypoint = join(packageRoot, "build", "src", "bin.js");
-        await mkdir(join(packageRoot, "build", "src"), { recursive: true });
+        const entrypoint = join(directory, runtimePackage.entrypoint);
+        await mkdir(dirname(entrypoint), { recursive: true });
         await writeFile(join(packageRoot, "package.json"), JSON.stringify({
           name: runtimePackage.name,
           version: runtimePackage.version,
@@ -29,7 +29,7 @@ describe("ExternalMcpPackageCache", () => {
         await writeFile(entrypoint, `console.log(${JSON.stringify(installs)});\n`, "utf8");
         await writeFile(join(directory, "package-lock.json"), JSON.stringify({
           packages: {
-            [`node_modules/${runtimePackage.name}`]: {
+            [`../../private/tmp/floral-cache/node_modules/${runtimePackage.name}`]: {
               version: runtimePackage.version,
               integrity: runtimePackage.integrity,
             },
