@@ -2,6 +2,7 @@ import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 import { CodexRuntimeError } from "../src/agent/codex-errors.js";
 import {
+  buildCodexSpawnEnvironment,
   CodexRpcClient,
   resolveCodexSpawnCommand,
 } from "../src/agent/codex-rpc-client.js";
@@ -29,18 +30,45 @@ describe("CodexRpcClient", () => {
     expect(observed).toEqual(["/Users/test/.local/bin/codex"]);
   });
 
+  it("resolves a bare macOS command through the child PATH before canonicalizing it", async () => {
+    await expect(resolveCodexSpawnCommand("codex", {
+      platform: "darwin",
+      env: { PATH: "/Users/test/.local/bin:/usr/bin" },
+      resolvePathCommand: async (command, env) => {
+        expect(command).toBe("codex");
+        expect(env.PATH).toContain(".local/bin");
+        return "/Users/test/.local/bin/codex";
+      },
+      resolveRealpath: async () => "/Users/test/.codex/releases/0.146.1/bin/codex",
+    })).resolves.toBe("/Users/test/.codex/releases/0.146.1/bin/codex");
+  });
+
   it("preserves PATH lookup and non-macOS executable behavior", async () => {
     const unexpected = async (): Promise<string> => {
       throw new Error("realpath should not be called");
     };
-    await expect(resolveCodexSpawnCommand("codex", {
+    await expect(resolveCodexSpawnCommand("relative/codex", {
       platform: "darwin",
+      resolvePathCommand: async () => undefined,
       resolveRealpath: unexpected,
-    })).resolves.toBe("codex");
+    })).resolves.toBe("relative/codex");
     await expect(resolveCodexSpawnCommand("C:\\tools\\codex.exe", {
       platform: "win32",
       resolveRealpath: unexpected,
     })).resolves.toBe("C:\\tools\\codex.exe");
+  });
+
+  it("pins the canonical macOS binary directory for helper re-execution", () => {
+    const command = "/Users/test/.codex/releases/0.146.1/bin/codex";
+    expect(buildCodexSpawnEnvironment(command, {
+      PATH: "/usr/bin:/Users/test/.local/bin",
+      CODEX_COMMAND: "codex",
+      KEEP_ME: "yes",
+    }, "darwin")).toEqual({
+      PATH: "/Users/test/.codex/releases/0.146.1/bin:/usr/bin:/Users/test/.local/bin",
+      CODEX_COMMAND: command,
+      KEEP_ME: "yes",
+    });
   });
 
   it("preserves the configured path when macOS realpath resolution fails", async () => {

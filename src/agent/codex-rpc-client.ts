@@ -1,7 +1,8 @@
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 import { EventEmitter } from "node:events";
-import { realpath } from "node:fs/promises";
-import { isAbsolute } from "node:path";
+import { access, realpath } from "node:fs/promises";
+import { constants } from "node:fs";
+import { delimiter, dirname, isAbsolute, join } from "node:path";
 import { createInterface, type Interface as ReadlineInterface } from "node:readline";
 import {
   CodexRuntimeError,
@@ -69,11 +70,12 @@ export class CodexRpcClient extends EventEmitter {
     this.#stopping = false;
     this.#stderrLines.length = 0;
 
-    const command = await resolveCodexSpawnCommand(this.options.command);
+    const baseEnv = this.options.env ?? process.env;
+    const command = await resolveCodexSpawnCommand(this.options.command, { env: baseEnv });
     const child = spawn(command, this.options.args, {
       cwd: this.options.cwd,
       stdio: ["pipe", "pipe", "pipe"],
-      env: this.options.env ?? process.env,
+      env: buildCodexSpawnEnvironment(command, baseEnv),
       windowsHide: true,
     });
     this.#process = child;
@@ -339,19 +341,61 @@ export async function resolveCodexSpawnCommand(
   command: string,
   options: {
     platform?: NodeJS.Platform | undefined;
+    env?: NodeJS.ProcessEnv | undefined;
     resolveRealpath?: ((path: string) => Promise<string>) | undefined;
+    resolvePathCommand?: ((command: string, env: NodeJS.ProcessEnv) => Promise<string | undefined>) | undefined;
   } = {},
 ): Promise<string> {
   const platform = options.platform ?? process.platform;
-  if (platform !== "darwin" || !isAbsolute(command)) return command;
+  if (platform !== "darwin") return command;
+
+  const env = options.env ?? process.env;
+  const candidate = isAbsolute(command)
+    ? command
+    : await (options.resolvePathCommand ?? findPathCommand)(command, env);
+  if (!candidate || !isAbsolute(candidate)) return command;
 
   try {
-    return await (options.resolveRealpath ?? realpath)(command);
+    return await (options.resolveRealpath ?? realpath)(candidate);
   } catch {
     // Preserve the original spawn error and PATH semantics when the configured
     // executable disappears between configuration loading and process start.
     return command;
   }
+}
+
+export function buildCodexSpawnEnvironment(
+  command: string,
+  env: NodeJS.ProcessEnv,
+  platform: NodeJS.Platform = process.platform,
+): NodeJS.ProcessEnv {
+  if (platform !== "darwin" || !isAbsolute(command)) return env;
+
+  const binaryDirectory = dirname(command);
+  const pathSeparator = ":";
+  const pathEntries = (env.PATH ?? "").split(pathSeparator).filter(Boolean);
+  return {
+    ...env,
+    PATH: [binaryDirectory, ...pathEntries.filter((entry) => entry !== binaryDirectory)].join(pathSeparator),
+    ...(env.CODEX_COMMAND !== undefined ? { CODEX_COMMAND: command } : {}),
+  };
+}
+
+async function findPathCommand(
+  command: string,
+  env: NodeJS.ProcessEnv,
+): Promise<string | undefined> {
+  if (command.includes("/")) return undefined;
+  for (const directory of (env.PATH ?? "").split(delimiter).filter(Boolean)) {
+    const candidate = join(directory, command);
+    try {
+      await access(candidate, constants.X_OK);
+      return candidate;
+    } catch {
+      // Continue through PATH using normal executable lookup semantics.
+    }
+  }
+  return undefined;
 }
 
 function delay(ms: number): Promise<void> {
