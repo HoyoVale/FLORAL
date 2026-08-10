@@ -1,5 +1,7 @@
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 import { EventEmitter } from "node:events";
+import { realpath } from "node:fs/promises";
+import { isAbsolute } from "node:path";
 import { createInterface, type Interface as ReadlineInterface } from "node:readline";
 import {
   CodexRuntimeError,
@@ -67,7 +69,8 @@ export class CodexRpcClient extends EventEmitter {
     this.#stopping = false;
     this.#stderrLines.length = 0;
 
-    const child = spawn(this.options.command, this.options.args, {
+    const command = await resolveCodexSpawnCommand(this.options.command);
+    const child = spawn(command, this.options.args, {
       cwd: this.options.cwd,
       stdio: ["pipe", "pipe", "pipe"],
       env: this.options.env ?? process.env,
@@ -329,6 +332,25 @@ export class CodexRpcClient extends EventEmitter {
       pending.reject(error);
     }
     this.#pending.clear();
+  }
+}
+
+export async function resolveCodexSpawnCommand(
+  command: string,
+  options: {
+    platform?: NodeJS.Platform | undefined;
+    resolveRealpath?: ((path: string) => Promise<string>) | undefined;
+  } = {},
+): Promise<string> {
+  const platform = options.platform ?? process.platform;
+  if (platform !== "darwin" || !isAbsolute(command)) return command;
+
+  try {
+    return await (options.resolveRealpath ?? realpath)(command);
+  } catch {
+    // Preserve the original spawn error and PATH semantics when the configured
+    // executable disappears between configuration loading and process start.
+    return command;
   }
 }
 
