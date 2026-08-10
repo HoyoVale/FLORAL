@@ -91,6 +91,7 @@ function harness(input: {
   const audits: AuditEventInput[] = [];
   const agent = new FakeGoalAgent();
   const store = new MemoryThreadStore();
+  const continuationTexts: string[] = [];
   let nextHandle = 1;
   const coordinator = new GoalContinuationCoordinator({
     agent,
@@ -104,6 +105,7 @@ function harness(input: {
     maxWallTimeMs: input.maxWallTimeMs ?? 0,
     isConversationBusy: () => false,
     runContinuation: async (run) => {
+      continuationTexts.push(run.message.text);
       await agent.run({ text: "continue", cwd: run.record.projectCwd });
     },
     now: () => now,
@@ -121,6 +123,8 @@ function harness(input: {
     },
     cancelSchedule: (handle) => {
       canceled.add(handle as number);
+      const index = timers.findIndex((timer) => timer.handle === handle);
+      if (index >= 0) timers.splice(index, 1);
     },
   });
   return {
@@ -130,6 +134,7 @@ function harness(input: {
     audits,
     timers,
     canceled,
+    continuationTexts,
     async advance(ms: number): Promise<void> {
       now += ms;
       const due = timers.splice(0).filter((timer) =>
@@ -187,6 +192,7 @@ describe("GoalContinuationCoordinator", () => {
     await h.advance(30);
     expect(h.agent.runCount).toBe(1);
     expect((await h.store.loadGoalContinuation("conv-1"))?.turnCount).toBe(1);
+    expect(h.continuationTexts[0]).toContain("目标：test goal");
   });
 
   it("re-arms continuation after /goal active", async () => {
@@ -387,4 +393,47 @@ describe("GoalContinuationCoordinator", () => {
     expect(h.audits.some((event) => event.eventType === "goal.continuation_stopped"))
       .toBe(true);
   });
+
+  it("retries a retryable failure before disabling continuation", async () => {
+    const h = harness();
+    await h.coordinator.start();
+    await h.coordinator.authorize({ ...authorizeInput, enable: true });
+    h.agent.goal = makeGoal("thread-1", "active");
+
+    await h.coordinator.onRunCompleted({
+      conversationId: "conv-1",
+      deliveryConversationId: "chat-1",
+      threadId: "thread-1",
+      projectCwd: "/project",
+      projectName: "project",
+    });
+    await h.coordinator.onRunFailed("conv-1", retryableError());
+    expect((await h.store.loadGoalContinuation("conv-1"))?.enabled).toBe(true);
+    expect(h.timers).toHaveLength(1);
+    expect(
+      h.audits.some((event) => event.eventType === "goal.continuation_retry_scheduled"),
+    ).toBe(true);
+
+    await h.advance(30);
+    expect(h.agent.runCount).toBe(1);
+  });
+
+  it("disables continuation after exhausting retries", async () => {
+    const h = harness();
+    await h.coordinator.start();
+    await h.coordinator.authorize({ ...authorizeInput, enable: true });
+    h.agent.goal = makeGoal("thread-1", "active");
+
+    await h.coordinator.onRunFailed("conv-1", retryableError());
+    await h.coordinator.onRunFailed("conv-1", retryableError());
+    await h.coordinator.onRunFailed("conv-1", retryableError());
+    expect((await h.store.loadGoalContinuation("conv-1"))?.enabled).toBe(false);
+    expect(
+      h.audits.some((event) => event.eventType === "goal.continuation_stopped"),
+    ).toBe(true);
+  });
 });
+
+function retryableError(): Error {
+  return Object.assign(new Error("request timeout"), { retryable: true });
+}

@@ -58,10 +58,11 @@ export function buildAgentStatusCard(
   }
   if (snapshot.goal) {
     lines.push("");
-    lines.push(`**Goal**：${snapshot.goal.status}`);
-    lines.push(`目标：${escapeMarkdown(objective)}`);
+    lines.push(`**Goal 状态**：${goalStatusLabel(snapshot.goal.status)}`);
+    const truncated = truncateWithHint(objective, 120);
+    lines.push(`目标：${escapeMarkdown(truncated.text)}${truncated.hint}`);
     lines.push(
-      `Token：${String(snapshot.goal.tokensUsed)} / ${
+      `Token 用量：${String(snapshot.goal.tokensUsed)} / ${
         snapshot.goal.tokenBudget === null ? "不限" : String(snapshot.goal.tokenBudget)
       }`,
     );
@@ -224,6 +225,29 @@ function statusTemplate(state: AgentStatusSnapshot["state"]): string {
     case "stopped": return "red";
     default: return "green";
   }
+}
+
+function goalStatusLabel(status: string): string {
+  switch (status) {
+    case "active": return "进行中";
+    case "paused": return "已暂停";
+    case "blocked": return "已阻塞";
+    case "budgetLimited": return "预算受限";
+    case "usageLimited": return "用量受限";
+    case "complete": return "已完成";
+    default: return status;
+  }
+}
+
+function truncateWithHint(
+  value: string,
+  maxCharacters: number,
+): { text: string; hint: string } {
+  if (value.length <= maxCharacters) return { text: value, hint: "" };
+  return {
+    text: `${value.slice(0, Math.max(0, maxCharacters - 1))}…`,
+    hint: "（完整目标见 /goal status）",
+  };
 }
 
 function formatElapsed(ms: number): string {

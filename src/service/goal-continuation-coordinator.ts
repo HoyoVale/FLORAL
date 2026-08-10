@@ -43,6 +43,7 @@ export interface GoalContinuationCoordinatorOptions {
 }
 
 const CONTINUATION_TRANSPORT = "feishu" as const;
+const MAX_CONTINUATION_RETRIES = 2;
 
 type ResolvedGoalContinuationOptions = Omit<
   GoalContinuationCoordinatorOptions,
@@ -59,6 +60,7 @@ export class GoalContinuationCoordinator {
   readonly #agent: AgentGoalRuntime;
   readonly #options: ResolvedGoalContinuationOptions;
   readonly #pendingTimers = new Map<string, unknown>();
+  readonly #retryCounts = new Map<string, number>();
   #started = false;
   #stopped = false;
 
@@ -243,6 +245,7 @@ export class GoalContinuationCoordinator {
     record.deliveryConversationId = input.deliveryConversationId;
     record.projectCwd = input.projectCwd;
     record.projectName = input.projectName;
+    this.#retryCounts.delete(input.conversationId);
     await this.#options.store.saveGoalContinuation(record);
     await this.#scheduleNext(record);
   }
@@ -250,6 +253,33 @@ export class GoalContinuationCoordinator {
   async onRunFailed(conversationId: string, error: unknown): Promise<void> {
     const record = await this.#options.store.loadGoalContinuation(conversationId);
     if (!record?.authorized) return;
+    const retryable = isRetryableError(error);
+    const retries = this.#retryCounts.get(conversationId) ?? 0;
+    if (retryable && retries < MAX_CONTINUATION_RETRIES && !this.#stopped) {
+      this.#retryCounts.set(conversationId, retries + 1);
+      record.updatedAt = this.#options.now();
+      await this.#cancelPending(record);
+      await this.#options.store.saveGoalContinuation(record);
+      await this.#audit({
+        conversationId,
+        eventType: "goal.continuation_retry_scheduled",
+        payload: {
+          threadId: record.threadId,
+          attempt: retries + 1,
+          maxAttempts: MAX_CONTINUATION_RETRIES,
+          errorType: error instanceof Error ? error.name : "Error",
+        },
+      });
+      await this.#notify(
+        record.deliveryConversationId,
+        [
+          `本轮 Goal 自动续跑失败（${error instanceof Error ? error.name : "Error"}）。`,
+          `将在 ${String(Math.round(this.#options.cooldownMs / 1_000))} 秒后自动重试（第 ${String(retries + 1)}/${String(MAX_CONTINUATION_RETRIES)} 次）。`,
+        ].join("\n"),
+      );
+      await this.#scheduleNext(record);
+      return;
+    }
     record.enabled = false;
     record.updatedAt = this.#options.now();
     await this.#cancelPending(record);
@@ -380,7 +410,7 @@ export class GoalContinuationCoordinator {
       },
     });
 
-    const message = this.#continuationMessage(record);
+    const message = this.#continuationMessage(record, goal);
     const resolved: ResolvedGatewayIdentity = {
       userId: record.userId,
       role: record.role,
@@ -473,7 +503,10 @@ export class GoalContinuationCoordinator {
     if (send) await send(conversationId, text).catch(() => undefined);
   }
 
-  #continuationMessage(record: GoalContinuationRecord): IncomingMessage {
+  #continuationMessage(
+    record: GoalContinuationRecord,
+    goal: AgentGoal,
+  ): IncomingMessage {
     return {
       id: `goal-continuation:${record.threadId}:${record.turnCount}:${this.#options.now()}`,
       identity: {
@@ -484,8 +517,11 @@ export class GoalContinuationCoordinator {
       },
       text: [
         "[FLORAL Goal 自动续跑]",
-        `第 ${String(record.turnCount)} 轮。当前 Goal 仍为 active，请继续推进目标；不要重复已完成的工作。`,
+        `第 ${String(record.turnCount)} 轮。当前 Goal 状态：${goal.status}。`,
+        `目标：${goal.objective}`,
+        "请继续推进上述目标，不要重复已完成的工作。",
         "若目标已经完成，请把 Goal 状态更新为 complete；若需要更多信息，请明确说明还缺什么。",
+        "如果目标只需要直接回答或总结，请直接完成，避免不必要的工具调用。",
       ].join("\n"),
       receivedAt: new Date(this.#options.now()),
     };
@@ -497,4 +533,9 @@ function supportsGoalRuntime(
 ): agent is AgentRuntime & AgentGoalRuntime {
   return typeof (agent as Partial<AgentGoalRuntime>).getGoal === "function"
     && typeof (agent as Partial<AgentGoalRuntime>).setGoal === "function";
+}
+
+function isRetryableError(error: unknown): boolean {
+  if (typeof error !== "object" || error === null) return false;
+  return (error as { retryable?: unknown }).retryable === true;
 }

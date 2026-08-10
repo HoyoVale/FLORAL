@@ -68,6 +68,8 @@ function harness() {
     },
     cancelSchedule: (handle) => {
       canceled.add(handle as number);
+      const index = timers.findIndex((timer) => timer.handle === handle);
+      if (index >= 0) timers.splice(index, 1);
     },
   });
   return {

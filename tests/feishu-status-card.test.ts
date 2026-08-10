@@ -29,7 +29,8 @@ describe("agent status card", () => {
     const elements = (card.body as Record<string, unknown>).elements as Array<Record<string, unknown>>;
     const markdown = elements[0] as Record<string, unknown>;
     expect(String(markdown.content)).toContain("第 3 轮");
-    expect(String(markdown.content)).toContain("Goal");
+    expect(String(markdown.content)).toContain("**Goal 状态**：进行中");
+    expect(String(markdown.content)).toContain("Token 用量：42 / 不限");
     expect(String(markdown.content)).toContain("FLORAL");
     const controls = elements[1] as Record<string, unknown>;
     const columns = controls.columns as Array<Record<string, unknown>>;

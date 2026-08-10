@@ -12,7 +12,9 @@ describe("Phase 8G reliability architecture", () => {
       // gateway-goal-continuation facade (separate frozen budget below).
       "src/service/gateway.ts": 2_950,
       "src/service/gateway-goal-continuation.ts": 430,
-      "src/service/goal-continuation-coordinator.ts": 520,
+      // Retryable-failure handling (up to 2 retries) raised the coordinator
+      // budget from 520 to 560 lines.
+      "src/service/goal-continuation-coordinator.ts": 560,
       "src/service/agent-status-card-controller.ts": 260,
       "src/agent/codex-app-server.ts": 3_250,
       "src/agent/codex-goals.ts": 220,

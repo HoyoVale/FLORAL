@@ -56,6 +56,12 @@ the Agent start working after the cooldown.
     the loop stops.
 - The global DeepSeek cost guard still applies to every turn; when the provider
   gate blocks, the run fails and continuation disables itself.
+- A failed continuation turn is retried up to 2 times when the failure is
+  retryable (for example Codex request timeout). Only after retries are
+  exhausted does the loop disable itself and ask the owner to run
+  `/goal continue`.
+- The continuation prompt always includes the full Goal objective, so the
+  model never has to guess what it is working toward.
 - Pending state is persisted in SQLite (`goal_continuation`). On service
   restart, any pending continuation is **quarantined** (`pending=false` + audit
   `goal.continuation_quarantined`) so a restart never silently spawns runs.
@@ -74,7 +80,8 @@ so Phase 10B uses:
   replies. Pin failures are logged and never block the run.
 
 The card shows: state (运行中/冷却中/空闲/已停止), turn number, elapsed time,
-project, native Goal status/objective/token usage, and the last tool activity.
+project, native Goal status (Chinese labels)/truncated objective/token usage,
+and the last tool activity.
 It carries 暂停/停止 buttons (owner-only, routed through the existing
 card-action channel). Updates are throttled to `feishu.status_card.update_interval_ms`
 (default 5s); failures are audited as `feishu.status_card_failed` and swallowed.
