@@ -7,6 +7,7 @@ import type {
   AgentRuntime,
   AgentSkillSummary,
   AgentThreadSummary,
+  DurableJournal,
 } from "../core/contracts.js";
 import type {
   AgentApprovalHandler,
@@ -247,6 +248,7 @@ export interface CodexAppServerOptions {
   permissionProfile?: string | undefined;
   permissionProfileCwd?: string | undefined;
   systemAwareness?: CodexSystemAwarenessOptions | undefined;
+  durableJournal?: DurableJournal | undefined;
 }
 
 interface TurnTerminalState {
@@ -303,7 +305,7 @@ export class CodexAppServerRuntime implements AgentRuntime {
   readonly #extensionSnapshots: FloralExtensionSnapshotStore;
   readonly #extensionMutationPendingVerification = new Set<string>();
   readonly #extensionVerificationShellSoftBlocked = new Set<string>();
-  readonly #contextTools = new FloralContextToolController();
+  readonly #contextTools: FloralContextToolController;
   readonly #approvalItemSummaries = new Map<string, string>();
   readonly #inFlightMcpToolCalls = new Map<string, InFlightMcpToolCall>();
   #skillsDirty = false;
@@ -334,6 +336,7 @@ export class CodexAppServerRuntime implements AgentRuntime {
     this.#manageExternalMcp = options.manageExternalMcp;
     this.#recordAppInstallHandoff = options.recordAppInstallHandoff;
     this.#recordExtensionVerification = options.recordExtensionVerification;
+    this.#contextTools = new FloralContextToolController(options.durableJournal);
     this.#permissionProfile = options.permissionProfile?.trim() || undefined;
     this.#permissionProfileCwd = options.permissionProfileCwd?.trim()
       ? resolve(options.permissionProfileCwd)

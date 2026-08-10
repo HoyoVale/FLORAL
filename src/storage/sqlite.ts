@@ -61,10 +61,18 @@ export class SqliteGatewayStore implements GatewayStore, WorkspaceStateStore, Co
     this.runQueue = new DurableRunQueueStore(db, this.durability);
   }
 
-  static async open(path: string): Promise<SqliteGatewayStore> {
-    const db = await openApplicationDatabase(path);
-    migrateGatewaySchema(db);
-    return new SqliteGatewayStore(db);
+  static async open(
+    path: string,
+    options: { busyTimeoutMs?: number | undefined } = {},
+  ): Promise<SqliteGatewayStore> {
+    const db = await openApplicationDatabase(path, options);
+    try {
+      migrateGatewaySchema(db);
+      return new SqliteGatewayStore(db);
+    } catch (error) {
+      db.close();
+      throw error;
+    }
   }
 
   async resolveIdentity(
@@ -462,19 +470,31 @@ export class SqliteGatewayStore implements GatewayStore, WorkspaceStateStore, Co
   }
 }
 
-export async function openApplicationDatabase(path: string): Promise<SqliteDatabase> {
+export async function openApplicationDatabase(
+  path: string,
+  options: { busyTimeoutMs?: number | undefined } = {},
+): Promise<SqliteDatabase> {
   await mkdir(dirname(path), { recursive: true });
+  const busyTimeoutMs = options.busyTimeoutMs ?? 5_000;
+  if (!Number.isSafeInteger(busyTimeoutMs) || busyTimeoutMs < 1 || busyTimeoutMs > 60_000) {
+    throw new Error("SQLite busy timeout must be between 1 and 60000 milliseconds");
+  }
   const packageName = "better-sqlite3";
   const module = await import(packageName) as {
     default: new (path: string) => SqliteDatabase;
   };
   const db = new module.default(path);
-  db.exec(`
-    PRAGMA journal_mode = WAL;
-    PRAGMA foreign_keys = ON;
-    PRAGMA busy_timeout = 5000;
-  `);
-  return db;
+  try {
+    db.exec(`
+      PRAGMA journal_mode = WAL;
+      PRAGMA foreign_keys = ON;
+      PRAGMA busy_timeout = ${String(busyTimeoutMs)};
+    `);
+    return db;
+  } catch (error) {
+    db.close();
+    throw error;
+  }
 }
 
 function migrateGatewaySchema(db: SqliteDatabase): void {

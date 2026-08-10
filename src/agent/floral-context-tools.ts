@@ -4,6 +4,10 @@ import type {
   AgentApprovalHandler,
   AgentApprovalRequest,
 } from "../core/types.js";
+import type {
+  DurableJournal,
+  DurableJournalRecordInput,
+} from "../core/contracts.js";
 import {
   inspectProjectContext,
   inspectProjectMemory,
@@ -136,6 +140,8 @@ export const FLORAL_CONTEXT_DYNAMIC_TOOLS = [
 export class FloralContextToolController {
   readonly #proposals = new Map<string, Map<string, ContextProposal>>();
 
+  constructor(private readonly journal?: DurableJournal | undefined) {}
+
   clear(): void {
     this.#proposals.clear();
   }
@@ -161,7 +167,7 @@ export class FloralContextToolController {
           `decision_entries=${String(memory.decisionEntries)}`,
           `issue_entries=${String(memory.issueEntries)}`,
           `ledger_entries=${String(ledger.length)}`,
-          "agents_managed_block=bootstrap-only",
+          "agents_managed_block=governed-refresh",
           "compaction=reconciliation-ready",
         ].join("\n"));
       }
@@ -183,6 +189,9 @@ export class FloralContextToolController {
         const text = readProjectContextText(call.arguments.text);
         const evidenceRefs = readProjectContextEvidenceRefs(call.arguments.evidence_refs);
         if (!target || !text || !evidenceRefs) throw new Error("invalid context proposal");
+        if (isEphemeralRuntimeFact(text)) {
+          return failed("context_proposal=denied\nreason=ephemeral-runtime-state");
+        }
         const id = `ctx-${randomUUID().replace(/-/gu, "").slice(0, 20)}`;
         const proposals = this.#proposals.get(call.threadId) ?? new Map<string, ContextProposal>();
         proposals.set(id, { id, target, text, evidenceRefs });
@@ -223,12 +232,21 @@ export class FloralContextToolController {
         if (decision !== "approve" && decision !== "approve-session") {
           return failed("context_update=denied\nreason=user-approval");
         }
-        const result = await recordProjectMemory(
-          project,
-          proposal.target,
-          proposal.text,
-          new Date(),
-          { source: "agent-proposal", evidenceRefs: proposal.evidenceRefs },
+        const result = await this.#journaled(
+          {
+            idempotencyKey: `context:${proposal.id}`,
+            eventType: "context.apply",
+            projectId: project.name.slice(0, 200),
+            payload: { target: proposal.target, evidenceRefs: proposal.evidenceRefs },
+          },
+          async () => await recordProjectMemory(
+            project,
+            proposal.target,
+            proposal.text,
+            new Date(),
+            { source: "agent-proposal", evidenceRefs: proposal.evidenceRefs },
+          ),
+          (value) => ({ changed: value.changed, ledgerEntryId: value.ledgerEntryId }),
         );
         this.#proposals.get(call.threadId)?.delete(proposal.id);
         return ok([
@@ -242,7 +260,16 @@ export class FloralContextToolController {
       if (call.tool === "verify") {
         const ledgerEntryId = readLedgerEntryId(call.arguments.ledger_entry_id);
         const verification = ledgerEntryId
-          ? await verifyProjectMemoryLedgerEntry(project, ledgerEntryId)
+          ? await this.#journaled(
+              {
+                idempotencyKey: `context:verify:${randomUUID()}`,
+                eventType: "context.verify",
+                projectId: project.name.slice(0, 200),
+                payload: { ledgerEntryId },
+              },
+              async () => await verifyProjectMemoryLedgerEntry(project, ledgerEntryId),
+              (value) => ({ present: value?.present ?? false }),
+            )
           : undefined;
         if (!verification) {
           return failed("context_verification=unavailable\nreason=ledger-entry-not-found-or-unsupported-target");
@@ -272,7 +299,15 @@ export class FloralContextToolController {
       }
 
       if (call.tool === "compact") {
-        const result = await reconcileProjectMemoryLedger(project);
+        const result = await this.#journaled(
+          {
+            idempotencyKey: `context:compact:${randomUUID()}`,
+            eventType: "context.compact",
+            projectId: project.name.slice(0, 200),
+          },
+          async () => await reconcileProjectMemoryLedger(project),
+          (value) => ({ ...value }),
+        );
         return ok([
           "context_compaction=reconciled",
           `checked=${String(result.checked)}`,
@@ -297,7 +332,19 @@ export class FloralContextToolController {
         if (decision !== "approve" && decision !== "approve-session") {
           return failed("agents_refresh=denied\nreason=user-approval");
         }
-        const result = await refreshProjectManagedInstructions(project);
+        const result = await this.#journaled(
+          {
+            idempotencyKey: `context:agents:${randomUUID()}`,
+            eventType: "context.refresh-agents",
+            projectId: project.name.slice(0, 200),
+          },
+          async () => await refreshProjectManagedInstructions(project),
+          (value) => ({
+            changed: value.changed,
+            instructionFile: value.instructionFile,
+            ledgerEntryId: value.ledgerEntryId,
+          }),
+        );
         return ok([
           `agents_refresh=${result.changed ? "updated" : "verified"}`,
           `instruction_file=${result.instructionFile}`,
@@ -311,6 +358,34 @@ export class FloralContextToolController {
       );
     }
     return failed("context_management=denied\nreason=unsupported-tool");
+  }
+
+  async #journaled<T>(
+    input: Pick<DurableJournalRecordInput, "idempotencyKey" | "eventType" | "projectId" | "payload">,
+    operation: () => Promise<T>,
+    summarize: (value: T) => Record<string, unknown>,
+  ): Promise<T> {
+    if (!this.journal) return await operation();
+    const base = { ...input, kind: "context" as const };
+    this.journal.record({ ...base, status: "accepted" });
+    try {
+      const value = await operation();
+      this.journal.record({
+        ...base,
+        status: "completed",
+        eventType: `${input.eventType}.completed`,
+        result: summarize(value),
+      });
+      return value;
+    } catch (error) {
+      this.journal.record({
+        ...base,
+        status: "failed",
+        eventType: `${input.eventType}.failed`,
+        errorCode: error instanceof Error ? error.name : "Error",
+      });
+      throw error;
+    }
   }
 }
 
@@ -333,6 +408,13 @@ function readProjectContextText(value: unknown): string | undefined {
   if (/[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F]/u.test(value)) return undefined;
   const normalized = value.replace(/\s+/gu, " ").trim();
   return normalized && Array.from(normalized).length <= 1_200 ? normalized : undefined;
+}
+
+function isEphemeralRuntimeFact(value: string): boolean {
+  return /\bpid\s*[:=#]?\s*\d+\b/iu.test(value)
+    || /\b(?:ready|running|healthy|available)\s*[:=]\s*(?:true|false)\b/iu.test(value)
+    || /\b(?:current[_ -]?(?:cost|tokens?|requests?)|cost_24h|tokens_24h|requests_hour)\s*[:=]/iu.test(value)
+    || /当前.{0,12}(?:PID|进程状态|运行状态|成本|令牌数|请求数)/u.test(value);
 }
 
 function readProjectContextEvidenceRefs(value: unknown): string[] | undefined {

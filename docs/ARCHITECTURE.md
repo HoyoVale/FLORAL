@@ -21,9 +21,11 @@ The production implementation uses SQLite WAL storage for identity, inbound rece
 ## Phase 8G reliability substrate
 
 ```text
-Inbound receipt (dedupe)
+Inbound identity + message id
         ↓
-Durable run queue + private materialized attachments
+Private attachment materialization + durable run queue commit
+        ↓
+Inbound receipt acknowledgement (dedupe)
         ↓ lease / renew / recover
 Codex turn
         ↓
@@ -32,7 +34,7 @@ Durable delivery outbox
 Owner-visible result
 ```
 
-`durable_transactions` and `durable_transaction_events` are the required lifecycle journal. Agent runs and deliveries never advance past acceptance without a persisted row. Expired execution leases are recovered at startup; attempts are bounded. Non-idempotent transports do not blindly retry ambiguous sends. Operational audit events remain best-effort telemetry and are not substitutes for this journal.
+`durable_transactions` and `durable_transaction_events` are the required lifecycle journal. Agent runs and deliveries never advance past acceptance without a persisted row. Domain-specific maintenance, extension, and Context ledgers keep their specialized receipts and mirror lifecycle state into this unified journal. Expired delivery leases recover at startup; a not-yet-started run remains resumable, while an interrupted executing turn is quarantined and reported because it may already have mutated an external system. Attempts are bounded. Non-idempotent transports do not blindly retry ambiguous sends. Operational audit events remain best-effort telemetry and are not substitutes for this journal.
 
 Reliability orchestration is split into `DurableRunCoordinator`, `DeliveryOutboxCoordinator`, and `StartupRecoveryCoordinator`; `GatewayService` retains product routing and invokes those boundaries.
 
@@ -75,6 +77,8 @@ Project/
 `/project new <name>` bootstraps this structure before the first Codex thread is created. Existing projects can opt in with `/project context init`; the command never replaces existing context files. If an `AGENTS.override.md` already exists, FLORAL links the shared-context guidance there because Codex gives it precedence over `AGENTS.md`. Otherwise it appends a bounded managed block to the existing `AGENTS.md`, or creates a minimal `AGENTS.md` if none exists.
 
 The `.floral/*.md` files are not automatically injected or summarized by FLORAL. The managed AGENTS block tells Codex where the shared project documents live; Codex then follows its normal project-instruction behavior. Phase 7.3A is bootstrap/read-mostly infrastructure only: automatic extraction, consolidation, and memory writing are deferred to Phase 7.3B.
+
+Phase 8G adds a governed `floral_context` control surface over these files: proposals, owner-scoped apply, receipt verification/history/freshness reconciliation, and managed-block-only AGENTS refresh. It does not authorize arbitrary file or shell writes and never replaces human-authored AGENTS content outside FLORAL's markers.
 
 ## Phase 7.3B explicit durable project memory
 

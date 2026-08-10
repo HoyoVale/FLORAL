@@ -236,9 +236,9 @@ export class GatewayService {
           );
         }
       }
+      this.options.startupRecovery?.recover();
       await this.agent.start();
       await this.transport.start((message) => this.#trackMessage(message));
-      this.options.startupRecovery?.recover();
       await this.options.deliveryOutbox?.start();
       this.#started = true;
       for (const conversationId of this.options.durableRuns?.recover() ?? []) {

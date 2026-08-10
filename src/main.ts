@@ -39,6 +39,7 @@ import { DurableRunCoordinator } from "./service/durable-run-coordinator.js";
 import { StartupRecoveryCoordinator } from "./service/startup-recovery-coordinator.js";
 import { createDefaultSystemAwarenessReader } from "./system-awareness/index.js";
 import { SqliteGatewayStore } from "./storage/sqlite.js";
+import { SqliteDurableJournal } from "./storage/durable-journal.js";
 import { FeishuTransport } from "./transport/feishu/feishu-transport.js";
 import { MockQqTransport } from "./transport/qq/mock-qq-transport.js";
 import { QqRuntimeAdoptionTransport } from "./transport/qq/qq-runtime-adoption-transport.js";
@@ -84,6 +85,8 @@ await serviceState?.write("starting");
 
 const chatTransport = resolveEffectiveChatTransport(authority.effective);
 const transport: ChatTransport = createChatTransport(chatTransport);
+const store = await SqliteGatewayStore.open(resolve(env.DATABASE_PATH));
+const durableJournal = new SqliteDurableJournal(store.durability);
 
 const agent: AgentRuntime = env.CODEX_MODE === "real"
   ? new ManagedCodexDeepSeekRuntime(env, {}, {
@@ -95,10 +98,10 @@ const agent: AgentRuntime = env.CODEX_MODE === "real"
         authority,
         environment: envCompatibility.source,
       },
+      durableJournal,
     })
   : new MockAgentRuntime();
 
-const store = await SqliteGatewayStore.open(resolve(env.DATABASE_PATH));
 const deliveryOutbox = new DeliveryOutboxCoordinator(transport, store.outbox, {
   instanceId: `gateway-${lock.instanceId}`,
 });
@@ -172,6 +175,7 @@ const systemMaintenance = serviceState
         failureThreshold: env.FLORAL_MAINTENANCE_FAILURE_THRESHOLD,
         selfHealIntervalMs: env.FLORAL_MAINTENANCE_SELF_HEAL_INTERVAL_MS,
       },
+      durableJournal,
     })
   : undefined;
 await systemMaintenance?.initialize();

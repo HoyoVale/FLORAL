@@ -19,6 +19,7 @@ import type {
   AgentSystemMaintenanceRequest,
   AgentSystemMaintenanceResult,
 } from "../core/types.js";
+import type { DurableJournal, DurableJournalStatus } from "../core/contracts.js";
 
 export const SYSTEM_MAINTENANCE_SCHEMA_VERSION = 1 as const;
 
@@ -67,6 +68,8 @@ export interface SystemMaintenanceControllerOptions {
   createId?: (() => string) | undefined;
   spawnWorker?: ((command: string, args: string[]) => ChildProcess) | undefined;
   autonomy?: MaintenanceAutonomyMachinePolicy | undefined;
+  durableJournal?: DurableJournal | undefined;
+  recoveryTimeoutMs?: number | undefined;
 }
 
 export class SystemMaintenanceController {
@@ -78,6 +81,8 @@ export class SystemMaintenanceController {
   readonly #createId: () => string;
   readonly #spawnWorker: (command: string, args: string[]) => ChildProcess;
   readonly #autonomy: MaintenanceAutonomyMachinePolicy;
+  readonly #durableJournal: DurableJournal | undefined;
+  readonly #recoveryTimeoutMs: number;
   #preparing = false;
 
   constructor(options: SystemMaintenanceControllerOptions) {
@@ -95,6 +100,11 @@ export class SystemMaintenanceController {
       failureThreshold: 2,
       selfHealIntervalMs: 60_000,
     };
+    this.#durableJournal = options.durableJournal;
+    this.#recoveryTimeoutMs = options.recoveryTimeoutMs ?? 120_000;
+    if (!Number.isSafeInteger(this.#recoveryTimeoutMs) || this.#recoveryTimeoutMs < 90_000) {
+      throw new Error("Maintenance recovery timeout must be at least 90000 milliseconds");
+    }
     this.#spawnWorker = options.spawnWorker ?? ((command, args) => spawn(command, args, {
       detached: true,
       stdio: "ignore",
@@ -122,10 +132,14 @@ export class SystemMaintenanceController {
         updatedAt: this.#now().toISOString(),
       });
     }
+    await this.#reconcileInterruptedTransaction();
     await this.#reconcileLatestAutomaticTransaction();
+    const latest = await this.readLatest();
+    if (latest) this.#recordDurableState(latest);
   }
 
   async autonomyStatus(): Promise<MaintenanceAutonomyStatus> {
+    await this.#reconcileInterruptedTransaction();
     await this.#reconcileLatestAutomaticTransaction();
     const now = this.#now();
     const state = await this.#ensureAutonomyState();
@@ -261,6 +275,7 @@ export class SystemMaintenanceController {
         ...(trigger === "self-heal" ? { notificationStatus: "pending" as const } : {}),
       };
       await writeSystemMaintenanceTransaction(this.#directory, transaction);
+      this.#recordDurableState(transaction);
       if (trigger !== "manual") await this.#recordAutomaticAction(now);
       return {
         transactionId: id,
@@ -286,6 +301,7 @@ export class SystemMaintenanceController {
       updatedAt: this.#now().toISOString(),
     };
     await writeSystemMaintenanceTransaction(this.#directory, handoff);
+    this.#recordDurableState(handoff);
     try {
       const child = this.#spawnWorker(process.execPath, [
         this.#workerPath,
@@ -295,12 +311,14 @@ export class SystemMaintenanceController {
       ]);
       child.unref();
     } catch (error) {
-      await writeSystemMaintenanceTransaction(this.#directory, {
+      const failed: SystemMaintenanceTransaction = {
         ...handoff,
         status: "failed",
         updatedAt: this.#now().toISOString(),
         errorType: safeErrorType(error),
-      });
+      };
+      await writeSystemMaintenanceTransaction(this.#directory, failed);
+      this.#recordDurableState(failed);
       throw error;
     }
   }
@@ -311,13 +329,15 @@ export class SystemMaintenanceController {
   ): Promise<boolean> {
     const transaction = await readSystemMaintenanceTransaction(this.#directory, transactionId);
     if (!transaction || transaction.status !== "approved-queued") return false;
-    await writeSystemMaintenanceTransaction(this.#directory, {
+    const cancelled: SystemMaintenanceTransaction = {
       ...transaction,
       status: "cancelled",
       updatedAt: this.#now().toISOString(),
       verification: undefined,
       cancellationReason: reason,
-    });
+    };
+    await writeSystemMaintenanceTransaction(this.#directory, cancelled);
+    this.#recordDurableState(cancelled);
     return true;
   }
 
@@ -425,6 +445,21 @@ export class SystemMaintenanceController {
     });
   }
 
+  async #reconcileInterruptedTransaction(): Promise<void> {
+    const latest = await this.readLatest();
+    if (!latest || (latest.status !== "handoff" && latest.status !== "running")) return;
+    const updatedAt = Date.parse(latest.updatedAt);
+    if (!Number.isFinite(updatedAt) || this.#now().getTime() - updatedAt < this.#recoveryTimeoutMs) return;
+    const failed: SystemMaintenanceTransaction = {
+      ...latest,
+      status: "failed",
+      updatedAt: this.#now().toISOString(),
+      errorType: "MaintenanceRecoveryTimeout",
+    };
+    await writeSystemMaintenanceTransaction(this.#directory, failed);
+    this.#recordDurableState(failed);
+  }
+
   #transactionsDirectory(): string {
     return join(this.#directory, "transactions");
   }
@@ -436,6 +471,34 @@ export class SystemMaintenanceController {
     }
     return id;
   }
+
+  #recordDurableState(transaction: SystemMaintenanceTransaction): void {
+    this.#durableJournal?.record({
+      kind: "maintenance",
+      idempotencyKey: `maintenance:${transaction.id}`,
+      correlationId: transaction.id,
+      status: maintenanceJournalStatus(transaction.status),
+      eventType: `maintenance.${transaction.status}`,
+      payload: {
+        componentId: transaction.componentId,
+        actionId: transaction.actionId,
+        trigger: transaction.trigger ?? "manual",
+      },
+      ...(transaction.status === "verified"
+        ? { result: { verification: transaction.verification ?? "verified" } }
+        : {}),
+      ...(transaction.status === "failed"
+        ? { errorCode: transaction.errorType ?? "maintenance-failed" }
+        : {}),
+    });
+  }
+}
+
+function maintenanceJournalStatus(status: SystemMaintenanceStatus): DurableJournalStatus {
+  if (status === "approved-queued") return "accepted";
+  if (status === "handoff" || status === "running") return "waiting";
+  if (status === "verified") return "completed";
+  return status;
 }
 
 export async function readLatestSystemMaintenanceTransaction(

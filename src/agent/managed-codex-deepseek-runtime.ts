@@ -33,6 +33,7 @@ import {
   type AgentRuntime,
   type AgentSkillSummary,
   type AgentThreadSummary,
+  type DurableJournal,
 } from "../core/contracts.js";
 import type {
   AgentEvent,
@@ -144,6 +145,7 @@ export interface ManagedCodexDeepSeekDependencies {
     recordExtensionVerification: (result: ExtensionVerificationResult) => Promise<void>;
     permissionProfile?: string | undefined;
     permissionProfileCwd?: string | undefined;
+    durableJournal?: DurableJournal | undefined;
   }) => AgentRuntime) | undefined;
   resolveExternalSkillRoots?: (() => Promise<string[]>) | undefined;
   externalSkillCatalog?: (() => Promise<string>) | undefined;
@@ -177,6 +179,7 @@ export interface ManagedCodexDeepSeekRuntimeOptions {
   codexSandboxMode?: "read-only" | "workspace-write" | undefined;
   codexApprovalsReviewer?: "user" | undefined;
   systemAwareness?: ManagedSystemAwarenessOptions | undefined;
+  durableJournal?: DurableJournal | undefined;
 }
 
 export class ManagedCodexDeepSeekRuntime implements AgentRuntime {
@@ -436,6 +439,7 @@ export class ManagedCodexDeepSeekRuntime implements AgentRuntime {
     this.#sharedSkillRoots = uniqueAbsolutePaths([builtInSkillRoot, ...externalSkillRoots]);
     process.stderr.write(`agent.stack.skills.roots=${String(this.#sharedSkillRoots.length)}\n`);
     process.stderr.write(`agent.stack.skills.external=${String(externalSkillRoots.length)}\n`);
+    await this.#extensionControlLedgerForRuntime().initialize();
     this.#externalMcpRegistry = await (this.dependencies.readExternalMcpRegistry?.()
       ?? this.#externalMcpManagerForRuntime().readRegistry());
     process.stderr.write(
@@ -677,6 +681,7 @@ export class ManagedCodexDeepSeekRuntime implements AgentRuntime {
       recordExtensionVerification: async (result: ExtensionVerificationResult) => {
         await this.#extensionControlLedgerForRuntime().recordVerification(result);
       },
+      durableJournal: this.options.durableJournal,
       ...(permissionScope
         ? {
             permissionProfile: permissionScope.profile,
@@ -878,8 +883,8 @@ export class ManagedCodexDeepSeekRuntime implements AgentRuntime {
     if (!this.#extensionControlLedger) {
       this.#extensionControlLedger = new ExtensionControlLedger({
         directory: resolveExtensionControlDirectory(process.cwd(), this.env.DATA_DIR),
+        journal: this.options.durableJournal,
       });
-      void this.#extensionControlLedger.initialize().catch(() => undefined);
     }
     return this.#extensionControlLedger;
   }
@@ -1203,6 +1208,7 @@ function createCodexRuntime(
     recordExtensionVerification: (result: ExtensionVerificationResult) => Promise<void>;
     permissionProfile?: string | undefined;
     permissionProfileCwd?: string | undefined;
+    durableJournal?: DurableJournal | undefined;
   },
   systemAwareness?: ManagedSystemAwarenessOptions | undefined,
 ): AgentRuntime {
@@ -1258,6 +1264,7 @@ function createCodexRuntime(
     manageExternalMcp: execution.manageExternalMcp,
     recordAppInstallHandoff: execution.recordAppInstallHandoff,
     recordExtensionVerification: execution.recordExtensionVerification,
+    durableJournal: execution.durableJournal,
     permissionProfile: execution.permissionProfile,
     permissionProfileCwd: execution.permissionProfileCwd,
     ...(systemRuntime ? { systemAwareness: systemRuntime } : {}),

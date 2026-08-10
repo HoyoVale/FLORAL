@@ -141,6 +141,15 @@ export class DurableStateStore {
     return transaction;
   }
 
+  findByIdempotency(
+    kind: DurableTransactionKind,
+    idempotencyKey: string,
+  ): DurableTransaction | undefined {
+    assertKind(kind);
+    assertToken(idempotencyKey, 240, "idempotency key");
+    return this.#findByIdempotency(kind, idempotencyKey);
+  }
+
   transition(
     id: string,
     input: TransitionDurableTransactionInput,

@@ -611,6 +611,8 @@ describe("GatewayService identity and commands", () => {
 
     const status = transport.sent.at(-1)?.text ?? "";
     expect(status).toContain("FLORAL 正常运行");
+    expect(status).toContain("Agent：正常");
+    expect(status).toContain("Transport：正常（test-transport）");
     expect(status).toContain("状态：空闲");
     expect(status).toContain("会话：已建立");
     expect(status).toContain("成本守卫：正常");

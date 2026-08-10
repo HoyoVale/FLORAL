@@ -68,6 +68,8 @@ const required = [
   "docs/PHASE5_AGENT_COST_GUARD.md",
   "docs/PHASE5_AUTHORIZATION_APPROVAL_AUTHORITY.md",
   "docs/PHASE5_CONTROLLED_CAPABILITY_ACTIVATION.md",
+  "docs/PHASE8G_RELIABILITY_ARCHITECTURE.md",
+  "docs/PHASE8G_COMPLETION_AUDIT.md",
   "infra/searxng/compose.yaml",
   "infra/searxng/settings.template.yml", "src/search/searxng.ts",
   "src/runtime/process-lock.ts", "src/runtime/service-state.ts",

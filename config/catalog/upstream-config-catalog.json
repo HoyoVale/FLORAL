@@ -1029,7 +1029,7 @@
       "component": "floral",
       "classification": "floral-owned",
       "file": "src/storage/sqlite.ts",
-      "needle": "PRAGMA busy_timeout = 5000;",
+      "needle": "const busyTimeoutMs = options.busyTimeoutMs ?? 5_000;",
       "risk": "Contention behavior is implicit and should become an effective-config observation."
     },
     {

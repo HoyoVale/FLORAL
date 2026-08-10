@@ -12,6 +12,7 @@ Status: implementation gate for Windows validation, Mac validation, and Feishu o
 - Feishu retries use a stable per-message/per-chunk UUID derived from the outbox idempotency key.
 - A transport without an idempotent send contract never receives an automatic replay after an ambiguous failure.
 - Every startup recovery is itself a journalled maintenance transaction.
+- Maintenance, extension, and governed Context domain ledgers retain their specialized receipts and mirror lifecycle state into the unified SQLite durable journal; worker-completed maintenance is reconciled during startup.
 - Owner `auto`/`full` conversation mode persists in SQLite; a lowered machine ceiling prevents a stored `full` value from becoming effective.
 - Project Context writes remain proposal- and authorization-gated; verification records freshness and reconciliation marks missing evidence stale.
 - Context compaction reconciles receipts immediately, and the approval-gated `refresh_agents` action replaces only FLORAL's managed `AGENTS.md` block while preserving human-authored content.
@@ -50,7 +51,7 @@ The owner profile uses the official remote endpoint and GitHub's documented tool
 | Disk full during enqueue | User task is not acknowledged as durable | required journal gate |
 | MCP startup/auth failure | Degrade and report exact server/auth state | no shell bypass |
 | Extension apply succeeds, reload fails | Existing extension transaction stays pending verification | extension transaction id |
-| Maintenance restart interrupted | Existing bounded maintenance ledger/recovery applies | maintenance transaction id |
+| Maintenance restart interrupted | A handoff/running receipt older than the worker verification window fails during reconciliation and releases the control plane | maintenance transaction id |
 | Context body/ledger drift | Verify/reconcile marks receipt stale | content hash marker |
 
 ## Operator UX

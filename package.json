@@ -64,7 +64,7 @@
     "codex:compat:capture": "tsx scripts/codex-deepseek-web-search-probe.ts --capture-compat",
     "codex:compat:check": "tsx scripts/codex-compat-check.ts",
     "bridge:faults:check": "vitest run tests/bridge-retry.test.ts tests/deepseek-stream.test.ts tests/bridge-concurrency.test.ts tests/responses-bridge-faults.test.ts",
-    "reliability:check": "vitest run tests/durable-state.test.ts tests/durable-outbox.test.ts tests/delivery-outbox-coordinator.test.ts tests/durable-run-queue.test.ts tests/gateway-durable-run-queue.test.ts tests/startup-recovery-coordinator.test.ts tests/runtime-data-git-boundary.test.ts tests/reliability-architecture.test.ts tests/reliability-soak.test.ts",
+    "reliability:check": "vitest run tests/durable-state.test.ts tests/durable-domain-journal.test.ts tests/durable-storage-faults.test.ts tests/durable-outbox.test.ts tests/delivery-outbox-coordinator.test.ts tests/durable-run-queue.test.ts tests/gateway-durable-run-queue.test.ts tests/startup-recovery-coordinator.test.ts tests/bridge-retry.test.ts tests/deepseek-stream.test.ts tests/responses-bridge-faults.test.ts tests/codex-rpc-client.test.ts tests/system-maintenance.test.ts tests/extension-control.test.ts tests/feishu-transport.test.ts tests/runtime-data-git-boundary.test.ts tests/reliability-architecture.test.ts tests/reliability-soak.test.ts",
     "searxng:prepare": "tsx scripts/searxng.ts prepare",
     "searxng:up": "tsx scripts/searxng.ts up",
     "searxng:down": "tsx scripts/searxng.ts down",

@@ -4,6 +4,7 @@ import { dirname, join, resolve } from "node:path";
 import { CURATED_EXTERNAL_MCP, type ExternalMcpCatalogId } from "./external-mcp-registry.js";
 import { CURATED_EXTERNAL_SKILLS, type ExternalSkillCatalogId } from "../skills/external-skill-registry.js";
 import type { SystemFactSnapshot, SystemSnapshot } from "../system-awareness/system-types.js";
+import type { DurableJournal, DurableJournalStatus } from "../core/contracts.js";
 
 export const EXTENSION_CONTROL_SCHEMA_VERSION = 1 as const;
 
@@ -76,15 +77,18 @@ export class ExtensionControlLedger {
   readonly #directory: string;
   readonly #now: () => Date;
   readonly #createId: () => string;
+  readonly #journal: DurableJournal | undefined;
 
   constructor(options: {
     directory: string;
     now?: (() => Date) | undefined;
     createId?: (() => string) | undefined;
+    journal?: DurableJournal | undefined;
   }) {
     this.#directory = resolve(options.directory);
     this.#now = options.now ?? (() => new Date());
     this.#createId = options.createId ?? (() => randomBytes(8).toString("hex").toUpperCase());
+    this.#journal = options.journal;
   }
 
   async initialize(): Promise<void> {
@@ -92,6 +96,8 @@ export class ExtensionControlLedger {
     await mkdir(join(this.#directory, "transactions"), { recursive: true, mode: 0o700 });
     await chmod(this.#directory, 0o700).catch(() => undefined);
     await chmod(join(this.#directory, "transactions"), 0o700).catch(() => undefined);
+    const latest = await readLatestExtensionControlTransaction(this.#directory);
+    if (latest) this.#recordDurableState(latest);
   }
 
   async recordMutation(input: {
@@ -120,6 +126,7 @@ export class ExtensionControlLedger {
       verification: "fresh-turn-required",
     };
     await writeExtensionControlTransaction(this.#directory, transaction);
+    this.#recordDurableState(transaction);
     return transaction;
   }
 
@@ -137,6 +144,7 @@ export class ExtensionControlLedger {
       verification: "user-mediated-install-or-authentication-pending",
     };
     await writeExtensionControlTransaction(this.#directory, transaction);
+    this.#recordDurableState(transaction);
     return transaction;
   }
 
@@ -160,6 +168,7 @@ export class ExtensionControlLedger {
       errorType: safeErrorType(input.error),
     };
     await writeExtensionControlTransaction(this.#directory, transaction);
+    this.#recordDurableState(transaction);
     return transaction;
   }
 
@@ -173,6 +182,7 @@ export class ExtensionControlLedger {
       updatedAt: this.#now().toISOString(),
     };
     await writeExtensionControlTransaction(this.#directory, next);
+    this.#recordDurableState(next);
     return next;
   }
 
@@ -187,6 +197,33 @@ export class ExtensionControlLedger {
     }
     return id;
   }
+
+  #recordDurableState(transaction: ExtensionControlTransaction): void {
+    this.#journal?.record({
+      kind: "extension",
+      idempotencyKey: `extension:${transaction.id}`,
+      correlationId: transaction.id,
+      status: extensionJournalStatus(transaction.status),
+      eventType: `extension.${transaction.status}`,
+      payload: {
+        extensionKind: transaction.kind,
+        targetId: transaction.targetId,
+        action: transaction.action,
+      },
+      ...(transaction.status === "verified"
+        ? { result: { verification: transaction.verification ?? "verified" } }
+        : {}),
+      ...(transaction.status === "failed"
+        ? { errorCode: transaction.errorType ?? "extension-failed" }
+        : {}),
+    });
+  }
+}
+
+function extensionJournalStatus(status: ExtensionControlStatus): DurableJournalStatus {
+  if (status === "verified") return "completed";
+  if (status === "failed") return "failed";
+  return "waiting";
 }
 
 export function buildExtensionPlan(

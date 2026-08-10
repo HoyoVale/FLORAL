@@ -14,6 +14,7 @@ describe("Phase 8G reliability architecture", () => {
       "src/service/durable-attachment-spool.ts": 80,
       "src/service/startup-recovery-coordinator.ts": 130,
       "src/storage/durable-state.ts": 620,
+      "src/storage/durable-journal.ts": 100,
       "src/storage/durable-outbox.ts": 380,
       "src/storage/durable-run-queue.ts": 370,
     };
@@ -25,8 +26,9 @@ describe("Phase 8G reliability architecture", () => {
   });
 
   it("freezes the recovery matrix and owner publication boundary", async () => {
-    const [contract, registry, agents] = await Promise.all([
+    const [contract, audit, registry, agents] = await Promise.all([
       readFile(`${root}/docs/PHASE8G_RELIABILITY_ARCHITECTURE.md`, "utf8"),
+      readFile(`${root}/docs/PHASE8G_COMPLETION_AUDIT.md`, "utf8"),
       readFile(`${root}/src/extensions/external-mcp-registry.ts`, "utf8"),
       readFile(`${root}/AGENTS.md`, "utf8"),
     ]);
@@ -42,6 +44,8 @@ describe("Phase 8G reliability architecture", () => {
       expect(contract).toContain(expected);
     }
     expect(agents).toContain("Git commit/push is performed by the project owner");
+    expect(audit).toContain("8G.8 soak closure");
+    expect(audit).toContain("SQLite busy/corrupt/unavailable/full");
     expect(registry).toContain("github-owner");
     expect(registry).toContain("create_or_update_file,push_files,delete_file");
     expect(registry).toContain("merge_pull_request");

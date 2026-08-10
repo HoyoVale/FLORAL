@@ -28,6 +28,26 @@ export function supportsIdempotentTextDelivery(
   return typeof (transport as Partial<IdempotentTextTransport>).sendIdempotent === "function";
 }
 
+export type DurableJournalKind = "maintenance" | "extension" | "context" | "attachment";
+export type DurableJournalStatus = "accepted" | "executing" | "waiting" | "completed" | "failed" | "cancelled";
+
+export interface DurableJournalRecordInput {
+  kind: DurableJournalKind;
+  idempotencyKey: string;
+  status: DurableJournalStatus;
+  eventType: string;
+  correlationId?: string | undefined;
+  conversationId?: string | undefined;
+  projectId?: string | undefined;
+  payload?: Record<string, unknown> | undefined;
+  result?: Record<string, unknown> | undefined;
+  errorCode?: string | undefined;
+}
+
+export interface DurableJournal {
+  record(input: DurableJournalRecordInput): { id: string; status: DurableJournalStatus };
+}
+
 export type ConversationActivityState = "typing" | "idle";
 
 export interface ConversationActivityTransport {

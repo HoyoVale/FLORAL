@@ -71,6 +71,27 @@ describe("pre-stream retry policy", () => {
     expect(delays).toEqual([1]);
   });
 
+  it("retries a DeepSeek HTTP 500 only before stream output", async () => {
+    let attempts = 0;
+    const values = await collect(streamWithPreStreamRetry(
+      async function* () {
+        attempts += 1;
+        if (attempts === 1) {
+          throw new ModelProviderError({
+            kind: "upstream",
+            message: "upstream internal error",
+            retryable: true,
+            status: 500,
+          });
+        }
+        yield "recovered";
+      },
+      { maxAttempts: 2, baseDelayMs: 0, maxDelayMs: 0 },
+    ));
+    expect(values).toEqual(["recovered"]);
+    expect(attempts).toBe(2);
+  });
+
   it("does not retry authentication or protocol errors", () => {
     const authentication = new ModelProviderError({
       kind: "authentication",

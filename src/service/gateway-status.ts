@@ -54,6 +54,8 @@ export function formatGatewayStatus(
   const lines = [
     "FLORAL 正常运行",
     "",
+    `Agent：${snapshot.runActive ? "处理中" : "正常"}（${snapshot.agent}）`,
+    `Transport：正常（${snapshot.transport}）`,
     `状态：${snapshot.runActive ? "正在处理" : "空闲"}`,
     `会话：${snapshot.threadActive ? "已建立" : "未建立"}`,
     `执行模式：${humanizeControlMode(snapshot.controlMode ?? "ask")}`,
@@ -86,6 +88,14 @@ export function formatGatewayStatus(
   const lastRecovery = values.get("last_recovery");
   if (lastRecovery) {
     lines.push(`最近恢复：${lastRecovery === "none" ? "本次启动尚无记录" : lastRecovery}`);
+  }
+
+  const maintenanceMode = values.get("maintenance_mode");
+  const maintenanceBreaker = values.get("maintenance_breaker");
+  if (maintenanceMode || maintenanceBreaker) {
+    lines.push(
+      `Self-Heal：${maintenanceMode ?? "unknown"}，circuit ${maintenanceBreaker ?? "unknown"}`,
+    );
   }
 
   return lines.join("\n");
