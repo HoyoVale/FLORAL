@@ -86,6 +86,7 @@ class FullProbeRuntime implements AgentRuntime {
   readonly name = "full-probe";
   readonly requests: AgentRunRequest[] = [];
   approvalDecision: AgentApprovalDecision | undefined;
+  extensionApprovalDecision: AgentApprovalDecision | undefined;
 
   async start(): Promise<void> {}
   async run(request: AgentRunRequest): Promise<AgentRunResult> {
@@ -102,6 +103,18 @@ class FullProbeRuntime implements AgentRuntime {
         source: "codex",
       };
       this.approvalDecision = await request.approvalHandler(approval);
+    }
+    if (
+      request.sandboxMode === "danger-full-access"
+      && request.extensionManagementApprovalHandler
+    ) {
+      this.extensionApprovalDecision = await request.extensionManagementApprovalHandler({
+        requestId: "extension-1",
+        kind: "extension-management",
+        capability: "software.install",
+        summary: "Install curated extension",
+        source: "floral",
+      });
     }
     return { threadId: "thread-1", finalText: "done" };
   }
@@ -162,7 +175,7 @@ describe("Gateway full-auto authority", () => {
     }
   });
 
-  it("requires owner plus full ceiling and uses Codex dangerFullAccess with native interception", async () => {
+  it("requires owner plus full ceiling and auto-approves policy-accepted chat confirmations", async () => {
     const transport = new TestTransport();
     const runtime = new FullProbeRuntime();
     const store = new TestStore();
@@ -177,18 +190,26 @@ describe("Gateway full-auto authority", () => {
       expect(runtime.requests).toHaveLength(1);
       expect(runtime.requests[0]).toMatchObject({
         controlMode: "full",
-        approvalRoute: "full-auto-codex-native",
+        approvalRoute: "full-auto-owner-trusted",
         approvalPolicy: "untrusted",
         sandboxMode: "danger-full-access",
         approvalsReviewer: "user",
       });
       expect(runtime.approvalDecision).toBe("approve");
+      expect(runtime.extensionApprovalDecision).toBe("approve");
       expect(store.audit).toContainEqual(expect.objectContaining({
-        eventType: "authorization.full_auto_granted",
-        payload: {
+        eventType: "authorization.trusted_owner_auto_approved",
+        payload: expect.objectContaining({
           kind: "command-execution",
           capability: "shell.execute",
-        },
+        }),
+      }));
+      expect(store.audit).toContainEqual(expect.objectContaining({
+        eventType: "authorization.trusted_owner_auto_approved",
+        payload: expect.objectContaining({
+          kind: "extension-management",
+          capability: "software.install",
+        }),
       }));
 
       await transport.emit("/status --debug", "full-status");
@@ -198,7 +219,7 @@ describe("Gateway full-auto authority", () => {
       expect(status).toContain("requested_sandbox=danger-full-access");
       expect(status).toContain("requested_approval_policy=untrusted");
       expect(status).toContain("requested_reviewer=user");
-      expect(status).toContain("approval_route=full-auto-codex-native");
+      expect(status).toContain("approval_route=full-auto-owner-trusted");
     } finally {
       await gateway.stop();
     }

@@ -31,6 +31,10 @@ export interface QqApprovalBrokerOptions {
     scope: ApprovalRequesterScope,
     request: AgentApprovalRequest,
   ) => Promise<{ approved: boolean; reason: string }>) | undefined;
+  autoApproveChatConfirmation?: ((
+    scope: ApprovalRequesterScope,
+    request: AgentApprovalRequest,
+  ) => Promise<{ approved: boolean; reason: string }>) | undefined;
 }
 
 export type ApprovalResolveResult =
@@ -93,6 +97,25 @@ export class QqApprovalBroker {
       return "deny";
     }
 
+    if (decision.approvalLevel === "chat-confirmation" && this.options.ownerOnly && scope.role !== "owner") {
+      await this.#audit(scope, "authorization.remote_approval_owner_required", request);
+      return "deny";
+    }
+
+    if (decision.approvalLevel === "chat-confirmation" && this.options.autoApproveChatConfirmation) {
+      const trusted = await this.options.autoApproveChatConfirmation(scope, request)
+        .catch(() => ({ approved: false, reason: "trusted-owner-policy-error" }));
+      if (trusted.approved) {
+        await this.#audit(scope, "authorization.trusted_owner_auto_approved", request, {
+          autonomyReason: trusted.reason,
+        });
+        return "approve";
+      }
+      await this.#audit(scope, "authorization.trusted_owner_auto_not_applicable", request, {
+        autonomyReason: trusted.reason,
+      });
+    }
+
     if (decision.approvalLevel === "local-confirmation") {
       if (request.kind === "system-maintenance" && this.options.autoApproveSystemMaintenance) {
         const autonomous = await this.options.autoApproveSystemMaintenance(scope, request)
@@ -151,10 +174,6 @@ export class QqApprovalBroker {
       return localDecision;
     }
 
-    if (this.options.ownerOnly && scope.role !== "owner") {
-      await this.#audit(scope, "authorization.remote_approval_owner_required", request);
-      return "deny";
-    }
     if (this.#pending.size >= this.options.maxPending) {
       await this.#audit(scope, "authorization.approval_capacity_exceeded", request);
       return "deny";

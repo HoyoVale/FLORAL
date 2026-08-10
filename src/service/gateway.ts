@@ -116,7 +116,13 @@ interface SelectedProjectContext {
   threadId?: string | undefined;
 }
 
+interface QueuedAgentRun {
+  message: IncomingMessage;
+  resolved: ResolvedGatewayIdentity;
+}
+
 const CHAT_LIST_CACHE_TTL_MS = 5 * 60 * 1_000;
+const MAX_QUEUED_AGENT_RUNS_PER_CONVERSATION = 3;
 
 const ARTIFACT_CATALOG_TTL_MS = 30 * 60 * 1_000;
 const ARTIFACT_CATALOG_MAX_ITEMS = 32;
@@ -143,6 +149,9 @@ export class GatewayService {
   readonly #artifactCatalogs = new Map<string, Map<string, ArtifactCatalogEntry>>();
   readonly #chatListCaches = new Map<string, ChatListCache>();
   readonly #controlModes = new Map<string, AgentControlMode>();
+  readonly #queuedAgentRuns = new Map<string, QueuedAgentRun[]>();
+  readonly #startingAgentRuns = new Set<string>();
+  readonly #cancelledStartingRuns = new Set<string>();
   readonly #pairingLimiter = new PairingAttemptLimiter();
   readonly #approvalBroker: QqApprovalBroker | undefined;
   #started = false;
@@ -170,6 +179,16 @@ export class GatewayService {
             sendInteractive: (prompt) =>
               interactiveTransport.sendInteractiveApprovalPrompt(prompt),
           } : {}),
+          autoApproveChatConfirmation: async (scope) => {
+            if (scope.role !== "owner") return { approved: false, reason: "owner-required" };
+            if (this.#controlMode(scope.conversationId) !== "full") {
+              return { approved: false, reason: "full-mode-required" };
+            }
+            if (this.#remoteModeCeiling() !== "full") {
+              return { approved: false, reason: "machine-ceiling-required" };
+            }
+            return { approved: true, reason: "trusted-owner-full" };
+          },
           ...(options.systemMaintenance ? {
             autoApproveSystemMaintenance: async (scope) => {
               const active = this.#activeRuns.get(scope.conversationId);
@@ -221,6 +240,9 @@ export class GatewayService {
     this.#artifactCatalogs.clear();
     this.#chatListCaches.clear();
     this.#controlModes.clear();
+    this.#queuedAgentRuns.clear();
+    this.#startingAgentRuns.clear();
+    this.#cancelledStartingRuns.clear();
     await this.store.close();
   }
 
@@ -394,7 +416,7 @@ export class GatewayService {
           ?? (!this.options.workspace
             ? await this.store.getActiveThread(resolved.conversationId)
             : undefined);
-        const active = this.#activeRuns.has(resolved.conversationId);
+        const active = this.#conversationBusy(resolved.conversationId);
         await this.store.appendAudit({
           userId: resolved.userId,
           conversationId: resolved.conversationId,
@@ -424,6 +446,7 @@ export class GatewayService {
             workspaceEnabled: Boolean(this.options.workspace),
             ...(projectContext ? { selectedProject: projectContext.project.name } : {}),
             pendingApprovals: this.#approvalBroker?.pendingCount(resolved.conversationId) ?? 0,
+            queuedRuns: this.#queuedAgentRuns.get(resolved.conversationId)?.length ?? 0,
             runtimeLines,
           }, command.debug),
         );
@@ -986,7 +1009,7 @@ export class GatewayService {
           );
           return;
         }
-        if (this.#activeRuns.has(resolved.conversationId)) {
+        if (this.#conversationBusy(resolved.conversationId)) {
           await this.#send(
             message.identity.conversationId,
             "当前任务运行中，不能创建项目。请先使用 /stop。",
@@ -1094,7 +1117,7 @@ export class GatewayService {
           );
           return;
         }
-        if (this.#activeRuns.has(resolved.conversationId)) {
+        if (this.#conversationBusy(resolved.conversationId)) {
           await this.#send(
             message.identity.conversationId,
             "当前任务运行中，不能初始化项目共享上下文。请先使用 /stop。",
@@ -1211,7 +1234,7 @@ export class GatewayService {
           );
           return;
         }
-        if (this.#activeRuns.has(resolved.conversationId)) {
+        if (this.#conversationBusy(resolved.conversationId)) {
           await this.#send(
             message.identity.conversationId,
             "当前任务运行中，不能写入项目长期记忆。请先使用 /stop。",
@@ -1286,7 +1309,7 @@ export class GatewayService {
           );
           return;
         }
-        if (this.#activeRuns.has(resolved.conversationId)) {
+        if (this.#conversationBusy(resolved.conversationId)) {
           await this.#send(
             message.identity.conversationId,
             "当前任务运行中，不能切换项目。请先使用 /stop。",
@@ -1394,7 +1417,7 @@ export class GatewayService {
           );
           return;
         }
-        if (this.#activeRuns.has(resolved.conversationId)) {
+        if (this.#conversationBusy(resolved.conversationId)) {
           await this.#send(
             message.identity.conversationId,
             "当前任务运行中，不能归档会话。请先使用 /stop。",
@@ -1509,7 +1532,7 @@ export class GatewayService {
           );
           return;
         }
-        if (this.#activeRuns.has(resolved.conversationId)) {
+        if (this.#conversationBusy(resolved.conversationId)) {
           await this.#send(
             message.identity.conversationId,
             "当前任务运行中，不能切换会话。请先使用 /stop。",
@@ -1595,7 +1618,7 @@ export class GatewayService {
           );
           return;
         }
-        if (this.#activeRuns.has(resolved.conversationId)) {
+        if (this.#conversationBusy(resolved.conversationId)) {
           await this.#send(
             message.identity.conversationId,
             "当前任务运行中，执行模式将在任务结束后才能切换。",
@@ -1700,32 +1723,48 @@ export class GatewayService {
 
       case "stop": {
         const active = this.#activeRuns.get(resolved.conversationId);
-        if (!active) {
+        const starting = this.#startingAgentRuns.has(resolved.conversationId);
+        const queuedCount = this.#queuedAgentRuns.get(resolved.conversationId)?.length ?? 0;
+        if (!active && !starting && queuedCount === 0) {
           await this.#send(
             message.identity.conversationId,
-            "当前没有正在运行的任务。",
+            "当前没有正在运行或排队的任务。",
           );
           return;
         }
 
-        active.stopRequested = true;
-        this.#cancelVisibleActivityFallback(active);
-        this.#setConversationActivity(message.identity.conversationId, "idle");
+        this.#queuedAgentRuns.delete(resolved.conversationId);
+        if (starting) this.#cancelledStartingRuns.add(resolved.conversationId);
         this.#approvalBroker?.cancelConversation(resolved.conversationId);
-        if (active.threadId && !active.interruptSent) {
-          await this.#interruptRun(resolved, active);
+
+        if (active) {
+          active.stopRequested = true;
+          this.#cancelVisibleActivityFallback(active);
+          this.#setConversationActivity(message.identity.conversationId, "idle");
+          if (active.threadId && !active.interruptSent) {
+            await this.#interruptRun(resolved, active);
+          }
         }
         await this.store.appendAudit({
           userId: resolved.userId,
           conversationId: resolved.conversationId,
           eventType: "command.stop",
-          payload: { interruptDispatched: active.interruptSent },
+          payload: {
+            interruptDispatched: active?.interruptSent ?? false,
+            preflightCancelled: starting,
+            queuedCancelled: queuedCount,
+          },
         });
         await this.#send(
           message.identity.conversationId,
-          active.interruptSent
-            ? "已向当前任务发送停止请求。"
-            : "停止请求已记录，任务线程建立后会立即中断。",
+          [
+            active
+              ? active.interruptSent
+                ? "已向当前任务发送停止请求。"
+                : "停止请求已记录，任务线程建立后会立即中断。"
+              : "已取消正在准备中的任务。",
+            ...(queuedCount > 0 ? [`已同时取消 ${String(queuedCount)} 条排队消息。`] : []),
+          ].join("\n"),
         );
         return;
       }
@@ -1736,28 +1775,67 @@ export class GatewayService {
     message: IncomingMessage,
     resolved: ResolvedGatewayIdentity,
   ): Promise<void> {
-    if (this.#activeRuns.has(resolved.conversationId)) {
+    if (
+      this.#activeRuns.has(resolved.conversationId)
+      || this.#startingAgentRuns.has(resolved.conversationId)
+    ) {
+      const queue = this.#queuedAgentRuns.get(resolved.conversationId) ?? [];
+      if (queue.length >= MAX_QUEUED_AGENT_RUNS_PER_CONVERSATION) {
+        await this.#send(
+          message.identity.conversationId,
+          `上一任务仍在运行，待处理队列已满（${String(MAX_QUEUED_AGENT_RUNS_PER_CONVERSATION)} 条）。请等待、使用 /stop 清空，或稍后重发。`,
+        );
+        return;
+      }
+      queue.push({ message, resolved });
+      this.#queuedAgentRuns.set(resolved.conversationId, queue);
+      await this.store.appendAudit({
+        userId: resolved.userId,
+        conversationId: resolved.conversationId,
+        eventType: "agent.run_queued",
+        payload: { queueDepth: queue.length },
+      }).catch(() => undefined);
       await this.#send(
         message.identity.conversationId,
-        "正在处理上一条消息。使用 /status 查看状态，或使用 /stop 停止。",
+        `上一任务仍在运行；这条消息已排队（${String(queue.length)}/${String(MAX_QUEUED_AGENT_RUNS_PER_CONVERSATION)}），完成后会自动继续。使用 /stop 可停止当前任务并清空队列。`,
       );
       return;
     }
 
-    const projectContext = this.options.workspace
-      ? await this.#requireProjectContext(
-          message.identity.conversationId,
-          resolved.conversationId,
-        )
-      : undefined;
-    if (this.options.workspace && !projectContext) return;
+    // Reserve the conversation before the first asynchronous preflight read.
+    // Without this reservation two near-simultaneous messages can both pass
+    // the active-run check while project/thread/attachment setup is awaiting,
+    // causing overlapping Codex turns for one conversation.
+    this.#startingAgentRuns.add(resolved.conversationId);
+
+    let projectContext: SelectedProjectContext | undefined;
+    let persistedThreadId: string | undefined;
+    try {
+      projectContext = this.options.workspace
+        ? await this.#requireProjectContext(
+            message.identity.conversationId,
+            resolved.conversationId,
+          )
+        : undefined;
+      if (this.options.workspace && !projectContext) {
+        this.#startingAgentRuns.delete(resolved.conversationId);
+        this.#cancelledStartingRuns.delete(resolved.conversationId);
+        this.#scheduleNextQueuedAgentRun(resolved.conversationId);
+        return;
+      }
+
+      persistedThreadId = projectContext?.threadId
+        ?? (!this.options.workspace
+          ? await this.store.getActiveThread(resolved.conversationId)
+          : undefined);
+    } catch (error) {
+      this.#startingAgentRuns.delete(resolved.conversationId);
+      this.#cancelledStartingRuns.delete(resolved.conversationId);
+      this.#scheduleNextQueuedAgentRun(resolved.conversationId);
+      throw error;
+    }
 
     const runCwd = projectContext?.project.path ?? this.options.cwd;
-    const persistedThreadId = projectContext?.threadId
-      ?? (!this.options.workspace
-        ? await this.store.getActiveThread(resolved.conversationId)
-        : undefined);
-
     let agentMessage = message;
     if (message.attachments?.length && supportsInboundAttachmentMaterializer(this.transport)) {
       try {
@@ -1777,12 +1855,33 @@ export class GatewayService {
             attachmentCount: message.attachments.length,
             errorType: error instanceof Error ? error.name : "Error",
           },
-        });
+        }).catch(() => undefined);
+        this.#startingAgentRuns.delete(resolved.conversationId);
+        this.#cancelledStartingRuns.delete(resolved.conversationId);
+        this.#scheduleNextQueuedAgentRun(resolved.conversationId);
         await this.#send(message.identity.conversationId, "附件下载失败，请重新发送该图片或文件。");
         return;
       }
     }
-    const agentInputText = renderIncomingMessageForAgent(agentMessage);
+    if (this.#cancelledStartingRuns.delete(resolved.conversationId)) {
+      this.#startingAgentRuns.delete(resolved.conversationId);
+      this.#setConversationActivity(message.identity.conversationId, "idle");
+      this.#scheduleNextQueuedAgentRun(resolved.conversationId);
+      return;
+    }
+
+    let agentInputText: string;
+    try {
+      agentInputText = renderIncomingMessageForAgent(agentMessage);
+    } catch (error) {
+      // Rendering is expected to be synchronous and side-effect free, but a
+      // malformed attachment must not leave the preflight reservation wedged.
+      this.#startingAgentRuns.delete(resolved.conversationId);
+      this.#cancelledStartingRuns.delete(resolved.conversationId);
+      this.#setConversationActivity(message.identity.conversationId, "idle");
+      this.#scheduleNextQueuedAgentRun(resolved.conversationId);
+      throw error;
+    }
 
     const active: ActiveRun = {
       stopRequested: false,
@@ -1798,6 +1897,7 @@ export class GatewayService {
         : {}),
     };
     this.#activeRuns.set(resolved.conversationId, active);
+    this.#startingAgentRuns.delete(resolved.conversationId);
 
     const controlMode = this.#controlMode(resolved.conversationId);
     const executionPolicy = executionPolicyForMode(controlMode);
@@ -1819,7 +1919,7 @@ export class GatewayService {
         approvalRoute: executionPolicy.approvalRoute,
         ...(projectContext ? { projectName: projectContext.project.name } : {}),
       },
-    });
+    }).catch(() => undefined);
     this.#setConversationActivity(message.identity.conversationId, "typing");
     this.#scheduleVisibleActivityFallback(
       message.identity.conversationId,
@@ -1856,30 +1956,13 @@ export class GatewayService {
               ),
           } : {}),
           ...(controlMode !== "auto" && this.#approvalBroker ? {
-            approvalHandler: async (request) => {
-              if (
-                controlMode === "full"
-                && isCodexNativeFullAutoApproval(request)
-              ) {
-                await this.store.appendAudit({
-                  userId: resolved.userId,
-                  conversationId: resolved.conversationId,
-                  eventType: "authorization.full_auto_granted",
-                  payload: {
-                    kind: request.kind,
-                    capability: request.capability,
-                  },
-                }).catch(() => undefined);
-                return "approve";
-              }
-
-              return await this.#requestRemoteApproval(
+            approvalHandler: async (request) =>
+              await this.#requestRemoteApproval(
                 message.identity.conversationId,
                 resolved,
                 active,
                 request,
-              );
-            },
+              ),
           } : {}),
           ...(this.#approvalBroker ? {
             mcpToolApprovalHandler: async (request) =>
@@ -1959,7 +2042,7 @@ export class GatewayService {
         conversationId: resolved.conversationId,
         eventType: "agent.run_completed",
         payload: { responseCharacterCount: result.finalText.length },
-      });
+      }).catch(() => undefined);
       this.#cancelVisibleActivityFallback(active);
       this.#setConversationActivity(message.identity.conversationId, "idle");
       const replyDelivered = await this.#deliverWithAudit(
@@ -2040,12 +2123,12 @@ export class GatewayService {
           errorType: error instanceof Error ? error.name : "unknown",
           stopRequested: active.stopRequested,
         },
-      });
+      }).catch(() => undefined);
       await this.#deliverWithAudit(
         message.identity.conversationId,
         active.stopRequested
           ? "当前任务已停止。"
-          : "任务执行失败，请在 Mac 本地查看服务日志。",
+          : agentFailureUserMessage(error),
         resolved,
         "agent_failure",
       );
@@ -2054,8 +2137,40 @@ export class GatewayService {
       this.#approvalBroker?.cancelConversation(resolved.conversationId);
       if (this.#activeRuns.get(resolved.conversationId) === active) {
         this.#activeRuns.delete(resolved.conversationId);
+        this.#scheduleNextQueuedAgentRun(resolved.conversationId);
       }
     }
+  }
+
+  #scheduleNextQueuedAgentRun(conversationId: string): void {
+    if (
+      this.#stopped
+      || this.#activeRuns.has(conversationId)
+      || this.#startingAgentRuns.has(conversationId)
+    ) return;
+    const queue = this.#queuedAgentRuns.get(conversationId);
+    const next = queue?.shift();
+    if (!next) {
+      this.#queuedAgentRuns.delete(conversationId);
+      return;
+    }
+    if (queue && queue.length > 0) this.#queuedAgentRuns.set(conversationId, queue);
+    else this.#queuedAgentRuns.delete(conversationId);
+
+    setImmediate(() => {
+      if (this.#stopped) return;
+      void this.#runAgent(next.message, next.resolved).catch(async (error) => {
+        process.stderr.write(
+          `agent.queued_run_failed=${safeLogToken(error instanceof Error ? error.name : "Error")}\n`,
+        );
+        await this.#deliverWithAudit(
+          next.message.identity.conversationId,
+          agentFailureUserMessage(error),
+          next.resolved,
+          "agent_failure",
+        ).catch(() => undefined);
+      });
+    });
   }
 
   async #requestRemoteApproval(
@@ -2549,7 +2664,7 @@ export class GatewayService {
           kind,
           errorType: error instanceof Error ? error.name : "unknown",
         },
-      });
+      }).catch(() => undefined);
       return false;
     }
   }
@@ -2573,7 +2688,7 @@ export class GatewayService {
     resolved: ResolvedGatewayIdentity,
     eventType: "command.new" | "command.chat_new",
   ): Promise<void> {
-    if (this.#activeRuns.has(resolved.conversationId)) {
+    if (this.#conversationBusy(resolved.conversationId)) {
       await this.#send(
         deliveryConversationId,
         "当前仍有任务运行，请先使用 /stop。",
@@ -2699,6 +2814,12 @@ export class GatewayService {
     return this.store;
   }
 
+  #conversationBusy(conversationId: string): boolean {
+    return this.#activeRuns.has(conversationId)
+      || this.#startingAgentRuns.has(conversationId)
+      || (this.#queuedAgentRuns.get(conversationId)?.length ?? 0) > 0;
+  }
+
   #controlMode(conversationId: string): AgentControlMode {
     return this.#controlModes.get(conversationId) ?? "ask";
   }
@@ -2759,7 +2880,7 @@ interface AgentExecutionPolicy {
   sandboxMode: "workspace-write" | "danger-full-access";
   approvalPolicy: "untrusted";
   approvalsReviewer: "user" | "auto_review";
-  approvalRoute: "owner" | "auto-review" | "full-auto-codex-native";
+  approvalRoute: "owner" | "auto-review" | "full-auto-owner-trusted";
 }
 
 function executionPolicyForMode(mode: AgentControlMode): AgentExecutionPolicy {
@@ -2768,7 +2889,7 @@ function executionPolicyForMode(mode: AgentControlMode): AgentExecutionPolicy {
       sandboxMode: "danger-full-access",
       approvalPolicy: "untrusted",
       approvalsReviewer: "user",
-      approvalRoute: "full-auto-codex-native",
+      approvalRoute: "full-auto-owner-trusted",
     };
   }
   if (mode === "auto") {
@@ -2787,16 +2908,6 @@ function executionPolicyForMode(mode: AgentControlMode): AgentExecutionPolicy {
   };
 }
 
-function isCodexNativeFullAutoApproval(
-  request: import("../core/types.js").AgentApprovalRequest,
-): boolean {
-  return request.source === "codex"
-    && (
-      request.kind === "command-execution"
-      || request.kind === "file-change"
-      || request.kind === "permission-request"
-    );
-}
 
 function renderIncomingMessageForAgent(message: IncomingMessage): string {
   const localAttachments = (message.attachments ?? []).filter((item) => Boolean(item.localPath));
@@ -2864,7 +2975,7 @@ function modeStatusText(
 
 function modeChangedText(mode: AgentControlMode): string {
   if (mode === "full") {
-    return "已切换到 full：Gateway 请求 danger-full-access，Codex-native 执行审批自动通过；项目 runtime 的 named permission profile 仍优先保持项目隔离，GUI/MCP/Artifact 的 FLORAL 专属边界也不取消。服务重启后恢复 ask。";
+    return "已切换到 full：这是 paired owner 的 trusted-owner 模式。Gateway 请求 danger-full-access，所有已经通过 FLORAL AuthorizationAuthority/allowlist 判定且仅需聊天确认的操作会自动批准（含 Codex 原生写入/命令、受控 GUI/MCP 与 curated Skill/MCP 扩展）；system.restart/system.admin 等 Mac-local 动作仍由维护自治/本地确认单独治理。项目 named permission profile、MCP allowlist 与 Artifact DLP 仍然有效。服务重启后恢复 ask。";
   }
   return mode === "auto"
     ? "已切换到 auto：Codex 使用 auto_review；当前 sandbox 保持 workspace-write。服务重启后会恢复 ask。"
@@ -2923,6 +3034,35 @@ function approvalCommandReply(
   if (outcome === "approved-session") return "当前 Codex 会话授权已批准。";
   if (outcome === "denied") return "Codex 授权已拒绝。";
   return "未找到可由当前会话处理的有效审批，可能已处理、过期或不属于当前会话。";
+}
+
+function agentFailureUserMessage(error: unknown): string {
+  const record = typeof error === "object" && error !== null
+    ? error as Record<string, unknown>
+    : undefined;
+  const kind = typeof record?.kind === "string" ? record.kind : "unknown";
+  if (kind === "network" || kind === "provider") {
+    return "任务因上游模型/网络暂时不可用而失败。可以直接重试；若连续失败，请运行 /diagnose codex.runtime。";
+  }
+  if (kind === "request_timeout") {
+    return "任务等待 Codex 超时并已中止。建议直接重试，或把超长任务拆成更小步骤；若重复出现，请运行 /diagnose codex.runtime。";
+  }
+  if (kind === "authentication") {
+    return "Codex/模型认证失败。请检查 Mac 本地凭证与 Provider 配置，然后运行 /diagnose deepseek.provider 或 /diagnose codex.runtime。";
+  }
+  if (kind === "usage_limit") {
+    return "任务被模型额度或使用限制阻止。可用 /status --debug 查看 Cost Guard/请求统计，额度恢复后再试。";
+  }
+  if (kind === "sandbox") {
+    return "任务被当前执行权限边界阻止。先用 /mode 查看当前模式；若这是可信 owner 任务且本机 ceiling=full，可切换 /mode full 后重试。";
+  }
+  if (kind === "process_exit") {
+    return "Codex App Server 在任务中退出。请直接重试；若再次发生，请运行 /diagnose codex.runtime 并查看 service:logs。";
+  }
+  if (kind === "protocol" || kind === "bad_request") {
+    return "Codex 拒绝了本次请求或协议状态不一致。建议 /new 后重试；若可复现，请运行 /diagnose codex.runtime。";
+  }
+  return "任务执行失败。可先直接重试；若再次失败，请运行 /diagnose codex.runtime，必要时再查看 Mac service:logs。";
 }
 
 function formatSafeAgentFailure(error: unknown): string {

@@ -483,7 +483,7 @@ describe("CodexAppServerRuntime", () => {
         sandboxMode: "danger-full-access",
         approvalPolicy: "untrusted",
         approvalsReviewer: "user",
-        approvalRoute: "full-auto-codex-native",
+        approvalRoute: "full-auto-owner-trusted",
       });
       expect(result.finalText).toBe("runtime self awareness complete");
       expect(observedContext?.execution?.gateway).toMatchObject({
@@ -491,7 +491,7 @@ describe("CodexAppServerRuntime", () => {
         sandboxMode: "danger-full-access",
         approvalPolicy: "untrusted",
         approvalsReviewer: "user",
-        approvalRoute: "full-auto-codex-native",
+        approvalRoute: "full-auto-owner-trusted",
       });
       expect(observedContext?.execution?.turn).toEqual({
         selector: "permission-profile",

@@ -184,7 +184,7 @@ export interface SystemGatewayExecutionContext {
   sandboxMode: "read-only" | "workspace-write" | "danger-full-access";
   approvalPolicy: "never" | "on-request" | "untrusted";
   approvalsReviewer: "user" | "auto_review";
-  approvalRoute?: "owner" | "auto-review" | "full-auto-codex-native" | undefined;
+  approvalRoute?: "owner" | "auto-review" | "full-auto-owner-trusted" | undefined;
 }
 
 export interface SystemTurnExecutionContext {

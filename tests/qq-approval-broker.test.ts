@@ -453,4 +453,40 @@ describe("QqApprovalBroker", () => {
     expect(sent.at(-1)).toContain("Mac 本地确认");
     expect(broker.pendingCount()).toBe(0);
   });
+  it("lets host trusted-owner policy auto-approve a chat-confirmation without creating a pending prompt", async () => {
+    const sent: string[] = [];
+    const audits: AuditEventInput[] = [];
+    const broker = new QqApprovalBroker({
+      ttlMs: 5_000,
+      maxPending: 4,
+      ownerOnly: true,
+      authority: writableAuthority(),
+      send: async (_conversationId, text) => { sent.push(text); },
+      audit: async (event) => { audits.push(event); },
+      autoApproveChatConfirmation: async (scope, request) => ({
+        approved: scope.role === "owner" && request.capability === "software.install",
+        reason: "trusted-owner-full",
+      }),
+    });
+
+    await expect(broker.request({
+      userId: "owner-1",
+      role: "owner",
+      conversationId: "conversation-1",
+      deliveryConversationId: "qq-conversation-1",
+    }, {
+      requestId: "extension-private",
+      kind: "extension-management",
+      capability: "software.install",
+      summary: "Install curated MCP",
+      source: "floral",
+    })).resolves.toBe("approve");
+
+    expect(sent).toEqual([]);
+    expect(broker.pendingCount()).toBe(0);
+    expect(audits).toContainEqual(expect.objectContaining({
+      eventType: "authorization.trusted_owner_auto_approved",
+    }));
+  });
+
 });

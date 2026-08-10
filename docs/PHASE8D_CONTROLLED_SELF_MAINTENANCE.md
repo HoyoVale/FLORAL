@@ -130,14 +130,13 @@ The persisted receipt contains bounded lifecycle metadata only. The model-provid
 
 ## 7. Diagnostics remain non-mutating
 
-`/diagnose` and `floral_system/diagnose` continue to report:
+`/diagnose` and `floral_system/diagnose` remain non-mutating:
 
 ```text
 execution_performed=false
-maintenance_enabled=false
 ```
 
-Here `maintenance_enabled=false` means **the diagnostics interface itself does not execute maintenance**. Phase 8D exposes the separate governed mutation interface `floral_system/maintain`. Diagnostic output also names that interface so the two concepts are not conflated.
+At the original Phase 8D closure the formatter also emitted `maintenance_enabled=false` to mean that diagnostics themselves did not mutate state. **Phase 8D.1 superseded that overloaded meaning:** current reports emit `maintenance_enabled=true` when the separately governed `floral_system/maintain` surface is declared/available, while `execution_performed=false` remains the authoritative statement that this diagnostic call performed no maintenance.
 
 If a maintenance receipt ends in `failed`, Phase 8C diagnostics can surface a degraded `floral.maintenance.last-transaction-failed` finding without attempting another restart.
 

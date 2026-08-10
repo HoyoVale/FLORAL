@@ -196,7 +196,7 @@ export interface AgentRunRequest {
   sandboxMode?: "read-only" | "workspace-write" | "danger-full-access";
   approvalsReviewer?: "user" | "auto_review";
   controlMode?: "ask" | "auto" | "full";
-  approvalRoute?: "owner" | "auto-review" | "full-auto-codex-native";
+  approvalRoute?: "owner" | "auto-review" | "full-auto-owner-trusted";
   approvalHandler?: AgentApprovalHandler;
   mcpToolApprovalHandler?: AgentApprovalHandler;
   skillManagementApprovalHandler?: AgentApprovalHandler;

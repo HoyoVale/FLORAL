@@ -12,12 +12,13 @@ export interface GatewayStatusSnapshot {
   threadActive: boolean;
   runActive: boolean;
   pendingApprovals: number;
+  queuedRuns?: number | undefined;
   controlMode?: "ask" | "auto" | "full" | undefined;
   remoteModeCeiling?: "auto" | "full" | undefined;
   sandboxMode?: "workspace-write" | "danger-full-access" | undefined;
   approvalPolicy?: "untrusted" | undefined;
   approvalsReviewer?: "user" | "auto_review" | undefined;
-  approvalRoute?: "owner" | "auto-review" | "full-auto-codex-native" | undefined;
+  approvalRoute?: "owner" | "auto-review" | "full-auto-owner-trusted" | undefined;
   selectedProject?: string | undefined;
   workspaceEnabled?: boolean | undefined;
   runtimeLines: string[];
@@ -44,6 +45,7 @@ export function formatGatewayStatus(
       `workspace=${snapshot.workspaceEnabled === true ? "enabled" : "legacy"}`,
       `project=${snapshot.selectedProject ?? "none"}`,
       `approvals_pending=${String(snapshot.pendingApprovals)}`,
+      `runs_queued=${String(snapshot.queuedRuns ?? 0)}`,
       ...snapshot.runtimeLines,
     ].join("\n");
   }
@@ -60,6 +62,7 @@ export function formatGatewayStatus(
       ? [`项目：${snapshot.selectedProject ?? "未选择"}`]
       : []),
     `待审批：${String(snapshot.pendingApprovals)}`,
+    `排队消息：${String(snapshot.queuedRuns ?? 0)}`,
   ];
 
   const costGuard = values.get("cost_guard");
@@ -309,7 +312,7 @@ export function gatewayHelpText(): string {
     "/mode     查看执行模式",
     "/mode ask 使用 Codex 原生审批 + 飞书确认",
     "/mode auto 使用 Codex auto_review（owner）",
-    "/mode full 请求 Codex full 执行；项目 named permission profile 仍保持项目隔离（owner）",
+    "/mode full trusted-owner 自动批准已通过策略的聊天确认操作；Mac-local 管理动作仍单独治理（owner）",
     "/stop     停止当前任务",
     "/help     查看帮助",
     "",

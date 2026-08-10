@@ -13,6 +13,40 @@ const optionalPairingCode = z.preprocess(
   z.string().trim().min(12).max(256).optional(),
 );
 
+const maintenanceModeValues = new Set(["manual", "owner-auto", "self-heal"]);
+
+export interface EnvCompatibilityNotice {
+  code: "maintenance-ceiling-misplaced";
+  message: string;
+}
+
+export function normalizeEnvCompatibility(
+  source: NodeJS.ProcessEnv = process.env,
+): { source: NodeJS.ProcessEnv; notices: EnvCompatibilityNotice[] } {
+  const normalized: NodeJS.ProcessEnv = { ...source };
+  const notices: EnvCompatibilityNotice[] = [];
+  const remote = normalized.FLORAL_REMOTE_MODE_CEILING?.trim();
+  const maintenance = normalized.FLORAL_MAINTENANCE_MODE_CEILING?.trim();
+
+  // Phase 8D.1 introduced a second machine-local ceiling with deliberately
+  // different values. A trusted owner can easily place owner-auto/self-heal
+  // in the older FLORAL_REMOTE_MODE_CEILING slot. Treat that exact category
+  // mismatch as a recoverable compatibility typo instead of preventing the
+  // LaunchAgent service CLI from starting at all. The remote ceiling falls
+  // back to its safe default; when the maintenance ceiling was not set, carry
+  // the intended value across to it. Unknown values still fail validation.
+  if (remote && maintenanceModeValues.has(remote)) {
+    normalized.FLORAL_REMOTE_MODE_CEILING = "auto";
+    if (!maintenance) normalized.FLORAL_MAINTENANCE_MODE_CEILING = remote;
+    notices.push({
+      code: "maintenance-ceiling-misplaced",
+      message: `FLORAL_REMOTE_MODE_CEILING=${remote} was interpreted as FLORAL_MAINTENANCE_MODE_CEILING=${maintenance || remote}; remote mode ceiling fell back to auto`,
+    });
+  }
+
+  return { source: normalized, notices };
+}
+
 const envSchema = z.object({
   NODE_ENV: z.enum(["development", "test", "production"]).default("development"),
   HOST: z.string().default("127.0.0.1"),
@@ -110,7 +144,8 @@ const envSchema = z.object({
 export type AppEnv = z.infer<typeof envSchema>;
 
 export function loadEnv(source: NodeJS.ProcessEnv = process.env): AppEnv {
-  const parsed = envSchema.safeParse(source);
+  const normalized = normalizeEnvCompatibility(source);
+  const parsed = envSchema.safeParse(normalized.source);
   if (!parsed.success) {
     const details = parsed.error.issues
       .map((issue: { path: PropertyKey[]; message: string }) => `${issue.path.join(".") || "environment"}: ${issue.message}`)
