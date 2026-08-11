@@ -22,7 +22,7 @@ export async function handleGatewayGoalCommand(input: {
   continuation?: GoalContinuationCoordinator | undefined;
 }): Promise<void> {
   const { agent, command } = input;
-  if (command.action === "continue") return;
+  if (command.action === "continue" || command.action === "restart") return;
   if (!supportsAgentGoals(agent)) {
     await input.send("当前 Agent runtime 未开放 Codex thread/goal 接口。");
     return;

@@ -93,7 +93,6 @@ import {
   GoalContinuationFacade,
   parseStatusControlAction,
 } from "./gateway-goal-continuation.js";
-import { stripGoalCompleteMarker } from "./goal-continuation-coordinator.js";
 export interface GatewayOptions {
   cwd: string;
   workspace?: ProjectWorkspaceRoot | undefined;
@@ -1488,11 +1487,12 @@ export class GatewayService {
         return;
       }
       case "goal": {
-        if (command.action === "continue") {
-          await this.#goalFacade?.handleContinue(
-            resolved,
-            message.identity.conversationId,
-          );
+        if (command.action === "continue" || command.action === "restart") {
+          if (command.action === "continue") {
+            await this.#goalFacade?.handleContinue(resolved, message.identity.conversationId);
+          } else {
+            await this.#goalFacade?.handleRestart(resolved, message.identity.conversationId);
+          }
           return;
         }
         const projectContext = await this.#requireProjectContext(
@@ -2276,15 +2276,9 @@ export class GatewayService {
       }).catch(() => undefined);
       this.#cancelVisibleActivityFallback(active);
       this.#setConversationActivity(message.identity.conversationId, "idle");
-      const consumeGoalMarker = await this.#goalFacade
-        ?.shouldConsumeCompletionMarker(resolved.conversationId, result.finalText)
-        .catch(() => false) ?? false;
-      const visibleFinalText = consumeGoalMarker
-        ? stripGoalCompleteMarker(result.finalText) || "Goal 已完成。"
-        : result.finalText;
       const replyDelivered = await this.#deliverWithAudit(
         message.identity.conversationId,
-        visibleFinalText,
+        result.finalText,
         resolved,
         "agent_reply",
         `agent-reply:${message.identity.transport}:${message.id}`,
@@ -2340,7 +2334,6 @@ export class GatewayService {
         threadId: result.threadId,
         projectCwd: runCwd,
         projectName: projectContext?.project.name ?? "",
-        finalText: result.finalText,
       });
     } catch (error) {
       if (active.maintenanceTransactions.length > 0 && this.options.systemMaintenance) {

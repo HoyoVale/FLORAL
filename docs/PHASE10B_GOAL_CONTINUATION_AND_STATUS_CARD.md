@@ -62,11 +62,14 @@ the Agent start working after the cooldown.
   `/goal continue`.
 - The continuation prompt always includes the full Goal objective, so the
   model never has to guess what it is working toward.
-- Goal dynamic tools now use a turn-local projection. Mutations requested by
-  the Agent are acknowledged as `commit=pending-after-turn` and FLORAL applies
-  the native `thread/goal/*` RPC only after `turn/completed`, avoiding
-  re-entrant app-server Goal RPC deadlocks. Auto-continuation still uses the
-  standalone `[GOAL_COMPLETE]` final marker as a simple completion signal.
+- Goal dynamic tools use a turn-local projection. Mutations requested by the
+  Agent are acknowledged as `commit=pending-after-turn` and FLORAL applies
+  native `thread/goal/*` RPC only after `turn/completed`, avoiding re-entrant
+  app-server Goal RPC deadlocks.
+- Native Goal state is the only completion authority. A continuation round that
+  finishes one substep leaves the Goal `active`; when the complete objective is
+  genuinely done, the Agent uses `floral_goal/update` with `status=complete`.
+  Text markers such as `[GOAL_COMPLETE]` have no control-plane meaning.
 - Individual Codex RPC calls are bounded by `codex.request_timeout_ms`
   (default 300s). The turn-completion wait is a separate
   `codex.turn_timeout_ms` / `CODEX_TURN_TIMEOUT_MS` setting, default **2h**.
@@ -96,8 +99,10 @@ project, native Goal status (Chinese labels), the **Goal objective declared
 once**, token usage, and the last tool activity. `/goal set` replies with a
 short confirmation instead of repeating the objective; `/goal status` remains
 the full on-demand view.
-It carries 暂停/停止 buttons (owner-only, routed through the existing
-card-action channel). Updates are throttled to `feishu.status_card.update_interval_ms`
+While running/cooling down it carries 暂停/停止/重新开始 controls. A paused or
+stopped active Goal exposes 继续/重新开始, and a completed Goal exposes 重新开始.
+All controls are owner-only and route through the existing card-action channel.
+Updates are throttled to `feishu.status_card.update_interval_ms`
 (default 5s); failures are audited as `feishu.status_card_failed` and swallowed.
 Final answers remain normal messages.
 
@@ -123,9 +128,12 @@ Environment overrides: `FEISHU_STATUS_CARD_*` and `GOAL_CONTINUATION_*`
 
 - `src/service/goal-continuation-coordinator.ts` — timer/limit/store/audit core.
 - `src/service/agent-status-card-controller.ts` — card lifecycle, pin, throttle.
-- `src/service/gateway-goal-continuation.ts` — facade wiring the two into the
-  Gateway with thin lifecycle hooks; keeps `src/service/gateway.ts` inside its
-  frozen budget (raised 2800 → 2950 with the facade extraction).
+- `src/service/gateway-goal-continuation.ts` — thin facade wiring lifecycle
+  hooks into Gateway.
+- `src/service/gateway-goal-control.ts` — owner Goal pause/stop/continue/restart
+  control semantics.
+- `src/service/goal-continuation-support.ts` — continuation prompt and pure
+  state helpers, keeping the coordinator inside its frozen structure budget.
 - `src/transport/feishu/feishu-status-card.ts` — card JSON builder + button
   callback normalization + reserved control text.
 - `src/storage/sqlite.ts` / `src/storage/memory-thread-store.ts` —

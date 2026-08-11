@@ -2,7 +2,7 @@ import type { AgentStatusSnapshot } from "../../core/contracts.js";
 
 export { STATUS_CONTROL_MESSAGE_PREFIX } from "../../core/contracts.js";
 
-export type FeishuStatusControlAction = "pause" | "stop";
+export type FeishuStatusControlAction = "pause" | "stop" | "continue" | "restart";
 
 export interface FeishuStatusControlEvent {
   event_id?: string | undefined;
@@ -41,7 +41,7 @@ export function buildAgentStatusCard(
   snapshot: AgentStatusSnapshot,
 ): Record<string, unknown> {
   const title = statusTitle(snapshot);
-  const template = statusTemplate(snapshot.state);
+  const template = statusTemplate(snapshot);
 
   const lines: string[] = [];
   lines.push(`状态：${title}`);
@@ -78,32 +78,27 @@ export function buildAgentStatusCard(
       content: lines.join("\n"),
     },
   ];
-  if (snapshot.state === "running" || snapshot.state === "cooldown") {
+  const controls = statusControls(snapshot);
+  if (controls.length > 0) {
     elements.push({
       tag: "column_set",
       element_id: "status_controls",
-      flex_mode: "bisect",
+      flex_mode: controls.length === 2 ? "bisect" : "none",
       horizontal_spacing: "8px",
-      columns: [
-        {
-          tag: "column",
-          element_id: "pause_column",
-          width: "weighted",
-          weight: 1,
-          elements: [
-            statusButton("pause_button", "暂停", "default", "pause"),
-          ],
-        },
-        {
-          tag: "column",
-          element_id: "stop_column",
-          width: "weighted",
-          weight: 1,
-          elements: [
-            statusButton("stop_button", "停止", "danger", "stop"),
-          ],
-        },
-      ],
+      columns: controls.map((control) => ({
+        tag: "column",
+        element_id: `${control.action}_column`,
+        width: "weighted",
+        weight: 1,
+        elements: [
+          statusButton(
+            `${control.action}_button`,
+            control.label,
+            control.type,
+            control.action,
+          ),
+        ],
+      })),
     });
   }
 
@@ -204,20 +199,46 @@ function readStatusControlValue(
   }
   const record = value as Record<string, unknown>;
   if (record.floral_action !== "status_control") return undefined;
-  if (record.action !== "pause" && record.action !== "stop") return undefined;
+  if (
+    record.action !== "pause"
+    && record.action !== "stop"
+    && record.action !== "continue"
+    && record.action !== "restart"
+  ) return undefined;
   return {
     floral_action: "status_control",
     action: record.action,
   };
 }
 
+function statusControls(snapshot: AgentStatusSnapshot): Array<{
+  action: FeishuStatusControlAction;
+  label: string;
+  type: "default" | "danger";
+}> {
+  if (snapshot.state === "running" || snapshot.state === "cooldown") {
+    return [
+      { action: "pause", label: "暂停", type: "default" },
+      { action: "stop", label: "停止", type: "danger" },
+      { action: "restart", label: "重新开始", type: "default" },
+    ];
+  }
+  const status = snapshot.goal?.status;
+  if (status === "complete") {
+    return [{ action: "restart", label: "重新开始", type: "default" }];
+  }
+  if (status === "paused" || status === "blocked" || status === "active") {
+    return [
+      { action: "continue", label: "继续", type: "default" },
+      { action: "restart", label: "重新开始", type: "default" },
+    ];
+  }
+  return [];
+}
+
 function statusTitle(snapshot: AgentStatusSnapshot): string {
-  if (snapshot.state === "idle" && snapshot.goal?.status === "complete") {
-    return "FLORAL Goal 已完成";
-  }
-  if (snapshot.state === "idle" && snapshot.goal?.status === "paused") {
-    return "FLORAL Goal 已暂停";
-  }
+  if (snapshot.goal?.status === "complete") return "FLORAL Goal 已完成";
+  if (snapshot.goal?.status === "paused") return "FLORAL Goal 已暂停";
   switch (snapshot.state) {
     case "running": return "FLORAL Agent 运行中";
     case "cooldown": return "FLORAL Agent 冷却中";
@@ -226,8 +247,13 @@ function statusTitle(snapshot: AgentStatusSnapshot): string {
   }
 }
 
-function statusTemplate(state: AgentStatusSnapshot["state"]): string {
-  switch (state) {
+function statusTemplate(snapshot: AgentStatusSnapshot): string {
+  if (snapshot.goal?.status === "complete") return "green";
+  if (snapshot.goal?.status === "paused") return "orange";
+  if (snapshot.goal?.status === "blocked"
+    || snapshot.goal?.status === "budgetLimited"
+    || snapshot.goal?.status === "usageLimited") return "red";
+  switch (snapshot.state) {
     case "running": return "blue";
     case "cooldown": return "orange";
     case "stopped": return "red";

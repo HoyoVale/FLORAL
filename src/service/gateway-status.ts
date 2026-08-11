@@ -336,6 +336,8 @@ export function gatewayHelpText(): string {
     "/goal    查看当前会话的 Codex 原生 Goal",
     "/goal set [--tokens <正整数|off>] <目标> 创建或替换 Goal（owner）",
     "/goal <active|pause|blocked|complete|clear> 更新 Goal（owner）",
+    "/goal continue 继续已暂停/停止的 Goal 自动续跑（owner）",
+    "/goal restart 将现有 Goal 置回 active，并从第 1 轮重新自动续跑（owner）",
     "/mode     查看执行模式",
     "/mode ask 使用 Codex 原生审批 + 飞书确认",
     "/mode auto 使用 Codex auto_review（owner）",

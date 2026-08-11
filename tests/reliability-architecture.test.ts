@@ -12,8 +12,8 @@ describe("Phase 8G reliability architecture", () => {
       // gateway-goal-continuation facade (separate frozen budget below).
       "src/service/gateway.ts": 2_950,
       "src/service/gateway-goal-continuation.ts": 430,
-      // Retryable-failure handling and the [GOAL_COMPLETE] post-turn marker
-      // raised the coordinator budget from 520 to 580 lines.
+      // Goal continuation stays under the frozen 580-line orchestration budget;
+      // prompt/state helpers live in goal-continuation-support.ts.
       "src/service/goal-continuation-coordinator.ts": 580,
       "src/service/agent-status-card-controller.ts": 260,
       "src/agent/codex-app-server.ts": 3_250,

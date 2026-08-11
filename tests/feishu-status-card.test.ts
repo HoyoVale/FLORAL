@@ -39,10 +39,10 @@ describe("agent status card", () => {
     const buttons = columns.flatMap((column) =>
       (column.elements as Array<Record<string, unknown>>));
     expect(buttons.map((button) => (button.text as Record<string, unknown>).content))
-      .toEqual(["暂停", "停止"]);
+      .toEqual(["暂停", "停止", "重新开始"]);
   });
 
-  it("removes mutation controls from terminal cards", () => {
+  it("offers a restart control after Goal completion", () => {
     const card = buildAgentStatusCard({
       state: "idle",
       turnNumber: 2,
@@ -58,8 +58,36 @@ describe("agent status card", () => {
     const elements = (card.body as Record<string, unknown>).elements as Array<Record<string, unknown>>;
     expect((((card.header as Record<string, unknown>).title as Record<string, unknown>).content))
       .toBe("FLORAL Goal 已完成");
-    expect(elements).toHaveLength(1);
+    expect(elements).toHaveLength(2);
     expect(String(elements[0]?.content)).toContain("已完成");
+    const controls = elements[1] as Record<string, unknown>;
+    const columns = controls.columns as Array<Record<string, unknown>>;
+    const buttons = columns.flatMap((column) =>
+      (column.elements as Array<Record<string, unknown>>));
+    expect(buttons.map((button) => (button.text as Record<string, unknown>).content))
+      .toEqual(["重新开始"]);
+  });
+
+  it("offers continue and restart controls for a paused Goal", () => {
+    const card = buildAgentStatusCard({
+      state: "idle",
+      turnNumber: 2,
+      elapsedMs: 20_000,
+      goal: {
+        status: "paused",
+        objective: "paused goal",
+        tokensUsed: 10,
+        tokenBudget: null,
+        timeUsedSeconds: 5,
+      },
+    }) as Record<string, unknown>;
+    const elements = (card.body as Record<string, unknown>).elements as Array<Record<string, unknown>>;
+    const controls = elements[1] as Record<string, unknown>;
+    const columns = controls.columns as Array<Record<string, unknown>>;
+    const buttons = columns.flatMap((column) =>
+      (column.elements as Array<Record<string, unknown>>));
+    expect(buttons.map((button) => (button.text as Record<string, unknown>).content))
+      .toEqual(["继续", "重新开始"]);
   });
 
   it("normalizes a valid status-control callback and rejects unknown values", () => {
@@ -81,6 +109,17 @@ describe("agent status card", () => {
     const normalized = normalizeFeishuStatusControlCardAction(event, "cli_floral");
     expect(normalized?.action).toBe("stop");
     expect(normalized?.conversationId).toBe("oc_1");
+    const restart = normalizeFeishuStatusControlCardAction(
+      {
+        ...event,
+        action: {
+          tag: "button",
+          value: { floral_action: "status_control", action: "restart" },
+        },
+      },
+      "cli_floral",
+    );
+    expect(restart?.action).toBe("restart");
 
     const unknown = normalizeFeishuStatusControlCardAction(
       { ...event, action: { tag: "button", value: { floral_action: "approval" } } },
@@ -92,6 +131,8 @@ describe("agent status card", () => {
   it("parses the reserved status-control message text", () => {
     expect(parseStatusControlAction("__floral_status_control__ pause")).toBe("pause");
     expect(parseStatusControlAction("__floral_status_control__ stop")).toBe("stop");
+    expect(parseStatusControlAction("__floral_status_control__ continue")).toBe("continue");
+    expect(parseStatusControlAction("__floral_status_control__ restart")).toBe("restart");
     expect(parseStatusControlAction("__floral_status_control__ unknown")).toBeUndefined();
     expect(parseStatusControlAction("hello")).toBeUndefined();
   });
