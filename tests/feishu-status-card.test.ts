@@ -32,6 +32,7 @@ describe("agent status card", () => {
     expect(String(markdown.content)).toContain("**Goal 状态**：进行中");
     expect(String(markdown.content)).toContain("目标：完成 Phase 10B");
     expect(String(markdown.content)).toContain("Token 用量：42 / 不限");
+    expect(String(markdown.content)).toContain("Goal 已用时：30 秒");
     expect(String(markdown.content)).toContain("FLORAL");
     const controls = elements[1] as Record<string, unknown>;
     const columns = controls.columns as Array<Record<string, unknown>>;
@@ -39,6 +40,26 @@ describe("agent status card", () => {
       (column.elements as Array<Record<string, unknown>>));
     expect(buttons.map((button) => (button.text as Record<string, unknown>).content))
       .toEqual(["暂停", "停止"]);
+  });
+
+  it("removes mutation controls from terminal cards", () => {
+    const card = buildAgentStatusCard({
+      state: "idle",
+      turnNumber: 2,
+      elapsedMs: 20_000,
+      goal: {
+        status: "complete",
+        objective: "done",
+        tokensUsed: 10,
+        tokenBudget: null,
+        timeUsedSeconds: 5,
+      },
+    }) as Record<string, unknown>;
+    const elements = (card.body as Record<string, unknown>).elements as Array<Record<string, unknown>>;
+    expect((((card.header as Record<string, unknown>).title as Record<string, unknown>).content))
+      .toBe("FLORAL Goal 已完成");
+    expect(elements).toHaveLength(1);
+    expect(String(elements[0]?.content)).toContain("已完成");
   });
 
   it("normalizes a valid status-control callback and rejects unknown values", () => {

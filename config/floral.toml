@@ -89,9 +89,10 @@ model = ""
 cwd = "."
 managed_home = "./data/codex-runtime"
 request_timeout_ms = 300000
-# 0 = no FLORAL turn-completion timeout; goal turns may run as long as the
-# provider keeps streaming. Individual RPC calls stay bounded above.
-turn_timeout_ms = 0
+# Finite safety watchdog for a genuinely wedged app-server turn. Goal work may
+# still run for hours, but a protocol deadlock must not occupy the conversation
+# forever. Set 0 explicitly only when debugging the watchdog itself.
+turn_timeout_ms = 7200000
 # Locked until the permission authority is implemented.
 native_web_search = false
 

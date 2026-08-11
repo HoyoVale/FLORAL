@@ -116,10 +116,10 @@ const envSchema = z.object({
   CODEX_CWD: z.string().default("."),
   CODEX_MANAGED_HOME: z.string().trim().min(1).default("./data/codex-runtime"),
   CODEX_REQUEST_TIMEOUT_MS: z.coerce.number().int().positive().default(300_000),
-  // 0 disables the FLORAL turn-completion timeout (goal turns may run as long
-  // as the provider keeps streaming). Individual RPC calls remain bounded by
-  // CODEX_REQUEST_TIMEOUT_MS and the DeepSeek stream idle timeout still applies.
-  CODEX_TURN_TIMEOUT_MS: z.coerce.number().int().nonnegative().default(0),
+  // A separate, generous completion watchdog. 0 remains an explicit escape
+  // hatch, but the default is finite so a protocol deadlock cannot wedge one
+  // conversation forever.
+  CODEX_TURN_TIMEOUT_MS: z.coerce.number().int().nonnegative().default(7_200_000),
   DEEPSEEK_API_KEY: optionalNonEmptyString,
   MIMO_API_KEY: optionalNonEmptyString,
   // Optional machine-local credential used only by the curated read-only GitHub MCP.

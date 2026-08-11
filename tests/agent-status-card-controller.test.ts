@@ -102,12 +102,12 @@ describe("AgentStatusCardController", () => {
     expect(h.transport.pinned).toEqual(["card-1"]);
 
     await h.controller.onRunEvent("chat-1", {
-      ...snapshot,
       lastActivity: "working",
     });
     await h.advance(6);
     expect(h.transport.updated).toHaveLength(1);
     expect(h.transport.updated[0]?.lastActivity).toBe("working");
+    expect(h.transport.updated[0]?.turnNumber).toBe(1);
 
     await h.advance(5);
     expect(h.transport.updated.length).toBeGreaterThanOrEqual(2);
@@ -134,5 +134,28 @@ describe("AgentStatusCardController", () => {
     await h.controller.onRunEvent("chat-1", snapshot);
     expect(h.audits.some((event) => event.eventType === "feishu.status_card_failed"))
       .toBe(true);
+  });
+
+  it("can create a card directly in cooldown and ticks the remaining time", async () => {
+    const h = harness();
+    await h.controller.start();
+    await h.controller.onCooldown("chat-1", {
+      state: "cooldown",
+      turnNumber: 1,
+      elapsedMs: 0,
+      cooldownRemainingMs: 30,
+    });
+    expect(h.transport.sent).toHaveLength(1);
+    await h.advance(6);
+    expect(h.transport.updated.at(-1)?.state).toBe("cooldown");
+    expect(h.transport.updated.at(-1)?.cooldownRemainingMs).toBeLessThan(30);
+  });
+
+  it("replaces terminal snapshots so stale progress is not retained", async () => {
+    const h = harness();
+    await h.controller.start();
+    await h.controller.onRunStarted("chat-1", { ...snapshot, lastActivity: "任务开始" });
+    await h.controller.onRunEnded("chat-1", { ...snapshot, state: "idle" });
+    expect(h.transport.updated.at(-1)?.lastActivity).toBeUndefined();
   });
 });

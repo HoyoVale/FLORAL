@@ -46,6 +46,21 @@ const CONTINUATION_TRANSPORT = "feishu" as const;
 const MAX_CONTINUATION_RETRIES = 2;
 const GOAL_COMPLETE_MARKER = "[GOAL_COMPLETE]";
 
+export function hasGoalCompleteMarker(text: string | undefined): boolean {
+  if (!text) return false;
+  return text
+    .split(/\r?\n/gu)
+    .some((line) => line.trim() === GOAL_COMPLETE_MARKER);
+}
+
+export function stripGoalCompleteMarker(text: string): string {
+  return text
+    .split(/\r?\n/gu)
+    .filter((line) => line.trim() !== GOAL_COMPLETE_MARKER)
+    .join("\n")
+    .trim();
+}
+
 type ResolvedGoalContinuationOptions = Omit<
   GoalContinuationCoordinatorOptions,
   "send" | "onCooldown" | "now" | "schedule" | "cancelSchedule"
@@ -87,6 +102,10 @@ export class GoalContinuationCoordinator {
       if (!record.pending) continue;
       record.pending = false;
       record.nextRunAt = null;
+      // We cannot prove whether the pre-crash turn performed side effects, so
+      // never silently resume it. Make the quarantine explicit instead of
+      // leaving an enabled-but-unscheduled continuation zombie.
+      record.enabled = false;
       record.updatedAt = this.#options.now();
       await this.#options.store.saveGoalContinuation(record);
       await this.#audit({
@@ -97,6 +116,10 @@ export class GoalContinuationCoordinator {
           reason: "service-restart",
         },
       });
+      await this.#notify(
+        record.deliveryConversationId,
+        "Goal 自动续跑因 FLORAL 服务重启已安全暂停，避免重复执行未确认的副作用。确认当前状态后可使用 /goal continue 重新启用。",
+      );
     }
   }
 
@@ -118,6 +141,7 @@ export class GoalContinuationCoordinator {
     projectCwd: string;
     projectName: string;
     enable: boolean;
+    resetProgress?: boolean | undefined;
   }): Promise<void> {
     const now = this.#options.now();
     const existing = await this.#options.store.loadGoalContinuation(input.conversationId);
@@ -144,6 +168,12 @@ export class GoalContinuationCoordinator {
     record.threadId = input.threadId;
     record.projectCwd = input.projectCwd;
     record.projectName = input.projectName;
+    if (input.resetProgress) {
+      record.turnCount = 0;
+      record.lastRunAt = null;
+      record.createdAt = now;
+      this.#retryCounts.delete(input.conversationId);
+    }
     record.updatedAt = now;
     await this.#cancelPending(record);
     await this.#options.store.saveGoalContinuation(record);
@@ -197,6 +227,7 @@ export class GoalContinuationCoordinator {
         projectCwd: input.projectCwd,
         projectName: input.projectName,
         enable: true,
+        resetProgress: true,
       });
       return;
     }
@@ -249,7 +280,7 @@ export class GoalContinuationCoordinator {
     record.projectName = input.projectName;
     this.#retryCounts.delete(input.conversationId);
     await this.#options.store.saveGoalContinuation(record);
-    if (input.finalText?.includes(GOAL_COMPLETE_MARKER)) {
+    if (hasGoalCompleteMarker(input.finalText)) {
       const goal = await this.#getGoal(record);
       if (goal && goal.status === "active") {
         await this.#agent.setGoal({
@@ -257,26 +288,46 @@ export class GoalContinuationCoordinator {
           cwd: record.projectCwd,
           status: "complete",
         });
-        record.enabled = false;
-        record.updatedAt = this.#options.now();
-        await this.#options.store.saveGoalContinuation(record);
-        await this.#audit({
-          conversationId: input.conversationId,
-          eventType: "goal.continuation_completed_by_marker",
-          payload: { threadId: record.threadId },
-        });
       }
+      record.enabled = false;
+      record.pending = false;
+      record.nextRunAt = null;
+      record.updatedAt = this.#options.now();
+      await this.#cancelTimers(record.conversationId);
+      await this.#options.store.saveGoalContinuation(record);
+      await this.#audit({
+        conversationId: input.conversationId,
+        eventType: "goal.continuation_completed_by_marker",
+        payload: { threadId: record.threadId, previousGoalStatus: goal?.status ?? "absent" },
+      });
       return;
     }
     await this.#scheduleNext(record);
   }
 
-  async onRunFailed(conversationId: string, error: unknown): Promise<void> {
+  async onRunFailed(
+    conversationId: string,
+    error: unknown,
+  ): Promise<"ignored" | "retry-scheduled" | "terminal-goal" | "stopped"> {
     const record = await this.#options.store.loadGoalContinuation(conversationId);
-    if (!record?.authorized) return;
+    if (!record?.authorized || !record.enabled) return "ignored";
     const retryable = isRetryableError(error);
     const retries = this.#retryCounts.get(conversationId) ?? 0;
     const goal = await this.#getGoal(record);
+    if (goal && goal.status !== "active") {
+      record.enabled = false;
+      record.pending = false;
+      record.nextRunAt = null;
+      record.updatedAt = this.#options.now();
+      await this.#cancelTimers(conversationId);
+      await this.#options.store.saveGoalContinuation(record);
+      await this.#audit({
+        conversationId,
+        eventType: "goal.continuation_reconciled_terminal_goal",
+        payload: { threadId: record.threadId, goalStatus: goal.status, afterRunFailure: true },
+      });
+      return "terminal-goal";
+    }
     if (
       retryable
       && retries < MAX_CONTINUATION_RETRIES
@@ -306,7 +357,7 @@ export class GoalContinuationCoordinator {
         ].join("\n"),
       );
       await this.#scheduleNext(record);
-      return;
+      return "retry-scheduled";
     }
     record.enabled = false;
     record.updatedAt = this.#options.now();
@@ -325,6 +376,7 @@ export class GoalContinuationCoordinator {
       "Goal 自动续跑因任务失败而停止。",
       "可检查日志后使用 /goal continue 重新启用。",
     ].join("\n"));
+    return "stopped";
   }
 
   async stopContinuation(conversationId: string, reason: string): Promise<boolean> {
@@ -352,7 +404,26 @@ export class GoalContinuationCoordinator {
     if (!record.enabled || !record.authorized) return;
     if (record.pending && record.nextRunAt !== null) return;
     const goal = await this.#getGoal(record);
-    if (!goal || goal.status !== "active") return;
+    if (!goal || goal.status !== "active") {
+      // Keep the persisted continuation state aligned with native Goal
+      // authority. Otherwise a Goal completed/paused by the Agent can leave an
+      // enabled-but-inert continuation zombie behind.
+      record.enabled = false;
+      record.pending = false;
+      record.nextRunAt = null;
+      record.updatedAt = this.#options.now();
+      await this.#cancelTimers(record.conversationId);
+      await this.#options.store.saveGoalContinuation(record);
+      await this.#audit({
+        conversationId: record.conversationId,
+        eventType: "goal.continuation_reconciled_terminal_goal",
+        payload: {
+          threadId: record.threadId,
+          goalStatus: goal?.status ?? "absent",
+        },
+      });
+      return;
+    }
     if (goal.tokenBudget !== null && goal.tokensUsed >= goal.tokenBudget) {
       await this.#budgetLimited(record, goal);
       return;
@@ -388,8 +459,34 @@ export class GoalContinuationCoordinator {
       goal,
       cooldownRemainingMs: this.#options.cooldownMs,
     });
+    const expectedNextRunAt = record.nextRunAt;
     const handle = this.#options.schedule(
-      () => this.#fire(record.conversationId, record.nextRunAt!),
+      () => {
+        void this.#fire(record.conversationId, expectedNextRunAt!).catch(async (error) => {
+          const failedRecord = await this.#options.store
+            .loadGoalContinuation(record.conversationId)
+            .catch(() => undefined);
+          if (failedRecord?.pending && failedRecord.nextRunAt === expectedNextRunAt) {
+            failedRecord.pending = false;
+            failedRecord.nextRunAt = null;
+            failedRecord.enabled = false;
+            failedRecord.updatedAt = this.#options.now();
+            await this.#options.store.saveGoalContinuation(failedRecord).catch(() => undefined);
+          }
+          await this.#audit({
+            conversationId: record.conversationId,
+            eventType: "goal.continuation_timer_failed",
+            payload: {
+              threadId: record.threadId,
+              errorType: error instanceof Error ? error.name : "Error",
+            },
+          });
+          await this.#notify(
+            record.deliveryConversationId,
+            "Goal 自动续跑调度器发生异常，本次续跑未执行。请使用 /goal 查看状态；如需继续，可使用 /goal continue。",
+          );
+        });
+      },
       this.#options.cooldownMs,
     );
     this.#pendingTimers.set(record.conversationId, handle);
@@ -411,14 +508,21 @@ export class GoalContinuationCoordinator {
         eventType: "goal.continuation_deferred",
         payload: { threadId: record.threadId, reason: "conversation-busy" },
       });
+      await this.#scheduleNext(record);
       return;
     }
     const goal = await this.#getGoal(record);
     if (!goal || goal.status !== "active") {
       record.pending = false;
       record.nextRunAt = null;
+      record.enabled = false;
       record.updatedAt = this.#options.now();
       await this.#options.store.saveGoalContinuation(record);
+      await this.#audit({
+        conversationId,
+        eventType: "goal.continuation_reconciled_terminal_goal",
+        payload: { threadId: record.threadId, goalStatus: goal?.status ?? "absent" },
+      });
       return;
     }
 
@@ -548,8 +652,8 @@ export class GoalContinuationCoordinator {
         `第 ${String(record.turnCount)} 轮。当前 Goal 状态：${goal.status}。`,
         `目标：${goal.objective}`,
         "请继续推进上述目标，不要重复已完成的工作。",
-        "重要：不要在本回合调用 update_goal / create_goal 等 Goal 工具；FLORAL 会在回合结束后自动处理 Goal 状态。",
-        "如果你认为目标已经完成，请在回复的最后单独一行写上 [GOAL_COMPLETE]，FLORAL 会把 Goal 置为 complete。",
+        "重要：不要在本回合调用 floral_goal/create、floral_goal/update 或 floral_goal/clear；自动续跑由 FLORAL 在回合结束后管理 Goal 状态。",
+        "Goal 是跨轮目标：只有完整 objective 的全部阶段都已经完成时，才在回复最后单独一行写 [GOAL_COMPLETE]。如果目标明确要求后续轮次/阶段，完成当前轮绝不等于 Goal 完成。",
         "若需要更多信息，请明确说明还缺什么。",
         "如果目标只需要直接回答或总结，请直接完成，避免不必要的工具调用。",
       ].join("\n"),

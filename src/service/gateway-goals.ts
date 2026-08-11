@@ -103,7 +103,14 @@ export async function handleGatewayGoalCommand(input: {
         ...(goal ? { status: goal.status, tokenBudget: goal.tokenBudget } : {}),
       },
     });
-    await input.send(command.action === "set" ? "Goal 已设置并授权自动续跑。目标已固定在状态卡上；30 秒后开始第一轮。" : goal ? formatAgentGoal(goal) : "当前会话没有 Goal。");
+    const continuation = await input.continuation
+      ?.getRecord(input.conversationId)
+      .catch(() => undefined);
+    await input.send(command.action === "set"
+      ? "Goal 已设置并授权自动续跑。目标已固定在状态卡上；稍后开始第一轮。"
+      : goal
+        ? `${formatAgentGoal(goal)}\n${formatContinuationState(continuation)}`
+        : "当前会话没有 Goal。");
   } catch (error) {
     const message = error instanceof Error
       ? error.message.replace(/\s+/gu, " ").trim().slice(0, 300)
@@ -116,4 +123,12 @@ export async function handleGatewayGoalCommand(input: {
     }).catch(() => undefined);
     await input.send("Codex Goal 操作失败。会话可能已归档、目标格式无效，或当前 app-server 版本不支持该接口。");
   }
+}
+
+function formatContinuationState(record: Awaited<ReturnType<GoalContinuationCoordinator["getRecord"]>>): string {
+  if (!record?.authorized) return "自动续跑：未授权";
+  if (!record.enabled) return `自动续跑：已停用（已完成 ${String(record.turnCount)} 轮）`;
+  return record.pending
+    ? `自动续跑：已启用，下一轮已排队（已完成 ${String(record.turnCount)} 轮）`
+    : `自动续跑：已启用（已完成 ${String(record.turnCount)} 轮）`;
 }

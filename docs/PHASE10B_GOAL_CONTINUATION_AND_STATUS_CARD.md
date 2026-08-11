@@ -62,19 +62,21 @@ the Agent start working after the cooldown.
   `/goal continue`.
 - The continuation prompt always includes the full Goal objective, so the
   model never has to guess what it is working toward.
-- The continuation prompt explicitly forbids `update_goal` / `create_goal`
-  mid-turn (a native mid-turn Goal mutation hangs the app-server turn with the
-  custom provider). Completion is signaled with a `[GOAL_COMPLETE]` marker in
-  the final reply; FLORAL applies the native `complete` status **after** the
-  turn ends, which is safe.
+- Goal dynamic tools now use a turn-local projection. Mutations requested by
+  the Agent are acknowledged as `commit=pending-after-turn` and FLORAL applies
+  the native `thread/goal/*` RPC only after `turn/completed`, avoiding
+  re-entrant app-server Goal RPC deadlocks. Auto-continuation still uses the
+  standalone `[GOAL_COMPLETE]` final marker as a simple completion signal.
 - Individual Codex RPC calls are bounded by `codex.request_timeout_ms`
   (default 300s). The turn-completion wait is a separate
-  `codex.turn_timeout_ms` / `CODEX_TURN_TIMEOUT_MS` setting, default
-  **0 = unlimited**; the DeepSeek stream idle timeout and the daily cost guard
-  still apply.
+  `codex.turn_timeout_ms` / `CODEX_TURN_TIMEOUT_MS` setting, default **2h**.
+  `0` remains an explicit debugging escape hatch. The DeepSeek stream idle
+  timeout and daily cost guard still apply.
 - Pending state is persisted in SQLite (`goal_continuation`). On service
-  restart, any pending continuation is **quarantined** (`pending=false` + audit
-  `goal.continuation_quarantined`) so a restart never silently spawns runs.
+  restart, any pending continuation is **quarantined and disabled**
+  (`pending=false`, `enabled=false` + audit `goal.continuation_quarantined`) so
+  a restart never silently spawns or leaves an enabled-but-inert zombie loop.
+  The owner can inspect state and explicitly `/goal continue` afterward.
 - Every schedule/fire/stop/limit event is audited under `goal.continuation_*`.
 
 ## Feishu live status card

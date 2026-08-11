@@ -213,6 +213,22 @@ describe("GoalContinuationCoordinator", () => {
     expect(h.agent.runCount).toBe(2);
   });
 
+  it("resets continuation counters when a new Goal is set", async () => {
+    const h = harness();
+    await h.coordinator.start();
+    h.agent.goal = makeGoal("thread-1", "active");
+    await h.coordinator.authorize({ ...authorizeInput, enable: true });
+    await h.advance(30);
+    expect((await h.store.loadGoalContinuation("conv-1"))?.turnCount).toBe(1);
+    await h.coordinator.syncCommand({
+      action: "set",
+      ...authorizeInput,
+    });
+    const reset = await h.store.loadGoalContinuation("conv-1");
+    expect(reset?.turnCount).toBe(0);
+    expect(reset?.lastRunAt).toBeNull();
+  });
+
   it("keeps scheduling while the goal stays active", async () => {
     const h = harness();
     await h.coordinator.start();
@@ -373,6 +389,7 @@ describe("GoalContinuationCoordinator", () => {
     await restarted.start();
     const record = await h.store.loadGoalContinuation("conv-1");
     expect(record?.pending).toBe(false);
+    expect(record?.enabled).toBe(false);
     expect(h.audits.some((event) => event.eventType === "goal.continuation_quarantined"))
       .toBe(true);
   });
@@ -441,6 +458,24 @@ describe("GoalContinuationCoordinator", () => {
     expect(
       h.audits.some((event) => event.eventType === "goal.continuation_completed_by_marker"),
     ).toBe(true);
+  });
+
+  it("does not complete a goal merely because the marker is quoted inline", async () => {
+    const h = harness();
+    await h.coordinator.start();
+    h.agent.goal = makeGoal("thread-1", "active");
+    await h.coordinator.authorize({ ...authorizeInput, enable: true });
+    await h.coordinator.onRunCompleted({
+      conversationId: "conv-1",
+      deliveryConversationId: "chat-1",
+      threadId: "thread-1",
+      projectCwd: "/project",
+      projectName: "project",
+      finalText: "请在最终回复单独输出 [GOAL_COMPLETE]，但现在还没完成。",
+    });
+    expect(h.agent.setGoalInputs.some((input) => input.status === "complete"))
+      .toBe(false);
+    expect((await h.store.loadGoalContinuation("conv-1"))?.enabled).toBe(true);
   });
 
   it("disables continuation after exhausting retries", async () => {

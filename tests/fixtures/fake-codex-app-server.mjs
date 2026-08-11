@@ -14,6 +14,7 @@ const skillEnabled = new Map();
 let appEnabled = true;
 let appConfigWriteCount = 0;
 const goals = new Map();
+let goalDynamicTurnOpen = false;
 
 function send(message) {
   process.stdout.write(`${JSON.stringify(message)}\n`);
@@ -468,6 +469,13 @@ lines.on("line", (line) => {
   }
 
   if (message.method === "thread/goal/set") {
+    if (scenario === "goal-dynamic-create" && goalDynamicTurnOpen) {
+      send({
+        id: message.id,
+        error: { code: -32602, message: "reentrant thread/goal/set during active turn is forbidden" },
+      });
+      return;
+    }
     const threadId = message.params?.threadId;
     if (typeof threadId !== "string" || !threadId) {
       send({ id: message.id, error: { code: -32602, message: "invalid goal thread" } });
@@ -1356,6 +1364,7 @@ lines.on("line", (line) => {
       }
 
       if (scenario === "goal-dynamic-create") {
+        goalDynamicTurnOpen = true;
         send({
           id: "dynamic_1",
           method: "item/tool/call",
@@ -1776,6 +1785,7 @@ lines.on("line", (line) => {
       && text.includes("token_budget=9000")
       && text.includes("authority=codex-app-server-thread-goal")
     ) {
+      goalDynamicTurnOpen = false;
       sendSuccess(activeThreadId, activeTurnId, "goal dynamic create complete");
       return;
     }

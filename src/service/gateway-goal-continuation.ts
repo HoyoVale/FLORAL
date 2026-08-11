@@ -21,6 +21,7 @@ import type {
 import { AgentStatusCardController } from "./agent-status-card-controller.js";
 import {
   GoalContinuationCoordinator,
+  hasGoalCompleteMarker,
   type GoalContinuationRunInput,
 } from "./goal-continuation-coordinator.js";
 
@@ -160,6 +161,15 @@ export class GoalContinuationFacade {
     await this.statusCard?.onUserInterrupt(deliveryConversationId).catch(() => undefined);
   }
 
+  async shouldConsumeCompletionMarker(
+    conversationId: string,
+    finalText: string,
+  ): Promise<boolean> {
+    if (!hasGoalCompleteMarker(finalText)) return false;
+    const record = await this.coordinator.getRecord(conversationId).catch(() => undefined);
+    return Boolean(record?.authorized && record.enabled);
+  }
+
   async onRunStarted(
     conversationId: string,
     deliveryConversationId: string,
@@ -188,9 +198,6 @@ export class GoalContinuationFacade {
   ): Promise<void> {
     if (event.type !== "tool.started" && event.type !== "tool.completed") return;
     await this.statusCard?.onRunEvent(deliveryConversationId, {
-      state: "running",
-      turnNumber: 0,
-      elapsedMs: 0,
       lastActivity: event.type === "tool.started"
         ? `正在使用工具 ${event.name}`
         : `工具完成 ${event.name}`,
@@ -205,6 +212,18 @@ export class GoalContinuationFacade {
     projectName: string;
     finalText?: string | undefined;
   }): Promise<void> {
+    await this.coordinator.onRunCompleted({
+      conversationId: input.conversationId,
+      deliveryConversationId: input.deliveryConversationId,
+      threadId: input.threadId,
+      projectCwd: input.projectCwd,
+      projectName: input.projectName,
+      ...(input.finalText !== undefined ? { finalText: input.finalText } : {}),
+    }).catch(() => undefined);
+    const record = await this.coordinator.getRecord(input.conversationId).catch(() => undefined);
+    // A scheduled continuation already drove the card into cooldown through
+    // onCooldown. Do not overwrite that state with an idle card.
+    if (record?.pending) return;
     await this.statusCard?.onRunEnded(
       input.deliveryConversationId,
       await this.statusSnapshot(
@@ -214,21 +233,41 @@ export class GoalContinuationFacade {
         { projectName: input.projectName || undefined },
       ),
     ).catch(() => undefined);
-    await this.coordinator.onRunCompleted({
-      conversationId: input.conversationId,
-      deliveryConversationId: input.deliveryConversationId,
-      threadId: input.threadId,
-      projectCwd: input.projectCwd,
-      projectName: input.projectName,
-      ...(input.finalText !== undefined ? { finalText: input.finalText } : {}),
-    }).catch(() => undefined);
   }
 
   async onRunFailed(
     conversationId: string,
     deliveryConversationId: string,
     error: unknown,
-  ): Promise<void> {
+  ): Promise<boolean> {
+    const outcome = await this.coordinator.onRunFailed(conversationId, error)
+      .catch(() => "ignored" as const);
+    if (outcome === "retry-scheduled") {
+      // onCooldown has already moved the live card into a retry/cooldown state.
+      return true;
+    }
+    if (outcome === "terminal-goal") {
+      await this.statusCard?.onRunEnded(
+        deliveryConversationId,
+        await this.statusSnapshot(
+          conversationId,
+          deliveryConversationId,
+          "idle",
+        ),
+      ).catch(() => undefined);
+      return true;
+    }
+    if (outcome === "stopped") {
+      await this.statusCard?.onStopped(
+        deliveryConversationId,
+        await this.statusSnapshot(
+          conversationId,
+          deliveryConversationId,
+          "stopped",
+        ),
+      ).catch(() => undefined);
+      return true;
+    }
     await this.statusCard?.onStopped(
       deliveryConversationId,
       await this.statusSnapshot(
@@ -237,7 +276,7 @@ export class GoalContinuationFacade {
         "stopped",
       ),
     ).catch(() => undefined);
-    await this.coordinator.onRunFailed(conversationId, error).catch(() => undefined);
+    return false;
   }
 
   async stopContinuation(conversationId: string, reason: string): Promise<boolean> {
@@ -355,6 +394,7 @@ export class GoalContinuationFacade {
           projectCwd: input.projectCwd,
           projectName: input.projectName,
           enable: true,
+          ...(input.action === "set" ? { resetProgress: true } : {}),
         });
         return;
       case "active":
@@ -392,10 +432,11 @@ export class GoalContinuationFacade {
           cwd: context.projectCwd,
         }).catch(() => undefined)
       : undefined;
+    const record = await this.coordinator.getRecord(conversationId).catch(() => undefined);
     return {
       state,
       projectName: extra.projectName ?? context?.projectName,
-      turnNumber: extra.turnNumber ?? 0,
+      turnNumber: extra.turnNumber ?? record?.turnCount ?? 0,
       elapsedMs: 0,
       ...(extra.lastActivity ? { lastActivity: extra.lastActivity } : {}),
       ...(extra.cooldownRemainingMs !== undefined

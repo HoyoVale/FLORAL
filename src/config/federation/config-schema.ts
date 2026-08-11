@@ -586,7 +586,7 @@ export const DEFAULT_REQUESTED_CONFIG: RequestedConfig = {
     cwd: ".",
     managed_home: "./data/codex-runtime",
     request_timeout_ms: 300_000,
-    turn_timeout_ms: 0,
+    turn_timeout_ms: 7_200_000,
     native_web_search: false,
     sandbox: { mode: "read-only" },
     approval: { policy: "never" },

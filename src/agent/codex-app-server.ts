@@ -31,6 +31,7 @@ import { capabilityForMcpTool } from "../policy/authorization-authority.js";
 import {
   CodexGoalClient,
   executeGoalDynamicTool,
+  projectGoalSet,
   readGoalDynamicCall,
   type GoalSetInput,
 } from "./codex-goals.js";
@@ -281,6 +282,10 @@ interface InFlightMcpToolCall {
   arguments: Record<string, unknown>;
 }
 
+type DeferredGoalMutation =
+  | { kind: "set"; input: GoalSetInput; commitOnFailure: boolean }
+  | { kind: "clear"; commitOnFailure: boolean };
+
 export class CodexAppServerRuntime implements AgentRuntime {
   readonly name = "codex-app-server";
   readonly #client: CodexRpcClient;
@@ -320,6 +325,8 @@ export class CodexAppServerRuntime implements AgentRuntime {
   readonly #artifactDeliveryHandlers = new Map<string, AgentArtifactDeliveryHandler>();
   readonly #artifactTools = new FloralArtifactToolController();
   readonly #threadCwds = new Map<string, string>();
+  readonly #goalTurnProjected = new Map<string, AgentGoal | undefined>();
+  readonly #deferredGoalMutations = new Map<string, DeferredGoalMutation[]>();
   readonly #extensionSnapshots: FloralExtensionSnapshotStore;
   readonly #extensionMutationPendingVerification = new Set<string>();
   readonly #extensionVerificationShellSoftBlocked = new Set<string>();
@@ -745,6 +752,8 @@ export class CodexAppServerRuntime implements AgentRuntime {
     this.#artifactRegistrationHandlers.delete(normalized);
     this.#artifactDeliveryHandlers.delete(normalized);
     this.#threadCwds.delete(normalized);
+    this.#goalTurnProjected.delete(normalized);
+    this.#deferredGoalMutations.delete(normalized);
     this.#contextTools.clearThread(normalized);
     this.#extensionSnapshots.clearThread(normalized);
     this.#systemTools.clearThread(normalized);
@@ -756,16 +765,37 @@ export class CodexAppServerRuntime implements AgentRuntime {
 
   async getGoal(threadId: string): Promise<AgentGoal | undefined> {
     this.#ensureStarted();
+    if (this.#activeTurns.has(threadId) && this.#goalTurnProjected.has(threadId)) {
+      return this.#goalTurnProjected.get(threadId);
+    }
     return await this.#goals.get(threadId);
   }
 
   async setGoal(input: GoalSetInput): Promise<AgentGoal> {
     this.#ensureStarted();
+    if (this.#activeTurns.has(input.threadId) && this.#goalTurnProjected.has(input.threadId)) {
+      const projected = projectGoalSet(this.#goalTurnProjected.get(input.threadId), input);
+      this.#goalTurnProjected.set(input.threadId, projected);
+      this.#deferredGoalMutations.get(input.threadId)?.push({
+        kind: "set",
+        input,
+        commitOnFailure: true,
+      });
+      return projected;
+    }
     return await this.#goals.set(input);
   }
 
   async clearGoal(threadId: string): Promise<boolean> {
     this.#ensureStarted();
+    if (this.#activeTurns.has(threadId) && this.#goalTurnProjected.has(threadId)) {
+      const existed = this.#goalTurnProjected.get(threadId) !== undefined;
+      this.#goalTurnProjected.set(threadId, undefined);
+      if (existed) {
+        this.#deferredGoalMutations.get(threadId)?.push({ kind: "clear", commitOnFailure: true });
+      }
+      return existed;
+    }
     return await this.#goals.clear(threadId);
   }
 
@@ -779,6 +809,13 @@ export class CodexAppServerRuntime implements AgentRuntime {
 
     onEvent?.({ type: "run.started", threadId });
     this.#threadCwds.set(threadId, cwd);
+    // Capture native Goal authority before the turn starts. Dynamic Goal tools
+    // operate on this turn-local projection and commit only after
+    // turn/completed, avoiding re-entrant thread/goal RPCs while Codex is
+    // waiting for an item/tool/call response.
+    const turnGoalSnapshot = await this.getGoal(threadId).catch(() => undefined);
+    this.#goalTurnProjected.set(threadId, turnGoalSnapshot);
+    this.#deferredGoalMutations.set(threadId, []);
     if (onEvent) this.#eventHandlers.set(threadId, onEvent);
     if (request.approvalHandler) this.#approvalHandlers.set(threadId, request.approvalHandler);
     if (request.mcpToolApprovalHandler) {
@@ -819,6 +856,7 @@ export class CodexAppServerRuntime implements AgentRuntime {
     let activeTurnId: string | undefined;
     let bufferedTerminal: TurnCompletedParams | undefined;
     let terminalSettled = false;
+    let terminalNotificationReceived = false;
     let resolveTerminal: ((value: TurnTerminalState) => void) | undefined;
     let rejectTerminal: ((reason: Error) => void) | undefined;
 
@@ -836,6 +874,7 @@ export class CodexAppServerRuntime implements AgentRuntime {
       if (params.turn.id !== activeTurnId) return;
       if (params.threadId && params.threadId !== threadId) return;
       terminalSettled = true;
+      terminalNotificationReceived = true;
       resolveTerminal?.({ params, errorNotification });
     };
 
@@ -1100,6 +1139,9 @@ export class CodexAppServerRuntime implements AgentRuntime {
         );
       }
 
+
+      await this.#commitDeferredGoalMutations(threadId);
+
       const result = {
         threadId,
         finalText,
@@ -1109,6 +1151,12 @@ export class CodexAppServerRuntime implements AgentRuntime {
     } catch (error) {
       if (activeTurnId && error instanceof CodexRuntimeError && error.kind === "request_timeout") {
         await this.#interruptBestEffort(threadId, activeTurnId);
+      }
+      // Host-side Goal commands (for example a Pause button that first
+      // interrupts the turn) are explicit user control actions. They are safe
+      // to commit once the turn is terminal even when the turn itself failed.
+      if (terminalNotificationReceived) {
+        await this.#commitDeferredGoalMutations(threadId, true).catch(() => undefined);
       }
       const wrapped = error instanceof CodexRuntimeError
         ? error
@@ -1134,6 +1182,8 @@ export class CodexAppServerRuntime implements AgentRuntime {
       this.#artifactRegistrationHandlers.delete(threadId);
       this.#artifactDeliveryHandlers.delete(threadId);
       this.#threadCwds.delete(threadId);
+      this.#goalTurnProjected.delete(threadId);
+      this.#deferredGoalMutations.delete(threadId);
       this.#contextTools.clearThread(threadId);
       this.#extensionSnapshots.clearThread(threadId);
       this.#systemTools.clearThread(threadId);
@@ -1171,6 +1221,8 @@ export class CodexAppServerRuntime implements AgentRuntime {
     this.#artifactRegistrationHandlers.clear();
     this.#artifactDeliveryHandlers.clear();
     this.#threadCwds.clear();
+    this.#goalTurnProjected.clear();
+    this.#deferredGoalMutations.clear();
     this.#extensionSnapshots.clear();
     this.#systemTools.clear();
     this.#extensionMutationPendingVerification.clear();
@@ -1803,11 +1855,67 @@ export class CodexAppServerRuntime implements AgentRuntime {
     }
     const result = await executeGoalDynamicTool({
       ...call,
-      getGoal: async () => this.getGoal(call.threadId),
-      setGoal: async (input) => this.setGoal(input),
-      clearGoal: async () => this.clearGoal(call.threadId),
+      getGoal: async () => this.#goalTurnProjected.get(call.threadId),
+      setGoal: async (input) => {
+        const projected = projectGoalSet(
+          this.#goalTurnProjected.get(call.threadId),
+          input,
+        );
+        this.#goalTurnProjected.set(call.threadId, projected);
+        this.#deferredGoalMutations.get(call.threadId)?.push({
+          kind: "set",
+          input,
+          commitOnFailure: false,
+        });
+        return projected;
+      },
+      clearGoal: async () => {
+        const existed = this.#goalTurnProjected.get(call.threadId) !== undefined;
+        this.#goalTurnProjected.set(call.threadId, undefined);
+        if (existed) {
+          this.#deferredGoalMutations.get(call.threadId)?.push({
+            kind: "clear",
+            commitOnFailure: false,
+          });
+        }
+        return existed;
+      },
     });
-    this.#respondSafely(request.id, dynamicToolResponse(result.success, result.text));
+    const deferred = result.success && call.tool !== "status";
+    this.#respondSafely(
+      request.id,
+      dynamicToolResponse(
+        result.success,
+        deferred
+          ? `${result.text}\ncommit=pending-after-turn\nmutation_authority=codex-app-server-thread-goal`
+          : `${result.text}\nsnapshot=turn-start-projection`,
+      ),
+    );
+  }
+
+  async #commitDeferredGoalMutations(
+    threadId: string,
+    failureOnly = false,
+  ): Promise<void> {
+    const all = this.#deferredGoalMutations.get(threadId) ?? [];
+    const mutations = failureOnly ? all.filter((mutation) => mutation.commitOnFailure) : all;
+    if (mutations.length === 0) return;
+    for (const mutation of mutations) {
+      if (mutation.kind === "clear") {
+        await this.#goals.clear(threadId);
+      } else {
+        await this.#goals.set(mutation.input);
+      }
+    }
+    if (failureOnly) {
+      this.#deferredGoalMutations.set(
+        threadId,
+        all.filter((mutation) => !mutation.commitOnFailure),
+      );
+    } else {
+      this.#deferredGoalMutations.set(threadId, []);
+    }
+    process.stderr.write(`codex.goal_deferred_commit=ok:${String(mutations.length)}\n`);
   }
 
   async #handleContextDynamicToolCall(

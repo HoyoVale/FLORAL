@@ -136,6 +136,47 @@ export function parseGoalResponse(
   };
 }
 
+/**
+ * Apply one Goal set operation to an in-memory turn projection without making
+ * a native app-server RPC. This is used while a Codex turn is active because
+ * re-entering thread/goal/* on the same app-server connection from an
+ * item/tool/call can deadlock some app-server versions.
+ */
+export function projectGoalSet(
+  previous: AgentGoal | undefined,
+  input: GoalSetInput,
+  nowSeconds = Date.now() / 1_000,
+): AgentGoal {
+  const params = buildGoalSetParams(input);
+  const objectiveValue = Object.hasOwn(params, "objective")
+    ? params.objective
+    : previous?.objective;
+  if (typeof objectiveValue !== "string" || !objectiveValue.trim()) {
+    throw new Error("Goal objective is required before status/budget updates");
+  }
+  const statusValue = Object.hasOwn(params, "status")
+    ? params.status
+    : previous?.status ?? "active";
+  if (!isGoalStatus(statusValue)) throw new Error("Invalid Goal status");
+  const tokenBudgetValue = Object.hasOwn(params, "tokenBudget")
+    ? params.tokenBudget
+    : previous?.tokenBudget ?? null;
+  if (!(tokenBudgetValue === null
+    || (Number.isSafeInteger(tokenBudgetValue) && Number(tokenBudgetValue) > 0))) {
+    throw new Error("Invalid Goal token budget");
+  }
+  return {
+    threadId: input.threadId,
+    objective: objectiveValue.trim(),
+    status: statusValue,
+    tokenBudget: tokenBudgetValue as number | null,
+    tokensUsed: previous?.tokensUsed ?? 0,
+    timeUsedSeconds: previous?.timeUsedSeconds ?? 0,
+    createdAt: previous?.createdAt ?? nowSeconds,
+    updatedAt: nowSeconds,
+  };
+}
+
 export async function executeGoalDynamicTool(input: {
   threadId: string;
   tool: string;

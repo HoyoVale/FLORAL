@@ -21,6 +21,7 @@ interface CardState {
   pinned: boolean;
   startedAt: number;
   lastUpdateAt: number;
+  cooldownEndsAt?: number | undefined;
   timer?: unknown | undefined;
   snapshot: AgentStatusSnapshot;
 }
@@ -100,6 +101,7 @@ export class AgentStatusCardController {
       return;
     }
     existing.startedAt = this.#options.now();
+    existing.cooldownEndsAt = undefined;
     existing.snapshot = snapshot;
     await this.#update(existing, true);
     if (this.#options.autoPin && !existing.pinned) await this.#pin(existing);
@@ -108,11 +110,11 @@ export class AgentStatusCardController {
 
   async onRunEvent(
     conversationId: string,
-    snapshot: AgentStatusSnapshot,
+    patch: Partial<AgentStatusSnapshot>,
   ): Promise<void> {
     const state = this.#cards.get(conversationId);
     if (!state) return;
-    state.snapshot = { ...state.snapshot, ...snapshot };
+    state.snapshot = { ...state.snapshot, ...patch };
     if (this.#options.now() - state.lastUpdateAt < this.#options.updateIntervalMs) return;
     await this.#update(state, false);
   }
@@ -121,11 +123,35 @@ export class AgentStatusCardController {
     conversationId: string,
     snapshot: AgentStatusSnapshot,
   ): Promise<void> {
-    const state = this.#cards.get(conversationId);
-    if (!state) return;
-    state.snapshot = { ...state.snapshot, ...snapshot };
+    if (!this.#started || this.#stopped || !this.#options.enabled) return;
+    let state = this.#cards.get(conversationId);
+    if (!state) {
+      const now = this.#options.now();
+      const sent = await this.#safe("send", async () => {
+        const result = await this.#options.transport.sendStatusCard(conversationId, snapshot);
+        state = {
+          conversationId,
+          messageId: result.messageId,
+          pinned: false,
+          startedAt: now,
+          lastUpdateAt: now,
+          cooldownEndsAt: snapshot.cooldownRemainingMs === undefined
+            ? undefined
+            : now + snapshot.cooldownRemainingMs,
+          snapshot,
+        };
+        this.#cards.set(conversationId, state);
+      });
+      if (!sent || !state) return;
+    } else {
+      state.snapshot = snapshot;
+      state.cooldownEndsAt = snapshot.cooldownRemainingMs === undefined
+        ? undefined
+        : this.#options.now() + snapshot.cooldownRemainingMs;
+    }
     await this.#update(state, true);
     if (this.#options.autoPin && !state.pinned) await this.#pin(state);
+    this.#armTimer(state);
   }
 
   async onRunEnded(
@@ -134,9 +160,11 @@ export class AgentStatusCardController {
   ): Promise<void> {
     const state = this.#cards.get(conversationId);
     if (!state) return;
-    state.snapshot = { ...state.snapshot, ...snapshot };
+    state.snapshot = snapshot;
+    state.cooldownEndsAt = undefined;
     this.#cancelTimer(state);
     await this.#update(state, true);
+    await this.#unpin(state);
   }
 
   async onStopped(
@@ -145,7 +173,8 @@ export class AgentStatusCardController {
   ): Promise<void> {
     const state = this.#cards.get(conversationId);
     if (!state) return;
-    state.snapshot = { ...state.snapshot, ...snapshot };
+    state.snapshot = snapshot;
+    state.cooldownEndsAt = undefined;
     this.#cancelTimer(state);
     await this.#update(state, true);
     await this.#unpin(state);
@@ -163,6 +192,9 @@ export class AgentStatusCardController {
     const snapshot: AgentStatusSnapshot = {
       ...state.snapshot,
       elapsedMs,
+      ...(state.snapshot.state === "cooldown" && state.cooldownEndsAt !== undefined
+        ? { cooldownRemainingMs: Math.max(0, state.cooldownEndsAt - this.#options.now()) }
+        : {}),
     };
     state.lastUpdateAt = this.#options.now();
     await this.#safe("update", () =>

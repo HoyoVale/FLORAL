@@ -93,6 +93,7 @@ import {
   GoalContinuationFacade,
   parseStatusControlAction,
 } from "./gateway-goal-continuation.js";
+import { stripGoalCompleteMarker } from "./goal-continuation-coordinator.js";
 export interface GatewayOptions {
   cwd: string;
   workspace?: ProjectWorkspaceRoot | undefined;
@@ -2122,6 +2123,12 @@ export class GatewayService {
       message.identity.conversationId,
       projectContext?.project.name,
     );
+    // A successfully-created live status card already satisfies the visible
+    // activity contract. Avoid sending a second "正在处理，请稍候…" bubble below
+    // the card; retain the fallback only when card delivery was unavailable.
+    if (this.#goalFacade?.statusCard?.hasCard(message.identity.conversationId)) {
+      active.visibleActivitySatisfied = true;
+    }
 
     const controlMode = this.#controlMode(resolved.conversationId);
     const executionPolicy = executionPolicyForMode(controlMode);
@@ -2269,9 +2276,15 @@ export class GatewayService {
       }).catch(() => undefined);
       this.#cancelVisibleActivityFallback(active);
       this.#setConversationActivity(message.identity.conversationId, "idle");
+      const consumeGoalMarker = await this.#goalFacade
+        ?.shouldConsumeCompletionMarker(resolved.conversationId, result.finalText)
+        .catch(() => false) ?? false;
+      const visibleFinalText = consumeGoalMarker
+        ? stripGoalCompleteMarker(result.finalText) || "Goal 已完成。"
+        : result.finalText;
       const replyDelivered = await this.#deliverWithAudit(
         message.identity.conversationId,
-        result.finalText,
+        visibleFinalText,
         resolved,
         "agent_reply",
         `agent-reply:${message.identity.transport}:${message.id}`,
@@ -2357,20 +2370,24 @@ export class GatewayService {
           stopRequested: active.stopRequested,
         },
       }).catch(() => undefined);
-      await this.#deliverWithAudit(
-        message.identity.conversationId,
-        active.stopRequested
-          ? "当前任务已停止。"
-          : agentFailureUserMessage(error),
-        resolved,
-        "agent_failure",
-        `agent-failure:${message.identity.transport}:${message.id}`,
-      );
-      await this.#goalFacade?.onRunFailed(
-        resolved.conversationId,
-        message.identity.conversationId,
-        error,
-      );
+      const goalFailureHandled = active.stopRequested
+        ? false
+        : await this.#goalFacade?.onRunFailed(
+            resolved.conversationId,
+            message.identity.conversationId,
+            error,
+          ) ?? false;
+      if (active.stopRequested || !goalFailureHandled) {
+        await this.#deliverWithAudit(
+          message.identity.conversationId,
+          active.stopRequested
+            ? "当前任务已停止。"
+            : agentFailureUserMessage(error),
+          resolved,
+          "agent_failure",
+          `agent-failure:${message.identity.transport}:${message.id}`,
+        );
+      }
     } finally {
       this.#cancelVisibleActivityFallback(active);
       this.#approvalBroker?.cancelConversation(resolved.conversationId);

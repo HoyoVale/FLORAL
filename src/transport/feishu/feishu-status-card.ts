@@ -40,12 +40,14 @@ interface FeishuStatusControlValue {
 export function buildAgentStatusCard(
   snapshot: AgentStatusSnapshot,
 ): Record<string, unknown> {
-  const title = statusTitle(snapshot.state);
+  const title = statusTitle(snapshot);
   const template = statusTemplate(snapshot.state);
 
   const lines: string[] = [];
   lines.push(`状态：${title}`);
-  lines.push(`轮次：第 ${String(snapshot.turnNumber)} 轮`);
+  if (snapshot.turnNumber > 0) {
+    lines.push(`轮次：第 ${String(snapshot.turnNumber)} 轮`);
+  }
   lines.push(`运行时长：${formatElapsed(snapshot.elapsedMs)}`);
   if (snapshot.projectName) {
     lines.push(`项目：\`${escapeInlineCode(snapshot.projectName)}\``);
@@ -62,10 +64,47 @@ export function buildAgentStatusCard(
         snapshot.goal.tokenBudget === null ? "不限" : String(snapshot.goal.tokenBudget)
       }`,
     );
+    lines.push(`Goal 已用时：${formatElapsed(snapshot.goal.timeUsedSeconds * 1_000)}`);
   }
   if (snapshot.lastActivity) {
     lines.push("");
     lines.push(`最近进度：${escapeMarkdown(boundedText(snapshot.lastActivity, 160))}`);
+  }
+
+  const elements: Array<Record<string, unknown>> = [
+    {
+      tag: "markdown",
+      element_id: "status_text",
+      content: lines.join("\n"),
+    },
+  ];
+  if (snapshot.state === "running" || snapshot.state === "cooldown") {
+    elements.push({
+      tag: "column_set",
+      element_id: "status_controls",
+      flex_mode: "bisect",
+      horizontal_spacing: "8px",
+      columns: [
+        {
+          tag: "column",
+          element_id: "pause_column",
+          width: "weighted",
+          weight: 1,
+          elements: [
+            statusButton("pause_button", "暂停", "default", "pause"),
+          ],
+        },
+        {
+          tag: "column",
+          element_id: "stop_column",
+          width: "weighted",
+          weight: 1,
+          elements: [
+            statusButton("stop_button", "停止", "danger", "stop"),
+          ],
+        },
+      ],
+    });
   }
 
   return {
@@ -86,39 +125,7 @@ export function buildAgentStatusCard(
       },
     },
     body: {
-      elements: [
-        {
-          tag: "markdown",
-          element_id: "status_text",
-          content: lines.join("\n"),
-        },
-        {
-          tag: "column_set",
-          element_id: "status_controls",
-          flex_mode: "bisect",
-          horizontal_spacing: "8px",
-          columns: [
-            {
-              tag: "column",
-              element_id: "pause_column",
-              width: "weighted",
-              weight: 1,
-              elements: [
-                statusButton("pause_button", "暂停", "default", "pause"),
-              ],
-            },
-            {
-              tag: "column",
-              element_id: "stop_column",
-              width: "weighted",
-              weight: 1,
-              elements: [
-                statusButton("stop_button", "停止", "danger", "stop"),
-              ],
-            },
-          ],
-        },
-      ],
+      elements,
     },
   };
 }
@@ -204,8 +211,14 @@ function readStatusControlValue(
   };
 }
 
-function statusTitle(state: AgentStatusSnapshot["state"]): string {
-  switch (state) {
+function statusTitle(snapshot: AgentStatusSnapshot): string {
+  if (snapshot.state === "idle" && snapshot.goal?.status === "complete") {
+    return "FLORAL Goal 已完成";
+  }
+  if (snapshot.state === "idle" && snapshot.goal?.status === "paused") {
+    return "FLORAL Goal 已暂停";
+  }
+  switch (snapshot.state) {
     case "running": return "FLORAL Agent 运行中";
     case "cooldown": return "FLORAL Agent 冷却中";
     case "stopped": return "FLORAL Agent 已停止";
