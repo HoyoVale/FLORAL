@@ -61,6 +61,13 @@ probe_timeout_ms = 120000
 visible_activity_fallback = true
 visible_activity_delay_ms = 6000
 
+[feishu.status_card]
+# Phase 10B live agent status card: created at run start, pinned, updated in
+# place via im/v1/message PATCH, unpinned when idle/stopped.
+enabled = true
+update_interval_ms = 5000
+auto_pin = true
+
 [feishu.sdk]
 expected_version = "1.36.0"
 ingress_isolation = "worker-thread"
@@ -73,7 +80,11 @@ args = ["app-server"]
 model = ""
 cwd = "."
 managed_home = "./data/codex-runtime"
-request_timeout_ms = 120000
+request_timeout_ms = 300000
+# Finite safety watchdog for a genuinely wedged app-server turn. Goal work may
+# still run for hours, but a protocol deadlock must not occupy the conversation
+# forever. Set 0 explicitly only when debugging the watchdog itself.
+turn_timeout_ms = 7200000
 # Locked until the permission authority is implemented.
 native_web_search = false
 

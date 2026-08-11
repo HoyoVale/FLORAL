@@ -158,6 +158,50 @@ describe("QqApprovalBroker", () => {
     await expect(decisionPromise).resolves.toBe("approve");
   });
 
+  it("keeps an exact GitHub write approval one-shot and renders its bound target", async () => {
+    const prompts: string[] = [];
+    const broker = new QqApprovalBroker({
+      ttlMs: 5_000,
+      maxPending: 4,
+      ownerOnly: true,
+      authority: writableAuthority(),
+      send: async (_conversationId, text) => { prompts.push(text); },
+      audit: async () => undefined,
+      createPublicId: () => "GITHUB1",
+    });
+    const scope = {
+      userId: "owner-1",
+      role: "owner" as const,
+      conversationId: "conversation-1",
+      deliveryConversationId: "qq-conversation-1",
+    };
+    const decisionPromise = broker.request(scope, {
+      requestId: "private-github-request",
+      kind: "mcp-tool",
+      capability: "github.issue.write",
+      summary: "Add the requested issue comment",
+      source: "mcp",
+      mcpServerId: "github-owner",
+      mcpToolName: "add_issue_comment",
+      scope: {
+        type: "mcp-tool",
+        serverId: "github-owner",
+        toolName: "add_issue_comment",
+        argumentsDigest: `sha256:${"c".repeat(64)}`,
+        target: "octo-org/floral#42",
+      },
+    });
+    await Promise.resolve();
+    expect(prompts.at(-1)).toContain("MCP=github-owner/add_issue_comment");
+    expect(prompts.at(-1)).toContain("目标=octo-org/floral#42");
+    expect(prompts.at(-1)).not.toContain("/approve-session");
+    await expect(broker.resolve(scope, "GITHUB1", "approve-session"))
+      .resolves.toBe("not-authorized");
+    await expect(broker.resolve(scope, "GITHUB1", "approve"))
+      .resolves.toBe("approved");
+    await expect(decisionPromise).resolves.toBe("approve");
+  });
+
   it("prefers an interactive one-shot prompt and keeps the approval ID out of text", async () => {
     const sent: string[] = [];
     const interactive: Array<{ approvalId: string; capability: string; summary: string }> = [];

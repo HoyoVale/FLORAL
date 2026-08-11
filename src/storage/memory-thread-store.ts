@@ -24,7 +24,9 @@ interface StoredConversation {
   conversationId: string;
 }
 
-export class MemoryThreadStore implements GatewayStore, WorkspaceStateStore {
+export class MemoryThreadStore
+  implements GatewayStore, WorkspaceStateStore
+{
   readonly #threads = new Map<string, string>();
   readonly #selectedProjects = new Map<string, string>();
   readonly #projectThreads = new Map<string, string>();

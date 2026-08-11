@@ -2,6 +2,7 @@ import { isAbsolute, join, relative, resolve, sep } from "node:path";
 import type {
   AgentAppReadResult,
   AgentAppSummary,
+  AgentGoal,
   AgentMcpServerSummary,
   AgentNativeFeatureSummary,
   AgentRuntime,
@@ -27,6 +28,18 @@ import {
   codexRequestTimeout,
 } from "./codex-errors.js";
 import { capabilityForMcpTool } from "../policy/authorization-authority.js";
+import {
+  CodexGoalClient,
+  executeGoalDynamicTool,
+  projectGoalSet,
+  readGoalDynamicCall,
+  type GoalSetInput,
+} from "./codex-goals.js";
+import { buildGithubMcpApprovalScope } from "./github-mcp-approval.js";
+import {
+  parseCodexThreadList,
+  type CodexThreadListResponse,
+} from "./codex-thread-list.js";
 import type {
   ExternalSkillManagementResult,
   ExternalSkillMutationRequest,
@@ -99,16 +112,6 @@ export type { CodexSystemAwarenessOptions } from "./floral-system-tools.js";
 
 interface ThreadResponse {
   thread: { id: string };
-}
-
-interface ThreadListResponse {
-  data?: Array<{
-    id?: unknown;
-    preview?: unknown;
-    createdAt?: unknown;
-    updatedAt?: unknown;
-  }>;
-  nextCursor?: unknown;
 }
 
 interface TurnResponse {
@@ -233,6 +236,7 @@ export interface CodexAppServerOptions {
   command: string;
   args: string[];
   requestTimeoutMs: number;
+  turnTimeoutMs?: number | undefined;
   defaultModel: string | undefined;
   approvalPolicy?: "never" | "on-request" | "untrusted" | undefined;
   sandboxMode?: "read-only" | "workspace-write" | undefined;
@@ -278,9 +282,14 @@ interface InFlightMcpToolCall {
   arguments: Record<string, unknown>;
 }
 
+type DeferredGoalMutation =
+  | { kind: "set"; input: GoalSetInput; commitOnFailure: boolean }
+  | { kind: "clear"; commitOnFailure: boolean };
+
 export class CodexAppServerRuntime implements AgentRuntime {
   readonly name = "codex-app-server";
   readonly #client: CodexRpcClient;
+  readonly #goals: CodexGoalClient;
   readonly #defaultModel: string | undefined;
   readonly #turnTimeoutMs: number;
   readonly #approvalPolicy: "never" | "on-request" | "untrusted";
@@ -316,6 +325,8 @@ export class CodexAppServerRuntime implements AgentRuntime {
   readonly #artifactDeliveryHandlers = new Map<string, AgentArtifactDeliveryHandler>();
   readonly #artifactTools = new FloralArtifactToolController();
   readonly #threadCwds = new Map<string, string>();
+  readonly #goalTurnProjected = new Map<string, AgentGoal | undefined>();
+  readonly #deferredGoalMutations = new Map<string, DeferredGoalMutation[]>();
   readonly #extensionSnapshots: FloralExtensionSnapshotStore;
   readonly #extensionMutationPendingVerification = new Set<string>();
   readonly #extensionVerificationShellSoftBlocked = new Set<string>();
@@ -333,8 +344,12 @@ export class CodexAppServerRuntime implements AgentRuntime {
       cwd: options.processCwd,
       env: options.processEnv,
     });
+    this.#goals = new CodexGoalClient(
+      async (method, params) => this.#client.request(method, params),
+      codexProtocolError,
+    );
     this.#defaultModel = options.defaultModel;
-    this.#turnTimeoutMs = options.requestTimeoutMs;
+    this.#turnTimeoutMs = options.turnTimeoutMs ?? options.requestTimeoutMs;
     this.#approvalPolicy = options.approvalPolicy ?? "never";
     this.#sandboxMode = options.sandboxMode ?? "read-only";
     this.#approvalsReviewer = options.approvalsReviewer ?? "user";
@@ -709,7 +724,7 @@ export class CodexAppServerRuntime implements AgentRuntime {
     this.#ensureStarted();
     const cwd = resolve(input.cwd);
     const limit = Math.max(1, Math.min(50, input.limit ?? 20));
-    const response = await this.#client.request<ThreadListResponse>(
+    const response = await this.#client.request<CodexThreadListResponse>(
       "thread/list",
       {
         cursor: null,
@@ -717,24 +732,7 @@ export class CodexAppServerRuntime implements AgentRuntime {
         cwd,
       },
     );
-    const data = Array.isArray(response?.data) ? response.data : [];
-    const output: AgentThreadSummary[] = [];
-    for (const entry of data) {
-      const id = typeof entry?.id === "string" ? entry.id.trim() : "";
-      if (!id) continue;
-      const preview = sanitizeThreadPreview(entry.preview);
-      output.push({
-        id,
-        preview,
-        ...(readFiniteTimestamp(entry.createdAt) !== undefined
-          ? { createdAt: readFiniteTimestamp(entry.createdAt) }
-          : {}),
-        ...(readFiniteTimestamp(entry.updatedAt) !== undefined
-          ? { updatedAt: readFiniteTimestamp(entry.updatedAt) }
-          : {}),
-      });
-    }
-    return output;
+    return parseCodexThreadList(response);
   }
 
   async archiveThread(threadId: string): Promise<void> {
@@ -754,6 +752,8 @@ export class CodexAppServerRuntime implements AgentRuntime {
     this.#artifactRegistrationHandlers.delete(normalized);
     this.#artifactDeliveryHandlers.delete(normalized);
     this.#threadCwds.delete(normalized);
+    this.#goalTurnProjected.delete(normalized);
+    this.#deferredGoalMutations.delete(normalized);
     this.#contextTools.clearThread(normalized);
     this.#extensionSnapshots.clearThread(normalized);
     this.#systemTools.clearThread(normalized);
@@ -761,6 +761,42 @@ export class CodexAppServerRuntime implements AgentRuntime {
     this.#extensionVerificationShellSoftBlocked.delete(normalized);
     this.#deleteApprovalItemSummaries(normalized);
     this.#deleteInFlightMcpToolCalls(normalized);
+  }
+
+  async getGoal(threadId: string): Promise<AgentGoal | undefined> {
+    this.#ensureStarted();
+    if (this.#activeTurns.has(threadId) && this.#goalTurnProjected.has(threadId)) {
+      return this.#goalTurnProjected.get(threadId);
+    }
+    return await this.#goals.get(threadId);
+  }
+
+  async setGoal(input: GoalSetInput): Promise<AgentGoal> {
+    this.#ensureStarted();
+    if (this.#activeTurns.has(input.threadId) && this.#goalTurnProjected.has(input.threadId)) {
+      const projected = projectGoalSet(this.#goalTurnProjected.get(input.threadId), input);
+      this.#goalTurnProjected.set(input.threadId, projected);
+      this.#deferredGoalMutations.get(input.threadId)?.push({
+        kind: "set",
+        input,
+        commitOnFailure: true,
+      });
+      return projected;
+    }
+    return await this.#goals.set(input);
+  }
+
+  async clearGoal(threadId: string): Promise<boolean> {
+    this.#ensureStarted();
+    if (this.#activeTurns.has(threadId) && this.#goalTurnProjected.has(threadId)) {
+      const existed = this.#goalTurnProjected.get(threadId) !== undefined;
+      this.#goalTurnProjected.set(threadId, undefined);
+      if (existed) {
+        this.#deferredGoalMutations.get(threadId)?.push({ kind: "clear", commitOnFailure: true });
+      }
+      return existed;
+    }
+    return await this.#goals.clear(threadId);
   }
 
   async run(request: AgentRunRequest, onEvent?: (event: AgentEvent) => void): Promise<AgentRunResult> {
@@ -773,6 +809,13 @@ export class CodexAppServerRuntime implements AgentRuntime {
 
     onEvent?.({ type: "run.started", threadId });
     this.#threadCwds.set(threadId, cwd);
+    // Capture native Goal authority before the turn starts. Dynamic Goal tools
+    // operate on this turn-local projection and commit only after
+    // turn/completed, avoiding re-entrant thread/goal RPCs while Codex is
+    // waiting for an item/tool/call response.
+    const turnGoalSnapshot = await this.getGoal(threadId).catch(() => undefined);
+    this.#goalTurnProjected.set(threadId, turnGoalSnapshot);
+    this.#deferredGoalMutations.set(threadId, []);
     if (onEvent) this.#eventHandlers.set(threadId, onEvent);
     if (request.approvalHandler) this.#approvalHandlers.set(threadId, request.approvalHandler);
     if (request.mcpToolApprovalHandler) {
@@ -813,6 +856,7 @@ export class CodexAppServerRuntime implements AgentRuntime {
     let activeTurnId: string | undefined;
     let bufferedTerminal: TurnCompletedParams | undefined;
     let terminalSettled = false;
+    let terminalNotificationReceived = false;
     let resolveTerminal: ((value: TurnTerminalState) => void) | undefined;
     let rejectTerminal: ((reason: Error) => void) | undefined;
 
@@ -830,6 +874,7 @@ export class CodexAppServerRuntime implements AgentRuntime {
       if (params.turn.id !== activeTurnId) return;
       if (params.threadId && params.threadId !== threadId) return;
       terminalSettled = true;
+      terminalNotificationReceived = true;
       resolveTerminal?.({ params, errorNotification });
     };
 
@@ -1041,11 +1086,13 @@ export class CodexAppServerRuntime implements AgentRuntime {
       this.#activeTurns.set(threadId, activeTurnId);
       if (bufferedTerminal) settleTerminal(bufferedTerminal);
 
-      const terminal = await withTimeout(
-        terminalPromise,
-        this.#turnTimeoutMs,
-        () => codexRequestTimeout("turn/completed", this.#turnTimeoutMs),
-      );
+      const terminal = this.#turnTimeoutMs > 0
+        ? await withTimeout(
+            terminalPromise,
+            this.#turnTimeoutMs,
+            () => codexRequestTimeout("turn/completed", this.#turnTimeoutMs),
+          )
+        : await terminalPromise;
       const status = terminal.params.turn.status;
 
       if (status === "interrupted") {
@@ -1092,6 +1139,9 @@ export class CodexAppServerRuntime implements AgentRuntime {
         );
       }
 
+
+      await this.#commitDeferredGoalMutations(threadId);
+
       const result = {
         threadId,
         finalText,
@@ -1101,6 +1151,12 @@ export class CodexAppServerRuntime implements AgentRuntime {
     } catch (error) {
       if (activeTurnId && error instanceof CodexRuntimeError && error.kind === "request_timeout") {
         await this.#interruptBestEffort(threadId, activeTurnId);
+      }
+      // Host-side Goal commands (for example a Pause button that first
+      // interrupts the turn) are explicit user control actions. They are safe
+      // to commit once the turn is terminal even when the turn itself failed.
+      if (terminalNotificationReceived) {
+        await this.#commitDeferredGoalMutations(threadId, true).catch(() => undefined);
       }
       const wrapped = error instanceof CodexRuntimeError
         ? error
@@ -1126,6 +1182,8 @@ export class CodexAppServerRuntime implements AgentRuntime {
       this.#artifactRegistrationHandlers.delete(threadId);
       this.#artifactDeliveryHandlers.delete(threadId);
       this.#threadCwds.delete(threadId);
+      this.#goalTurnProjected.delete(threadId);
+      this.#deferredGoalMutations.delete(threadId);
       this.#contextTools.clearThread(threadId);
       this.#extensionSnapshots.clearThread(threadId);
       this.#systemTools.clearThread(threadId);
@@ -1163,6 +1221,8 @@ export class CodexAppServerRuntime implements AgentRuntime {
     this.#artifactRegistrationHandlers.clear();
     this.#artifactDeliveryHandlers.clear();
     this.#threadCwds.clear();
+    this.#goalTurnProjected.clear();
+    this.#deferredGoalMutations.clear();
     this.#extensionSnapshots.clear();
     this.#systemTools.clear();
     this.#extensionMutationPendingVerification.clear();
@@ -1264,6 +1324,10 @@ export class CodexAppServerRuntime implements AgentRuntime {
       }
       if (namespace === "floral_context") {
         await this.#handleContextDynamicToolCall(request);
+        return;
+      }
+      if (namespace === "floral_goal") {
+        await this.#handleGoalDynamicToolCall(request);
         return;
       }
       if (namespace === "floral_system") {
@@ -1776,6 +1840,82 @@ export class CodexAppServerRuntime implements AgentRuntime {
       },
     });
     this.#respondSafely(request.id, dynamicToolResponse(result.success, result.text));
+  }
+
+  async #handleGoalDynamicToolCall(request: CodexServerRequest): Promise<void> {
+    const raw = asPlainRecord(request.params);
+    const threadId = readString(raw?.threadId);
+    const call = readGoalDynamicCall(request.params, threadId ? this.#activeTurns.get(threadId) : undefined);
+    if (!call) {
+      this.#respondSafely(
+        request.id,
+        dynamicToolResponse(false, "goal=denied\nreason=invalid-context-or-arguments"),
+      );
+      return;
+    }
+    const result = await executeGoalDynamicTool({
+      ...call,
+      getGoal: async () => this.#goalTurnProjected.get(call.threadId),
+      setGoal: async (input) => {
+        const projected = projectGoalSet(
+          this.#goalTurnProjected.get(call.threadId),
+          input,
+        );
+        this.#goalTurnProjected.set(call.threadId, projected);
+        this.#deferredGoalMutations.get(call.threadId)?.push({
+          kind: "set",
+          input,
+          commitOnFailure: false,
+        });
+        return projected;
+      },
+      clearGoal: async () => {
+        const existed = this.#goalTurnProjected.get(call.threadId) !== undefined;
+        this.#goalTurnProjected.set(call.threadId, undefined);
+        if (existed) {
+          this.#deferredGoalMutations.get(call.threadId)?.push({
+            kind: "clear",
+            commitOnFailure: false,
+          });
+        }
+        return existed;
+      },
+    });
+    const deferred = result.success && call.tool !== "status";
+    this.#respondSafely(
+      request.id,
+      dynamicToolResponse(
+        result.success,
+        deferred
+          ? `${result.text}\ncommit=pending-after-turn\nmutation_authority=codex-app-server-thread-goal`
+          : `${result.text}\nsnapshot=turn-start-projection`,
+      ),
+    );
+  }
+
+  async #commitDeferredGoalMutations(
+    threadId: string,
+    failureOnly = false,
+  ): Promise<void> {
+    const all = this.#deferredGoalMutations.get(threadId) ?? [];
+    const mutations = failureOnly ? all.filter((mutation) => mutation.commitOnFailure) : all;
+    if (mutations.length === 0) return;
+    for (const mutation of mutations) {
+      if (mutation.kind === "clear") {
+        await this.#goals.clear(threadId);
+      } else {
+        await this.#goals.set(mutation.input);
+      }
+    }
+    if (failureOnly) {
+      this.#deferredGoalMutations.set(
+        threadId,
+        all.filter((mutation) => !mutation.commitOnFailure),
+      );
+    } else {
+      this.#deferredGoalMutations.set(threadId, []);
+    }
+    process.stderr.write(`codex.goal_deferred_commit=ok:${String(mutations.length)}\n`);
   }
 
   async #handleContextDynamicToolCall(
@@ -2577,6 +2717,9 @@ function buildMcpToolApprovalRequest(
     source: "mcp",
     mcpServerId: serverId,
     mcpToolName: toolName,
+    ...(serverId === "github-owner"
+      ? { scope: buildGithubMcpApprovalScope(serverId, toolName, context.arguments) }
+      : {}),
   };
 }
 
@@ -2857,22 +3000,6 @@ function asRecord(value: unknown): Record<string, unknown> | undefined {
 function asPlainRecord(value: unknown): Record<string, unknown> | undefined {
   if (typeof value !== "object" || value === null || Array.isArray(value)) return undefined;
   return value as Record<string, unknown>;
-}
-
-function sanitizeThreadPreview(value: unknown): string {
-  if (typeof value !== "string") return "未命名会话";
-  const normalized = value
-    .replace(/[\u0000-\u001f\u007f]+/gu, " ")
-    .replace(/\s+/gu, " ")
-    .trim();
-  if (!normalized) return "未命名会话";
-  return Array.from(normalized).slice(0, 120).join("");
-}
-
-function readFiniteTimestamp(value: unknown): number | undefined {
-  return typeof value === "number" && Number.isFinite(value) && value >= 0
-    ? value
-    : undefined;
 }
 
 function readString(value: unknown): string | undefined {

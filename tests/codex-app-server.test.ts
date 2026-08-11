@@ -1652,6 +1652,60 @@ describe("CodexAppServerRuntime", () => {
     }
   });
 
+  it("binds a GitHub write approval to the exact tool, target, and arguments", async () => {
+    const runtime = createRuntime("github-mcp-approval");
+    try {
+      await runtime.start();
+      const result = await runtime.run({
+        text: "Add the requested issue comment.",
+        cwd: process.cwd(),
+        mcpToolApprovalHandler: async (request) => {
+          expect(request).toMatchObject({
+            kind: "mcp-tool",
+            capability: "github.issue.write",
+            source: "mcp",
+            mcpServerId: "github-owner",
+            mcpToolName: "add_issue_comment",
+            scope: {
+              type: "mcp-tool",
+              serverId: "github-owner",
+              toolName: "add_issue_comment",
+              target: "octo-org/floral#42",
+            },
+          });
+          const scope = request.scope;
+          expect(scope?.type).toBe("mcp-tool");
+          if (scope?.type === "mcp-tool") {
+            expect(scope.argumentsDigest).toMatch(/^sha256:[0-9a-f]{64}$/u);
+          }
+          return "approve";
+        },
+      });
+      expect(result.finalText).toBe("mcp approval accepted safely");
+    } finally {
+      await runtime.stop();
+    }
+  });
+
+  it("exposes Goal management to the Agent through native thread Goal RPCs", async () => {
+    const runtime = createRuntime("goal-dynamic-create");
+    try {
+      await runtime.start();
+      const result = await runtime.run({
+        text: "Create the explicitly requested durable Goal.",
+        cwd: process.cwd(),
+      });
+      expect(result.finalText).toBe("goal dynamic create complete");
+      await expect(runtime.getGoal(result.threadId)).resolves.toMatchObject({
+        objective: "Finish Phase 10",
+        status: "active",
+        tokenBudget: 9000,
+      });
+    } finally {
+      await runtime.stop();
+    }
+  });
+
   it("declines an MCP click when no FLORAL approval handler is available", async () => {
     const runtime = createRuntime("mcp-approval");
     try {

@@ -87,7 +87,12 @@ import {
   visibleActivityProgress,
   type AgentControlMode,
 } from "./gateway-presentation.js";
-
+import { handleGatewayGoalCommand } from "./gateway-goals.js";
+import { listGatewayChats } from "./gateway-chats.js";
+import {
+  GoalStatusFacade,
+  parseStatusControlAction,
+} from "./gateway-goal-continuation.js";
 export interface GatewayOptions {
   cwd: string;
   workspace?: ProjectWorkspaceRoot | undefined;
@@ -118,6 +123,11 @@ export interface GatewayOptions {
   deliveryOutbox?: DeliveryOutboxCoordinator | undefined;
   durableRuns?: DurableRunCoordinator | undefined;
   startupRecovery?: StartupRecoveryCoordinator | undefined;
+  statusCard?: {
+    enabled: boolean;
+    updateIntervalMs: number;
+    autoPin: boolean;
+  } | undefined;
 }
 
 interface ChatListCache {
@@ -141,6 +151,7 @@ const MAX_QUEUED_AGENT_RUNS_PER_CONVERSATION = 3;
 
 interface ActiveRun {
   threadId?: string;
+  resolved: ResolvedGatewayIdentity;
   stopRequested: boolean;
   interruptSent: boolean;
   visibleActivityTimer?: ReturnType<typeof setTimeout> | undefined;
@@ -166,6 +177,7 @@ export class GatewayService {
   readonly #inflightMessageHandlers = new Set<Promise<void>>();
   readonly #pairingLimiter = new PairingAttemptLimiter();
   readonly #approvalBroker: QqApprovalBroker | undefined;
+  readonly #goalFacade: GoalStatusFacade | undefined = undefined;
   #started = false;
   #stopped = false;
 
@@ -221,6 +233,32 @@ export class GatewayService {
           audit: (event) => this.store.appendAudit(event),
         })
       : undefined;
+
+    if (options.statusCard?.enabled) {
+      this.#goalFacade = new GoalStatusFacade({
+        agent: this.agent,
+        transport: this.transport,
+        audit: (event) => this.store.appendAudit(event),
+        send: (conversationId, text) => this.#send(conversationId, text),
+        isConversationBusy: (conversationId) => this.#conversationBusy(conversationId),
+        resolveProjectContext: (_delivery, conversationId) =>
+          this.#resolveSelectedProjectContext(conversationId).then((context) =>
+            context?.threadId
+              ? {
+                  threadId: context.threadId,
+                  projectName: context.project.name,
+                  projectCwd: context.project.path,
+                }
+              : undefined,
+          ),
+        stopConversation: (conversationId) => this.#stopConversationRuns(conversationId),
+        statusCard: {
+          enabled: options.statusCard?.enabled ?? false,
+          updateIntervalMs: options.statusCard?.updateIntervalMs ?? 5_000,
+          autoPin: options.statusCard?.autoPin ?? true,
+        },
+      });
+    }
   }
 
   async start(): Promise<void> {
@@ -238,6 +276,7 @@ export class GatewayService {
       }
       this.options.startupRecovery?.recover();
       await this.agent.start();
+      await this.#goalFacade?.start();
       await this.transport.start((message) => this.#trackMessage(message));
       await this.options.deliveryOutbox?.start();
       this.#started = true;
@@ -259,6 +298,7 @@ export class GatewayService {
     if (this.#stopped) return;
     this.#stopped = true;
     this.#approvalBroker?.cancelAll();
+    await this.#goalFacade?.stop();
     await this.agent.stop().catch(() => undefined);
     const handlersDrained = await waitForInflightHandlers(this.#inflightMessageHandlers, 30_000);
     await this.options.deliveryOutbox?.stop();
@@ -344,6 +384,16 @@ export class GatewayService {
     }
 
     await this.#loadPersistedControlMode(resolved);
+
+    const statusControlAction = parseStatusControlAction(message.text);
+    if (message.id.startsWith("feishu-status-control:") && statusControlAction) {
+      await this.#goalFacade?.handleStatusControl(
+        resolved,
+        message.identity.conversationId,
+        statusControlAction,
+      );
+      return;
+    }
 
     if (resolved.role === "owner" && this.options.systemMaintenance) {
       await this.options.systemMaintenance.controller
@@ -1394,52 +1444,52 @@ export class GatewayService {
         }
         return;
       }
-
       case "chats": {
         const projectContext = await this.#requireProjectContext(
           message.identity.conversationId,
           resolved.conversationId,
         );
         if (!projectContext) return;
-        if (!supportsAgentThreadManagement(this.agent)) {
-          await this.#send(
-            message.identity.conversationId,
-            "当前 Agent runtime 未开放 Codex thread/list。",
-          );
-          return;
-        }
-        const entries = await this.agent.listThreads({
-          cwd: projectContext.project.path,
-          limit: 20,
-        });
-        this.#chatListCaches.set(resolved.conversationId, {
+        const { entries, text } = await listGatewayChats({
+          agent: this.agent, cwd: projectContext.project.path,
           projectName: projectContext.project.name,
-          entries,
-          createdAtMs: Date.now(),
+          activeThreadId: projectContext.threadId,
+        }).catch(() => ({ entries: [], text: "当前 Agent runtime 未开放 Codex thread/list。" }));
+        this.#chatListCaches.set(resolved.conversationId, {
+          projectName: projectContext.project.name, entries, createdAtMs: Date.now(),
         });
-        const lines = [`项目 ${projectContext.project.name} 的会话：`];
-        if (entries.length === 0) {
-          lines.push("（暂无 Codex 会话；下一条普通消息会创建第一个会话）");
-        } else {
-          entries.forEach((entry, index) => {
-            const marker = entry.id === projectContext.threadId ? " ← 当前" : "";
-            lines.push(`${String(index + 1)}. ${formatThreadPreview(entry.preview)}${marker}`);
-          });
-        }
-        lines.push("", "使用 /chat <序号> 切换；/chat new 新建；/chat archive <序号> 归档（owner）。");
         await this.store.appendAudit({
           userId: resolved.userId,
           conversationId: resolved.conversationId,
           eventType: "command.chats",
-          payload: {
-            projectName: projectContext.project.name,
-            count: entries.length,
-          },
+          payload: { projectName: projectContext.project.name, count: entries.length },
         });
-        await this.#send(message.identity.conversationId, lines.join("\n"));
+        await this.#send(message.identity.conversationId, text);
         return;
       }
-
+      case "goal": {
+        const projectContext = await this.#requireProjectContext(
+          message.identity.conversationId, resolved.conversationId,
+        );
+        if (!projectContext) return;
+        if (!projectContext.threadId) {
+          await this.#send(message.identity.conversationId,
+            "当前项目还没有 Codex 会话。请先发送一条普通消息建立会话，再使用 /goal。");
+          return;
+        }
+        await handleGatewayGoalCommand({
+          agent: this.agent, command,
+          threadId: projectContext.threadId, projectCwd: projectContext.project.path,
+          projectName: projectContext.project.name,
+          deliveryConversationId: message.identity.conversationId,
+          userId: resolved.userId, conversationId: resolved.conversationId,
+          role: resolved.role,
+          busy: this.#conversationBusy(resolved.conversationId),
+          audit: async (event) => this.store.appendAudit(event),
+          send: async (text) => this.#send(message.identity.conversationId, text),
+        });
+        return;
+      }
       case "chat-archive": {
         const value = command.value?.trim();
         if (!value) {
@@ -1773,54 +1823,77 @@ export class GatewayService {
       }
 
       case "stop": {
-        const active = this.#activeRuns.get(resolved.conversationId);
-        const starting = this.#startingAgentRuns.has(resolved.conversationId);
-        const queuedCount = this.#queuedRunCount(resolved.conversationId);
-        if (!active && !starting && queuedCount === 0) {
+        const outcome = await this.#stopConversationRuns(resolved.conversationId);
+        await this.#goalFacade?.onStopped(
+          resolved.conversationId,
+          message.identity.conversationId,
+        );
+        await this.store.appendAudit({
+          userId: resolved.userId,
+          conversationId: resolved.conversationId,
+          eventType: "command.stop",
+          payload: {
+            interruptDispatched: outcome.interruptSent,
+            preflightCancelled: outcome.starting,
+            queuedCancelled: outcome.queuedCount,
+          },
+        });
+        if (
+          !outcome.active
+          && !outcome.starting
+          && outcome.queuedCount === 0
+        ) {
           await this.#send(
             message.identity.conversationId,
             "当前没有正在运行或排队的任务。",
           );
           return;
         }
-
-        this.#queuedAgentRuns.delete(resolved.conversationId);
-        this.options.durableRuns?.cancelPending(resolved.conversationId);
-        if (starting) this.#cancelledStartingRuns.add(resolved.conversationId);
-        this.#approvalBroker?.cancelConversation(resolved.conversationId);
-
-        if (active) {
-          active.stopRequested = true;
-          this.#cancelVisibleActivityFallback(active);
-          this.#setConversationActivity(message.identity.conversationId, "idle");
-          if (active.threadId && !active.interruptSent) {
-            await this.#interruptRun(resolved, active);
-          }
-        }
-        await this.store.appendAudit({
-          userId: resolved.userId,
-          conversationId: resolved.conversationId,
-          eventType: "command.stop",
-          payload: {
-            interruptDispatched: active?.interruptSent ?? false,
-            preflightCancelled: starting,
-            queuedCancelled: queuedCount,
-          },
-        });
         await this.#send(
           message.identity.conversationId,
           [
-            active
-              ? active.interruptSent
+            outcome.active
+              ? outcome.interruptSent
                 ? "已向当前任务发送停止请求。"
                 : "停止请求已记录，任务线程建立后会立即中断。"
               : "已取消正在准备中的任务。",
-            ...(queuedCount > 0 ? [`已同时取消 ${String(queuedCount)} 条排队消息。`] : []),
+            ...(outcome.queuedCount > 0
+              ? [`已同时取消 ${String(outcome.queuedCount)} 条排队消息。`]
+              : []),
           ].join("\n"),
         );
         return;
       }
     }
+  }
+
+  async #stopConversationRuns(conversationId: string): Promise<{
+    active: boolean;
+    starting: boolean;
+    queuedCount: number;
+    interruptSent: boolean;
+  }> {
+    const active = this.#activeRuns.get(conversationId);
+    const starting = this.#startingAgentRuns.has(conversationId);
+    const queuedCount = this.#queuedRunCount(conversationId);
+    this.#queuedAgentRuns.delete(conversationId);
+    this.options.durableRuns?.cancelPending(conversationId);
+    if (starting) this.#cancelledStartingRuns.add(conversationId);
+    this.#approvalBroker?.cancelConversation(conversationId);
+    if (active) {
+      active.stopRequested = true;
+      this.#cancelVisibleActivityFallback(active);
+      this.#setConversationActivity(conversationId, "idle");
+      if (active.threadId && !active.interruptSent) {
+        await this.#interruptRun(active.resolved, active);
+      }
+    }
+    return {
+      active: Boolean(active),
+      starting,
+      queuedCount,
+      interruptSent: active?.interruptSent ?? false,
+    };
   }
 
   async #runAgent(
@@ -1994,6 +2067,7 @@ export class GatewayService {
     }
 
     const active: ActiveRun = {
+      resolved,
       stopRequested: false,
       interruptSent: false,
       visibleActivitySatisfied: false,
@@ -2008,6 +2082,18 @@ export class GatewayService {
     };
     this.#activeRuns.set(resolved.conversationId, active);
     this.#startingAgentRuns.delete(resolved.conversationId);
+
+    await this.#goalFacade?.onRunStarted(
+      resolved.conversationId,
+      message.identity.conversationId,
+      projectContext?.project.name,
+    );
+    // A successfully-created live status card already satisfies the visible
+    // activity contract. Avoid sending a second "正在处理，请稍候…" bubble below
+    // the card; retain the fallback only when card delivery was unavailable.
+    if (this.#goalFacade?.statusCard?.hasCard(message.identity.conversationId)) {
+      active.visibleActivitySatisfied = true;
+    }
 
     const controlMode = this.#controlMode(resolved.conversationId);
     const executionPolicy = executionPolicyForMode(controlMode);
@@ -2207,6 +2293,11 @@ export class GatewayService {
           }
         }
       }
+      await this.#goalFacade?.onRunEnded(
+        resolved.conversationId,
+        message.identity.conversationId,
+        projectContext?.project.name,
+      );
     } catch (error) {
       if (active.maintenanceTransactions.length > 0 && this.options.systemMaintenance) {
         for (const transactionId of active.maintenanceTransactions) {
@@ -2235,6 +2326,10 @@ export class GatewayService {
           stopRequested: active.stopRequested,
         },
       }).catch(() => undefined);
+      await this.#goalFacade?.onRunFailed(
+        resolved.conversationId,
+        message.identity.conversationId,
+      );
       await this.#deliverWithAudit(
         message.identity.conversationId,
         active.stopRequested
@@ -2407,6 +2502,7 @@ export class GatewayService {
 
     if (event.type === "tool.started" || event.type === "tool.completed") {
       if (event.type === "tool.started") active.latestToolName = event.name;
+      void this.#goalFacade?.onRunEvent(deliveryConversationId, event);
       process.stderr.write(`agent.${event.type}=${safeLogToken(event.name)}\n`);
       void this.store.appendAudit({
         userId: resolved.userId,

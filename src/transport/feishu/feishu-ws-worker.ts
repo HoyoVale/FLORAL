@@ -5,6 +5,9 @@ import {
   type FeishuCardActionEvent,
 } from "./feishu-card.js";
 import {
+  normalizeFeishuStatusControlCardAction,
+} from "./feishu-status-card.js";
+import {
   normalizeFeishuMessageEvent,
   type FeishuMessageEvent,
 } from "./feishu-message.js";
@@ -57,24 +60,42 @@ const eventDispatcher = new Lark.EventDispatcher({}).register({
       data as FeishuCardActionEvent,
       appId,
     );
-    if (!action) {
-      return callbackToast("warning", "无法识别该审批操作");
+    if (action) {
+      // The callback response must return immediately. Parent-process routing still
+      // validates the short-lived approval route before entering Gateway.
+      post({
+        type: "card-action",
+        action: {
+          eventId: action.eventId,
+          externalUserId: action.externalUserId,
+          conversationId: action.conversationId,
+          approvalId: action.approvalId,
+          decision: action.decision,
+          receivedAtMs: action.receivedAt.getTime(),
+        },
+      });
+      return callbackToast("success", "审批操作已收到，FLORAL 正在处理");
     }
 
-    // The callback response must return immediately. Parent-process routing still
-    // validates the short-lived approval route before entering Gateway.
-    post({
-      type: "card-action",
-      action: {
-        eventId: action.eventId,
-        externalUserId: action.externalUserId,
-        conversationId: action.conversationId,
-        approvalId: action.approvalId,
-        decision: action.decision,
-        receivedAtMs: action.receivedAt.getTime(),
-      },
-    });
-    return callbackToast("success", "审批操作已收到，FLORAL 正在处理");
+    const statusControl = normalizeFeishuStatusControlCardAction(
+      data as Parameters<typeof normalizeFeishuStatusControlCardAction>[0],
+      appId,
+    );
+    if (statusControl) {
+      post({
+        type: "status-control",
+        action: {
+          eventId: statusControl.eventId,
+          externalUserId: statusControl.externalUserId,
+          conversationId: statusControl.conversationId,
+          action: statusControl.action,
+          receivedAtMs: statusControl.receivedAt.getTime(),
+        },
+      });
+      return callbackToast("success", "操作已收到，FLORAL 正在处理");
+    }
+
+    return callbackToast("warning", "无法识别该卡片操作");
   },
 });
 

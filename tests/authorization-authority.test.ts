@@ -247,6 +247,13 @@ describe("AuthorizationAuthority", () => {
       source: "mcp-tool",
       mcpServerId: "github-owner",
       mcpToolName: "issue_write",
+      scope: {
+        type: "mcp-tool",
+        serverId: "github-owner",
+        toolName: "issue_write",
+        argumentsDigest: `sha256:${"a".repeat(64)}`,
+        target: "openai/codex#42",
+      },
     })).toEqual({
       status: "approval-required",
       approvalLevel: "chat-confirmation",
@@ -258,7 +265,39 @@ describe("AuthorizationAuthority", () => {
       source: "mcp-tool",
       mcpServerId: "github-owner",
       mcpToolName: "issue_write",
+      scope: {
+        type: "mcp-tool",
+        serverId: "github-owner",
+        toolName: "issue_write",
+        argumentsDigest: `sha256:${"a".repeat(64)}`,
+        target: "openai/codex#42",
+      },
     })).toMatchObject({ status: "deny", reason: "role-capability-denied" });
+  });
+
+  it("requires GitHub writes to bind the exact server, tool, target, and arguments digest", () => {
+    expect(authority("danger-full-access").evaluate({
+      role: "owner",
+      capability: "github.issue.write",
+      source: "mcp-tool",
+      mcpServerId: "github-owner",
+      mcpToolName: "issue_write",
+    })).toMatchObject({ status: "deny", reason: "approval-scope-invalid" });
+
+    expect(authority("danger-full-access").evaluate({
+      role: "owner",
+      capability: "github.issue.write",
+      source: "mcp-tool",
+      mcpServerId: "github-owner",
+      mcpToolName: "issue_write",
+      scope: {
+        type: "mcp-tool",
+        serverId: "github-owner",
+        toolName: "create_issue",
+        argumentsDigest: `sha256:${"b".repeat(64)}`,
+        target: "openai/codex#42",
+      },
+    })).toMatchObject({ status: "deny", reason: "approval-scope-invalid" });
   });
 
   it("denies extension mutations when the exact structured scope is missing or mismatched", () => {

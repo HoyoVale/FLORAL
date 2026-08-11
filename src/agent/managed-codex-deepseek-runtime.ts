@@ -25,9 +25,9 @@ import {
   supportsAgentExtensionDiscovery,
   supportsAgentSkillControl,
   supportsAgentSkills,
-  supportsAgentThreadManagement,
   type AgentAppReadResult,
   type AgentAppSummary,
+  type AgentGoal, type AgentGoalRuntime,
   type AgentMcpServerSummary,
   type AgentNativeFeatureSummary,
   type AgentRuntime,
@@ -35,6 +35,8 @@ import {
   type AgentThreadSummary,
   type DurableJournal,
 } from "../core/contracts.js";
+import { requireGoalRuntime } from "./codex-goals.js";
+import { requireThreadManagementRuntime } from "./codex-thread-list.js";
 import type {
   AgentEvent,
   AgentRunRequest,
@@ -354,22 +356,26 @@ export class ManagedCodexDeepSeekRuntime implements AgentRuntime {
     limit?: number | undefined;
   }): Promise<AgentThreadSummary[]> {
     const slot = await this.#runtimeSlotForCwd(input.cwd);
-    const runtime = slot.runtime;
-    if (!supportsAgentThreadManagement(runtime)) {
-      throw new Error("Managed Codex runtime does not expose thread management");
-    }
-    const threads = await runtime.listThreads(input);
+    const threads = await requireThreadManagementRuntime(slot.runtime).listThreads(input);
     for (const thread of threads) this.#threadRuntimeKeys.set(thread.id, slot.key);
     return threads;
   }
 
   async archiveThread(threadId: string): Promise<void> {
-    const runtime = this.#runtimeForThread(threadId);
-    if (!supportsAgentThreadManagement(runtime)) {
-      throw new Error("Managed Codex runtime does not expose thread management");
-    }
-    await runtime.archiveThread(threadId);
+    await requireThreadManagementRuntime(this.#runtimeForThread(threadId)).archiveThread(threadId);
     this.#threadRuntimeKeys.delete(threadId);
+  }
+
+  async getGoal(threadId: string, options?: { cwd?: string }): Promise<AgentGoal | undefined> {
+    return requireGoalRuntime(options?.cwd ? (await this.#runtimeSlotForCwd(options.cwd)).runtime : this.#runtimeForThread(threadId)).getGoal(threadId);
+  }
+
+  async setGoal(input: Parameters<AgentGoalRuntime["setGoal"]>[0]): Promise<AgentGoal> {
+    return requireGoalRuntime(input.cwd ? (await this.#runtimeSlotForCwd(input.cwd)).runtime : this.#runtimeForThread(input.threadId)).setGoal(input);
+  }
+
+  async clearGoal(threadId: string, options?: { cwd?: string }): Promise<boolean> {
+    return requireGoalRuntime(options?.cwd ? (await this.#runtimeSlotForCwd(options.cwd)).runtime : this.#runtimeForThread(threadId)).clearGoal(threadId);
   }
 
   async resolveRuntimeHome(input: { cwd: string }): Promise<string> {
@@ -1268,6 +1274,7 @@ function createCodexRuntime(
     command: env.CODEX_COMMAND,
     args: env.CODEX_ARGS.split(/\s+/).filter(Boolean),
     requestTimeoutMs: env.CODEX_REQUEST_TIMEOUT_MS,
+    turnTimeoutMs: env.CODEX_TURN_TIMEOUT_MS,
     defaultModel: env.DEEPSEEK_MODEL,
     approvalPolicy: execution.approvalPolicy,
     sandboxMode: execution.sandboxMode,

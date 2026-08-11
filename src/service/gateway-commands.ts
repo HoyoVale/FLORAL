@@ -26,6 +26,12 @@ export type GatewayCommand =
   | { type: "chats" }
   | { type: "chat"; value: string | undefined }
   | { type: "chat-archive"; value: string | undefined }
+  | {
+      type: "goal";
+      action: "status" | "set" | "active" | "pause" | "complete" | "blocked" | "clear";
+      objective: string | undefined;
+      tokenBudget: number | null | undefined;
+    }
   | { type: "approve"; approvalId: string | undefined }
   | { type: "approve-session"; approvalId: string | undefined }
   | { type: "deny"; approvalId: string | undefined };
@@ -106,6 +112,30 @@ export function parseGatewayCommand(text: string): GatewayCommand | undefined {
   const chat = /^\/chat(?:\s+(.+))?$/i.exec(trimmed);
   if (chat) {
     return { type: "chat", value: chat[1]?.trim() || undefined };
+  }
+  const goalSet = /^\/goal\s+set(?:\s+--tokens\s+(\d+|off))?(?:\s+([\s\S]+))?$/i.exec(trimmed);
+  if (goalSet) {
+    const rawBudget = goalSet[1]?.toLowerCase();
+    return {
+      type: "goal",
+      action: "set",
+      objective: goalSet[2]?.trim() || undefined,
+      tokenBudget: rawBudget === undefined
+        ? undefined
+        : rawBudget === "off"
+          ? null
+          : Number(rawBudget),
+    };
+  }
+  const goalAction = /^\/goal(?:\s+(status|active|pause|complete|blocked|clear))?$/i.exec(trimmed);
+  if (goalAction) {
+    return {
+      type: "goal",
+      action: (goalAction[1]?.toLowerCase() || "status") as
+        | "status" | "active" | "pause" | "complete" | "blocked" | "clear",
+      objective: undefined,
+      tokenBudget: undefined,
+    };
   }
   const mode = /^\/mode(?:\s+([A-Za-z-]+))?$/i.exec(trimmed);
   if (mode) {

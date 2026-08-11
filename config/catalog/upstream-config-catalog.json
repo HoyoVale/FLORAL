@@ -1254,6 +1254,10 @@
       "component": "codex",
       "classification": "floral-owned"
     },
+    "CODEX_TURN_TIMEOUT_MS": {
+      "component": "codex",
+      "classification": "floral-owned"
+    },
     "DATABASE_PATH": {
       "component": "floral",
       "classification": "floral-owned"
@@ -1331,6 +1335,18 @@
       "classification": "floral-owned"
     },
     "FEISHU_VISIBLE_ACTIVITY_FALLBACK": {
+      "component": "feishu-sdk",
+      "classification": "floral-owned"
+    },
+    "FEISHU_STATUS_CARD_AUTO_PIN": {
+      "component": "feishu-sdk",
+      "classification": "floral-owned"
+    },
+    "FEISHU_STATUS_CARD_ENABLED": {
+      "component": "feishu-sdk",
+      "classification": "floral-owned"
+    },
+    "FEISHU_STATUS_CARD_UPDATE_INTERVAL_MS": {
       "component": "feishu-sdk",
       "classification": "floral-owned"
     },

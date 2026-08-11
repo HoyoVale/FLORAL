@@ -84,6 +84,48 @@ export function supportsInteractiveApproval(
     .sendInteractiveApprovalPrompt === "function";
 }
 
+export type AgentStatusCardState = "idle" | "running" | "stopped";
+
+export const STATUS_CONTROL_MESSAGE_PREFIX = "__floral_status_control__";
+
+export interface AgentStatusSnapshot {
+  state: AgentStatusCardState;
+  projectName?: string | undefined;
+  turnNumber: number;
+  elapsedMs: number;
+  lastActivity?: string | undefined;
+  goal?: {
+    status: AgentGoalStatus;
+    objective: string;
+    tokensUsed: number;
+    tokenBudget: number | null;
+    timeUsedSeconds: number;
+  } | undefined;
+}
+
+export interface StatusCardTransport {
+  sendStatusCard(
+    conversationId: string,
+    snapshot: AgentStatusSnapshot,
+  ): Promise<{ messageId: string }>;
+  updateStatusCard(
+    messageId: string,
+    snapshot: AgentStatusSnapshot,
+  ): Promise<void>;
+  pinStatusCard(messageId: string): Promise<void>;
+  unpinStatusCard(messageId: string): Promise<void>;
+}
+
+export function supportsStatusCardTransport(
+  transport: ChatTransport,
+): transport is ChatTransport & StatusCardTransport {
+  const candidate = transport as Partial<StatusCardTransport>;
+  return typeof candidate.sendStatusCard === "function"
+    && typeof candidate.updateStatusCard === "function"
+    && typeof candidate.pinStatusCard === "function"
+    && typeof candidate.unpinStatusCard === "function";
+}
+
 export interface InboundAttachmentMaterializer {
   materializeInboundAttachments(
     message: IncomingMessage,
@@ -276,6 +318,46 @@ export interface AgentThreadManagementRuntime {
     limit?: number | undefined;
   }): Promise<AgentThreadSummary[]>;
   archiveThread(threadId: string): Promise<void>;
+}
+
+export type AgentGoalStatus =
+  | "active"
+  | "paused"
+  | "blocked"
+  | "usageLimited"
+  | "budgetLimited"
+  | "complete";
+
+export interface AgentGoal {
+  threadId: string;
+  objective: string;
+  status: AgentGoalStatus;
+  tokenBudget: number | null;
+  tokensUsed: number;
+  timeUsedSeconds: number;
+  createdAt: number;
+  updatedAt: number;
+}
+
+export interface AgentGoalRuntime {
+  getGoal(threadId: string, options?: { cwd?: string }): Promise<AgentGoal | undefined>;
+  setGoal(input: {
+    threadId: string;
+    cwd?: string;
+    objective?: string | null | undefined;
+    status?: AgentGoalStatus | null | undefined;
+    tokenBudget?: number | null | undefined;
+  }): Promise<AgentGoal>;
+  clearGoal(threadId: string, options?: { cwd?: string }): Promise<boolean>;
+}
+
+export function supportsAgentGoals(
+  runtime: AgentRuntime,
+): runtime is AgentRuntime & AgentGoalRuntime {
+  const candidate = runtime as Partial<AgentGoalRuntime>;
+  return typeof candidate.getGoal === "function"
+    && typeof candidate.setGoal === "function"
+    && typeof candidate.clearGoal === "function";
 }
 
 export function supportsAgentThreadManagement(

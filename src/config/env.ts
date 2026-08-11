@@ -103,12 +103,19 @@ const envSchema = z.object({
   FEISHU_PROBE_TIMEOUT_MS: z.coerce.number().int().min(10_000).max(10 * 60_000).default(120_000),
   FEISHU_VISIBLE_ACTIVITY_FALLBACK: booleanString.default(true),
   FEISHU_VISIBLE_ACTIVITY_DELAY_MS: z.coerce.number().int().min(1_000).max(120_000).default(6_000),
+  FEISHU_STATUS_CARD_ENABLED: booleanString.default(true),
+  FEISHU_STATUS_CARD_UPDATE_INTERVAL_MS: z.coerce.number().int().min(1_000).max(60_000).default(5_000),
+  FEISHU_STATUS_CARD_AUTO_PIN: booleanString.default(true),
   CODEX_COMMAND: z.string().default("codex"),
   CODEX_ARGS: z.string().default("app-server"),
   CODEX_MODEL: optionalNonEmptyString,
   CODEX_CWD: z.string().default("."),
   CODEX_MANAGED_HOME: z.string().trim().min(1).default("./data/codex-runtime"),
-  CODEX_REQUEST_TIMEOUT_MS: z.coerce.number().int().positive().default(120_000),
+  CODEX_REQUEST_TIMEOUT_MS: z.coerce.number().int().positive().default(300_000),
+  // A separate, generous completion watchdog. 0 remains an explicit escape
+  // hatch, but the default is finite so a protocol deadlock cannot wedge one
+  // conversation forever.
+  CODEX_TURN_TIMEOUT_MS: z.coerce.number().int().nonnegative().default(7_200_000),
   DEEPSEEK_API_KEY: optionalNonEmptyString,
   MIMO_API_KEY: optionalNonEmptyString,
   // Optional machine-local credential used only by the curated read-only GitHub MCP.

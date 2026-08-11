@@ -58,6 +58,11 @@ export const requestedConfigSchema = z.object({
       visible_activity_fallback: z.boolean(),
       visible_activity_delay_ms: positiveInteger,
     }).strict(),
+    status_card: z.object({
+      enabled: z.boolean(),
+      update_interval_ms: positiveInteger,
+      auto_pin: z.boolean(),
+    }).strict(),
     sdk: z.object({
       expected_version: z.string().trim().min(1),
       ingress_isolation: z.literal("worker-thread"),
@@ -72,6 +77,7 @@ export const requestedConfigSchema = z.object({
     cwd: z.string().trim().min(1),
     managed_home: z.string().trim().min(1),
     request_timeout_ms: positiveInteger,
+    turn_timeout_ms: nonNegativeInteger,
     native_web_search: z.boolean(),
     sandbox: z.object({
       mode: z.enum(["read-only", "workspace-write", "danger-full-access"]),
@@ -298,6 +304,11 @@ export interface RequestedConfig {
       visible_activity_fallback: boolean;
       visible_activity_delay_ms: number;
     };
+    status_card: {
+      enabled: boolean;
+      update_interval_ms: number;
+      auto_pin: boolean;
+    };
     sdk: {
       expected_version: string;
       ingress_isolation: "worker-thread";
@@ -312,6 +323,7 @@ export interface RequestedConfig {
     cwd: string;
     managed_home: string;
     request_timeout_ms: number;
+    turn_timeout_ms: number;
     native_web_search: boolean;
     sandbox: { mode: "read-only" | "workspace-write" | "danger-full-access" };
     approval: { policy: "never" | "on-request" | "on-failure" | "untrusted" };
@@ -531,6 +543,11 @@ export const DEFAULT_REQUESTED_CONFIG: RequestedConfig = {
       visible_activity_fallback: true,
       visible_activity_delay_ms: 6_000,
     },
+    status_card: {
+      enabled: true,
+      update_interval_ms: 5_000,
+      auto_pin: true,
+    },
     sdk: {
       expected_version: "1.36.0",
       ingress_isolation: "worker-thread",
@@ -544,7 +561,8 @@ export const DEFAULT_REQUESTED_CONFIG: RequestedConfig = {
     model: "",
     cwd: ".",
     managed_home: "./data/codex-runtime",
-    request_timeout_ms: 120_000,
+    request_timeout_ms: 300_000,
+    turn_timeout_ms: 7_200_000,
     native_web_search: false,
     sandbox: { mode: "read-only" },
     approval: { policy: "never" },

@@ -4,6 +4,9 @@ import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import type {
   AgentRuntime,
+  AgentGoalRuntime,
+  AgentGoal,
+  AgentGoalStatus,
   AgentThreadManagementRuntime,
   ChatTransport,
 } from "../src/core/contracts.js";
@@ -48,10 +51,11 @@ class TestTransport implements ChatTransport {
   }
 }
 
-class ThreadAgent implements AgentRuntime, AgentThreadManagementRuntime {
+class ThreadAgent implements AgentRuntime, AgentThreadManagementRuntime, AgentGoalRuntime {
   readonly name = "thread-agent";
   readonly runs: AgentRunRequest[] = [];
   readonly listCwds: string[] = [];
+  readonly goals = new Map<string, AgentGoal>();
 
   constructor(
     private readonly threadsByCwd: Map<string, Array<{ id: string; preview: string }>>,
@@ -73,6 +77,34 @@ class ThreadAgent implements AgentRuntime, AgentThreadManagementRuntime {
   }
 
   async archiveThread(): Promise<void> {}
+  async getGoal(threadId: string): Promise<AgentGoal | undefined> {
+    return this.goals.get(threadId);
+  }
+  async setGoal(input: {
+    threadId: string;
+    objective?: string | null;
+    status?: AgentGoalStatus | null;
+    tokenBudget?: number | null;
+  }): Promise<AgentGoal> {
+    const previous = this.goals.get(input.threadId);
+    const goal: AgentGoal = {
+      threadId: input.threadId,
+      objective: input.objective ?? previous?.objective ?? "",
+      status: input.status ?? previous?.status ?? "active",
+      tokenBudget: input.tokenBudget !== undefined
+        ? input.tokenBudget
+        : previous?.tokenBudget ?? null,
+      tokensUsed: previous?.tokensUsed ?? 0,
+      timeUsedSeconds: previous?.timeUsedSeconds ?? 0,
+      createdAt: previous?.createdAt ?? 100,
+      updatedAt: 200,
+    };
+    this.goals.set(input.threadId, goal);
+    return goal;
+  }
+  async clearGoal(threadId: string): Promise<boolean> {
+    return this.goals.delete(threadId);
+  }
   async interrupt(): Promise<void> {}
   async stop(): Promise<void> {}
 }
@@ -122,6 +154,13 @@ describe("Gateway project/chat routing", () => {
 
       await transport.emit("/chat 2", "m3");
       expect(transport.sent.at(-1)?.text).toContain("FLORAL second chat");
+
+      await transport.emit("/goal set --tokens 5000 Finish FLORAL hardening", "m3-goal");
+      expect(transport.sent.at(-1)?.text).toContain("Goal 已设置");
+      await transport.emit("/goal complete", "m3-goal-complete");
+      expect(transport.sent.at(-1)?.text).toContain("状态：complete");
+      await transport.emit("/goal clear", "m3-goal-clear");
+      expect(transport.sent.at(-1)?.text).toContain("已清除");
 
       await transport.emit("inspect floral", "m4");
       expect(agent.runs.at(-1)).toMatchObject({

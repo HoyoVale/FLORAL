@@ -49,7 +49,9 @@ export interface GatewayStorageDiagnostics {
   durableRecoverable: number;
 }
 
-export class SqliteGatewayStore implements GatewayStore, WorkspaceStateStore, ConversationControlStateStore {
+export class SqliteGatewayStore
+  implements GatewayStore, WorkspaceStateStore, ConversationControlStateStore
+{
   #closed = false;
   readonly durability: DurableStateStore;
   readonly outbox: DurableOutboxStore;
@@ -550,6 +552,11 @@ function migrateGatewaySchema(db: SqliteDatabase): void {
       received_at INTEGER NOT NULL,
       PRIMARY KEY(provider, bot_id, external_message_id)
     );
+
+  `);
+
+  db.exec(`
+    DROP TABLE IF EXISTS goal_continuation;
   `);
 
   ensureColumn(
@@ -609,7 +616,7 @@ function migrateGatewaySchema(db: SqliteDatabase): void {
     CREATE INDEX IF NOT EXISTS audit_events_user_created_idx
       ON audit_events(user_id, created_at);
 
-    PRAGMA user_version = 6;
+    PRAGMA user_version = 7;
   `);
 }
 

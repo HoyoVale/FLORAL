@@ -129,6 +129,9 @@ export const ENVIRONMENT_BINDINGS: readonly EnvironmentBinding[] = [
   binding("FEISHU_PROBE_TIMEOUT_MS", "feishu.probe_timeout_ms"),
   binding("FEISHU_VISIBLE_ACTIVITY_FALLBACK", "feishu.presentation.visible_activity_fallback"),
   binding("FEISHU_VISIBLE_ACTIVITY_DELAY_MS", "feishu.presentation.visible_activity_delay_ms"),
+  binding("FEISHU_STATUS_CARD_ENABLED", "feishu.status_card.enabled"),
+  binding("FEISHU_STATUS_CARD_UPDATE_INTERVAL_MS", "feishu.status_card.update_interval_ms"),
+  binding("FEISHU_STATUS_CARD_AUTO_PIN", "feishu.status_card.auto_pin"),
   binding("CODEX_COMMAND", "codex.command"),
   {
     key: "CODEX_ARGS",
@@ -139,6 +142,7 @@ export const ENVIRONMENT_BINDINGS: readonly EnvironmentBinding[] = [
   binding("CODEX_CWD", "codex.cwd"),
   binding("CODEX_MANAGED_HOME", "codex.managed_home"),
   binding("CODEX_REQUEST_TIMEOUT_MS", "codex.request_timeout_ms"),
+  binding("CODEX_TURN_TIMEOUT_MS", "codex.turn_timeout_ms"),
   binding("DEEPSEEK_BASE_URL", "deepseek.base_url"),
   binding("DEEPSEEK_MODEL", "deepseek.model"),
   binding("DEEPSEEK_REQUEST_TIMEOUT_MS", "deepseek.request_timeout_ms"),
@@ -254,6 +258,7 @@ export function renderConfigurationAuthority(
     `config.codex.memories.consolidation_model=${authority.effective.codex.memories.consolidation_model || "<primary-model>"}`,
     `config.codex.native.reasoning_effort=${authority.effective.codex.native.reasoning_effort}`,
     `config.codex.native.web_search=${authority.effective.codex.native.web_search}`,
+    `config.codex.turn_timeout_ms=${String(authority.effective.codex.turn_timeout_ms)}`,
     `config.runtime.adoption.codex=${authority.effective.runtime.adoption.codex.mode}`,
     `config.runtime.adoption.qq_sdk=${authority.effective.runtime.adoption.qq_sdk.mode}`,
     `config.runtime.adoption.searxng=${authority.effective.runtime.adoption.searxng.mode}`,
@@ -282,6 +287,9 @@ export function renderConfigurationAuthority(
     `config.feishu.sdk.expected_version=${authority.effective.feishu.sdk.expected_version}`,
     `config.feishu.presentation.visible_activity_fallback=${String(authority.effective.feishu.presentation.visible_activity_fallback)}`,
     `config.feishu.presentation.visible_activity_delay_ms=${String(authority.effective.feishu.presentation.visible_activity_delay_ms)}`,
+    `config.feishu.status_card.enabled=${String(authority.effective.feishu.status_card.enabled)}`,
+    `config.feishu.status_card.update_interval_ms=${String(authority.effective.feishu.status_card.update_interval_ms)}`,
+    `config.feishu.status_card.auto_pin=${String(authority.effective.feishu.status_card.auto_pin)}`,
     `config.macos.mode=${authority.effective.macos.mode}`,
     `config.mcp.search.enabled=${String(authority.effective.mcp.search.enabled)}`,
     `config.mcp.vision.enabled=${String(authority.effective.mcp.vision.enabled)}`,
@@ -456,6 +464,12 @@ function validateCrossFieldRules(
   }
   if (config.feishu.presentation.visible_activity_delay_ms > 120_000) {
     throw new Error("feishu.presentation.visible_activity_delay_ms must not exceed 120000");
+  }
+  if (config.feishu.status_card.update_interval_ms < 1_000) {
+    throw new Error("feishu.status_card.update_interval_ms must be at least 1000ms");
+  }
+  if (config.feishu.status_card.update_interval_ms > 60_000) {
+    throw new Error("feishu.status_card.update_interval_ms must not exceed 60000ms");
   }
   if (config.codex.mode === "real" && !secrets.deepseek_api_key.present) {
     throw new Error("codex.mode=real requires secret DEEPSEEK_API_KEY");

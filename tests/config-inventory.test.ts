@@ -74,7 +74,7 @@ describe("configuration inventory", () => {
     const catalog = await loadUpstreamConfigCatalog(repositoryRoot);
     expect(catalog.schemaVersion).toBe(1);
     const environmentKeys = Object.keys(catalog.environmentKeyPolicies);
-    expect(environmentKeys).toHaveLength(76);
+    expect(environmentKeys).toHaveLength(80);
     expect(environmentKeys).toEqual(expect.arrayContaining([
       "FLORAL_MAINTENANCE_MODE_CEILING",
       "FLORAL_MAINTENANCE_MAX_ACTIONS_PER_HOUR",

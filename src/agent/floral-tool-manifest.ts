@@ -19,6 +19,7 @@ export const FLORAL_AGENT_DEVELOPER_INSTRUCTIONS = [
   "- Extension control-plane routing overrides terminal-first application routing. After any controlled extension mutation or App install handoff, the current turn's extension/System Awareness snapshot predates the change and cannot verify adoption. End the current turn with verification pending. On a fresh next turn use floral_extensions/verify_extension; use mcp_status or system diagnostics only as supporting read-only views. Do not inspect ~/.codex, process tables, package storage, data/external-* registries, or run shell/git/npm/pnpm/codex extension commands to compensate.",
   "- Legacy manage_mcp/manage_external are not exposed to Agent turns. Extension operations not exposed by FLORAL are unsupported for this Agent turn. Never use shell, direct Codex config edits, undocumented RPCs, arbitrary package sources, or package managers as an extension-install workaround; consult floral_system/capabilities for the current management contract.",
   "- Manage shared project memory through floral_context only. Read current context before relying on it; create a turn-bound proposal before applying an update. Applying an update is host approval-gated and writes only the selected managed .floral document with a provenance receipt. Never edit AGENTS.md, .floral files, or the provenance ledger through shell or direct file tools. Use compact to reconcile provenance freshness without rewriting document bodies.",
+  "- Manage durable task objectives through floral_goal. During an active turn, FLORAL serves Goal status from a turn-start projection and queues Goal mutations for native thread/goal commit only after turn/completed; this avoids re-entrant app-server Goal RPC deadlocks. Treat commit=pending-after-turn as accepted-but-not-yet-native-committed. Never create or replace a Goal unless the user explicitly requested a durable Goal, and set a token budget only when the user explicitly supplies one. Once an active Goal exists, use floral_goal/update to mark it complete only when the entire objective is genuinely complete, or blocked when it is genuinely blocked; finishing one substep or one continuation round is not completion. Do not use textual completion markers as Goal authority.",
 ].join("\n");
 
 export const FLORAL_SYSTEM_DEVELOPER_INSTRUCTIONS = [
@@ -532,4 +533,55 @@ export const FLORAL_DYNAMIC_TOOLS = [
   ...FLORAL_SKILLS_DYNAMIC_TOOLS,
   ...FLORAL_EXTENSIONS_DYNAMIC_TOOLS,
   ...FLORAL_CONTEXT_DYNAMIC_TOOLS,
+  {
+    type: "namespace",
+    name: "floral_goal",
+    description: "Codex-native durable Goal state for the current thread. Goal mutation requires an explicit user request.",
+    tools: [
+      {
+        type: "function",
+        name: "status",
+        description: "Read the current thread Goal and its native budget/usage state.",
+        inputSchema: { type: "object", properties: {}, additionalProperties: false },
+        deferLoading: false,
+      },
+      {
+        type: "function",
+        name: "create",
+        description: "Create or replace the current thread Goal only when the user explicitly requested a durable Goal.",
+        inputSchema: {
+          type: "object",
+          properties: {
+            objective: { type: "string", minLength: 1, maxLength: 4000 },
+            token_budget: { type: "integer", minimum: 1 },
+          },
+          required: ["objective"],
+          additionalProperties: false,
+        },
+        deferLoading: false,
+      },
+      {
+        type: "function",
+        name: "update",
+        description: "Update an existing Goal status or token budget only when explicitly requested or when its objective is genuinely complete/blocked.",
+        inputSchema: {
+          type: "object",
+          properties: {
+            status: { type: "string", enum: ["active", "paused", "blocked", "complete"] },
+            token_budget: { anyOf: [{ type: "integer", minimum: 1 }, { type: "null" }] },
+          },
+          additionalProperties: false,
+          minProperties: 1,
+        },
+        deferLoading: false,
+      },
+      {
+        type: "function",
+        name: "clear",
+        description: "Clear the current thread Goal only when the user explicitly requests removal.",
+        inputSchema: { type: "object", properties: {}, additionalProperties: false },
+        deferLoading: false,
+      },
+    ],
+  },
 ] as const;

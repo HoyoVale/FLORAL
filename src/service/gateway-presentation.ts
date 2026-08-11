@@ -248,3 +248,22 @@ export function safeLogToken(value: string): string {
   return value.replace(/[^A-Za-z0-9_.\/-]/g, "_").slice(0, 96) || "unknown";
 }
 
+export function formatAgentGoal(goal: {
+  status: string;
+  objective: string;
+  tokensUsed: number;
+  tokenBudget: number | null;
+  timeUsedSeconds: number;
+}): string {
+  const objective = goal.objective
+    .replace(/[\u0000-\u001F\u007F]+/gu, " ")
+    .replace(/\s+/gu, " ")
+    .trim();
+  return [
+    "Codex Goal",
+    `状态：${goal.status}`,
+    `目标：${objective}`,
+    `Token：${String(goal.tokensUsed)} / ${goal.tokenBudget === null ? "不限" : String(goal.tokenBudget)}`,
+    `已用时间：${String(Math.round(goal.timeUsedSeconds))} 秒`,
+  ].join("\n");
+}

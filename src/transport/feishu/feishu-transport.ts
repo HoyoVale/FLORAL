@@ -4,12 +4,14 @@ import { extname, join, resolve } from "node:path";
 import { Worker } from "node:worker_threads";
 import * as Lark from "@larksuiteoapi/node-sdk";
 import type {
+  AgentStatusSnapshot,
   ChatTransport,
   IdempotentTextTransport,
   InboundAttachmentMaterializer,
   InteractiveApprovalPrompt,
   InteractiveApprovalTransport,
   MediaTransport,
+  StatusCardTransport,
 } from "../../core/contracts.js";
 import type {
   IncomingAttachment,
@@ -18,6 +20,11 @@ import type {
   OutgoingMessage,
 } from "../../core/types.js";
 import { buildFeishuApprovalCard } from "./feishu-card.js";
+import {
+  buildAgentStatusCard,
+  normalizeFeishuStatusControlCardAction,
+  STATUS_CONTROL_MESSAGE_PREFIX,
+} from "./feishu-status-card.js";
 import { loadFeishuLocalMedia } from "./feishu-media.js";
 import {
   hasFeishuRenderableMarkdown,
@@ -75,6 +82,18 @@ interface FeishuOutboundClient {
             uuid?: string | undefined;
           };
         }): Promise<unknown>;
+        patch(input: {
+          data: { content: string };
+          path: { message_id: string };
+        }): Promise<unknown>;
+      };
+      pin: {
+        create(input: {
+          data: { message_id: string };
+        }): Promise<unknown>;
+        delete(input: {
+          path: { message_id: string };
+        }): Promise<unknown>;
       };
       image: {
         create(input: {
@@ -113,7 +132,13 @@ interface FeishuApprovalInteractionRoute {
 const MAX_FEISHU_CONVERSATION_USERS = 512;
 
 export class FeishuTransport
-  implements ChatTransport, IdempotentTextTransport, InboundAttachmentMaterializer, InteractiveApprovalTransport, MediaTransport
+  implements
+    ChatTransport,
+    IdempotentTextTransport,
+    InboundAttachmentMaterializer,
+    InteractiveApprovalTransport,
+    MediaTransport,
+    StatusCardTransport
 {
   readonly name = "feishu";
   readonly #client: FeishuOutboundClient;
@@ -179,6 +204,10 @@ export class FeishuTransport
       }
       if (message.type === "card-action") {
         this.#dispatchApprovalAction(message);
+        return;
+      }
+      if (message.type === "status-control") {
+        this.#dispatchStatusControl(message);
       }
     });
     worker.on("error", (error) => {
@@ -382,6 +411,69 @@ export class FeishuTransport
     if (worker) await worker.terminate().catch(() => undefined);
   }
 
+  async sendStatusCard(
+    conversationId: string,
+    snapshot: AgentStatusSnapshot,
+  ): Promise<{ messageId: string }> {
+    if (!this.#started || this.#stopped) {
+      throw new Error("Feishu transport is not ready");
+    }
+    const card = buildAgentStatusCard(snapshot);
+    const messageId = await this.#sendMessagePayload(
+      conversationId,
+      "interactive",
+      JSON.stringify(card),
+      "Feishu agent status card",
+    );
+    if (!messageId) {
+      throw new Error("Feishu status card send returned no message_id");
+    }
+    return { messageId };
+  }
+
+  async updateStatusCard(
+    messageId: string,
+    snapshot: AgentStatusSnapshot,
+  ): Promise<void> {
+    if (!this.#started || this.#stopped) {
+      throw new Error("Feishu transport is not ready");
+    }
+    const card = buildAgentStatusCard(snapshot);
+    const response = await withTimeout(
+      this.#client.im.v1.message.patch({
+        data: { content: JSON.stringify(card) },
+        path: { message_id: messageId },
+      }),
+      this.options.outboundTimeoutMs,
+      "Feishu status card update",
+    );
+    assertFeishuApiSuccess(response);
+  }
+
+  async pinStatusCard(messageId: string): Promise<void> {
+    if (!this.#started || this.#stopped) {
+      throw new Error("Feishu transport is not ready");
+    }
+    const response = await withTimeout(
+      this.#client.im.v1.pin.create({ data: { message_id: messageId } }),
+      this.options.outboundTimeoutMs,
+      "Feishu status card pin",
+    );
+    assertFeishuApiSuccess(response);
+  }
+
+  async unpinStatusCard(messageId: string): Promise<void> {
+    if (!this.#started || this.#stopped) {
+      throw new Error("Feishu transport is not ready");
+    }
+    const response = await withTimeout(
+      this.#client.im.v1.pin.delete({ path: { message_id: messageId } }),
+      this.options.outboundTimeoutMs,
+      "Feishu status card unpin",
+    );
+    assertFeishuApiSuccess(response);
+  }
+
   async #sendNow(
     message: OutgoingMessage,
     idempotencyKey?: string,
@@ -476,7 +568,7 @@ export class FeishuTransport
     content: string,
     label: string,
     uuid?: string,
-  ): Promise<void> {
+  ): Promise<string | undefined> {
     const response = await withTimeout(
       this.#client.im.v1.message.create({
         params: { receive_id_type: "chat_id" },
@@ -491,6 +583,7 @@ export class FeishuTransport
       label,
     );
     assertFeishuApiSuccess(response);
+    return readFeishuResponseMessageId(response);
   }
 
   #dispatchInbound(message: Extract<FeishuWorkerMessage, { type: "message" }>): void {
@@ -634,6 +727,45 @@ export class FeishuTransport
     }).catch((error) => {
       process.stderr.write(
         `feishu.transport.card_action_handler_error=${errorName(error)}\n`,
+      );
+    });
+  }
+
+  #dispatchStatusControl(
+    message: Extract<FeishuWorkerMessage, { type: "status-control" }>,
+  ): void {
+    const onMessage = this.#onMessage;
+    if (!onMessage || this.#stopped) return;
+
+    const value = message.action;
+    const expectedExternalUserId = this.#conversationUsers.get(value.conversationId);
+    if (expectedExternalUserId !== value.externalUserId) {
+      process.stderr.write("feishu.transport.status_control_ignored=scope-mismatch\n");
+      return;
+    }
+
+    const receivedAt = new Date(value.receivedAtMs);
+    if (!Number.isFinite(receivedAt.getTime())) {
+      process.stderr.write("feishu.transport.status_control_ignored=invalid-time\n");
+      return;
+    }
+
+    process.stderr.write(
+      `feishu.transport.status_control=received action=${value.action}\n`,
+    );
+    void onMessage({
+      id: `feishu-status-control:${value.eventId}`,
+      identity: {
+        transport: "feishu",
+        botId: this.options.appId,
+        externalUserId: value.externalUserId,
+        conversationId: value.conversationId,
+      },
+      text: `${STATUS_CONTROL_MESSAGE_PREFIX} ${value.action}`,
+      receivedAt,
+    }).catch((error) => {
+      process.stderr.write(
+        `feishu.transport.status_control_handler_error=${errorName(error)}\n`,
       );
     });
   }
@@ -866,6 +998,22 @@ function requireFeishuResponseKey(
   }
 
   throw new Error(`Feishu upload response missing ${key}`);
+}
+
+function readFeishuResponseMessageId(value: unknown): string | undefined {
+  assertFeishuApiSuccess(value);
+  if (typeof value !== "object" || value === null) {
+    return undefined;
+  }
+  const record = value as Record<string, unknown>;
+  const direct = record.message_id;
+  if (typeof direct === "string" && direct.trim()) return direct.trim();
+  const data = record.data;
+  if (typeof data === "object" && data !== null) {
+    const nested = (data as Record<string, unknown>).message_id;
+    if (typeof nested === "string" && nested.trim()) return nested.trim();
+  }
+  return undefined;
 }
 
 function feishuDeliveryUuid(idempotencyKey: string, part: number): string {
