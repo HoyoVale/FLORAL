@@ -11,6 +11,7 @@ import {
   supportsAgentGoals,
   supportsGoalContinuationStore,
   supportsStatusCardTransport,
+  STATUS_CONTROL_MESSAGE_PREFIX,
 } from "../core/contracts.js";
 import type {
   AgentEvent,
@@ -20,11 +21,17 @@ import type {
 import { AgentStatusCardController } from "./agent-status-card-controller.js";
 import {
   GoalContinuationCoordinator,
+  hasGoalCompleteMarker,
   type GoalContinuationRunInput,
 } from "./goal-continuation-coordinator.js";
-import { GoalStatusControlHandler } from "./goal-status-control.js";
 
-export { parseStatusControlAction } from "./goal-status-control.js";
+export function parseStatusControlAction(
+  text: string,
+): "pause" | "stop" | undefined {
+  if (!text.startsWith(`${STATUS_CONTROL_MESSAGE_PREFIX} `)) return undefined;
+  const action = text.slice(STATUS_CONTROL_MESSAGE_PREFIX.length + 1).trim();
+  return action === "pause" || action === "stop" ? action : undefined;
+}
 
 export interface GoalContinuationFacadeOptions {
   agent: AgentRuntime;
@@ -76,7 +83,6 @@ export class GoalContinuationFacade {
   readonly coordinator: GoalContinuationCoordinator;
   readonly statusCard: AgentStatusCardController | undefined;
   readonly #agent: AgentGoalRuntime;
-  readonly #statusControl: GoalStatusControlHandler;
   readonly #options: Omit<GoalContinuationFacadeOptions, "goalContinuation" | "statusCard">;
   readonly #goalContinuationConfig: GoalContinuationFacadeOptions["goalContinuation"];
   readonly #statusCardConfig: GoalContinuationFacadeOptions["statusCard"];
@@ -135,15 +141,6 @@ export class GoalContinuationFacade {
     } else {
       this.coordinator = new GoalContinuationCoordinator(continuationInput);
     }
-    this.#statusControl = new GoalStatusControlHandler({
-      agent: this.#agent,
-      coordinator: this.coordinator,
-      send: options.send,
-      audit: options.audit,
-      isConversationBusy: options.isConversationBusy,
-      stopConversation: options.stopConversation,
-      resolveProjectContext: options.resolveProjectContext,
-    });
   }
 
   async start(): Promise<void> {
@@ -162,6 +159,15 @@ export class GoalContinuationFacade {
   ): Promise<void> {
     await this.coordinator.onUserMessage(conversationId).catch(() => undefined);
     await this.statusCard?.onUserInterrupt(deliveryConversationId).catch(() => undefined);
+  }
+
+  async shouldConsumeCompletionMarker(
+    conversationId: string,
+    finalText: string,
+  ): Promise<boolean> {
+    if (!hasGoalCompleteMarker(finalText)) return false;
+    const record = await this.coordinator.getRecord(conversationId).catch(() => undefined);
+    return Boolean(record?.authorized && record.enabled);
   }
 
   async onRunStarted(
@@ -295,23 +301,85 @@ export class GoalContinuationFacade {
   async handleStatusControl(
     resolved: ResolvedGatewayIdentity,
     deliveryConversationId: string,
-    action: "pause" | "stop" | "continue" | "restart",
+    action: "pause" | "stop",
   ): Promise<void> {
-    await this.#statusControl.handleStatusControl(
-      resolved,
-      deliveryConversationId,
-      action,
-    );
-    if (action === "pause" || action === "stop") {
-      await this.onStopped(resolved.conversationId, deliveryConversationId);
+    if (resolved.role !== "owner") {
+      await this.#options.audit({
+        userId: resolved.userId,
+        conversationId: resolved.conversationId,
+        eventType: "status_control.denied",
+        payload: { action },
+      });
+      await this.#options.send(deliveryConversationId, "只有 owner 可以控制状态卡。");
+      return;
     }
+    await this.#options.stopConversation(resolved.conversationId);
+    if (action === "pause") {
+      const context = await this.#options.resolveProjectContext(
+        deliveryConversationId,
+        resolved.conversationId,
+      );
+      if (context) {
+        await this.#agent.setGoal({
+          threadId: context.threadId,
+          cwd: context.projectCwd,
+          status: "paused",
+        }).catch(() => undefined);
+      }
+      await this.stopContinuation(resolved.conversationId, "status-card-pause");
+      await this.#options.send(deliveryConversationId, "已暂停：当前任务已停止，Goal 已置为 paused。");
+    } else {
+      await this.stopContinuation(resolved.conversationId, "status-card-stop");
+      await this.#options.send(deliveryConversationId, "已停止：当前任务已停止，Goal 自动续跑已关闭。");
+    }
+    await this.onStopped(resolved.conversationId, deliveryConversationId);
   }
 
   async handleContinue(
     resolved: ResolvedGatewayIdentity,
     deliveryConversationId: string,
   ): Promise<void> {
-    await this.#statusControl.handleContinue(resolved, deliveryConversationId);
+    if (resolved.role !== "owner") {
+      await this.#options.audit({
+        userId: resolved.userId,
+        conversationId: resolved.conversationId,
+        eventType: "command.goal_continue_denied",
+        payload: { reason: "owner-required" },
+      });
+      await this.#options.send(deliveryConversationId, "只有 owner 可以启用 Goal 自动续跑。");
+      return;
+    }
+    if (this.#options.isConversationBusy(resolved.conversationId)) {
+      await this.#options.send(deliveryConversationId, "当前任务运行中，不能启用 Goal 自动续跑。请先 /stop。");
+      return;
+    }
+    const context = await this.#options.resolveProjectContext(
+      deliveryConversationId,
+      resolved.conversationId,
+    );
+    if (!context?.threadId) return;
+    const goal = await this.#agent.getGoal(context.threadId, {
+      cwd: context.projectCwd,
+    }).catch(() => undefined);
+    if (!goal) {
+      await this.#options.send(deliveryConversationId, "当前会话没有 Goal。请先使用 /goal set 创建目标。");
+      return;
+    }
+    await this.coordinator.authorize({
+      conversationId: resolved.conversationId,
+      deliveryConversationId,
+      userId: resolved.userId,
+      threadId: context.threadId,
+      projectCwd: context.projectCwd,
+      projectName: context.projectName,
+      enable: true,
+    });
+    await this.#options.send(
+      deliveryConversationId,
+      goal.status === "active"
+        ? "Goal 自动续跑已启用。当前回合结束后将自动继续推进目标。"
+        : `Goal 已授权自动续跑，但当前状态为 ${goal.status}；请先 /goal active 恢复。`,
+    );
   }
 
   async syncGoalChange(input: GoalContinuationSyncInput): Promise<void> {

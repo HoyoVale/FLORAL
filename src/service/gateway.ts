@@ -93,6 +93,7 @@ import {
   GoalContinuationFacade,
   parseStatusControlAction,
 } from "./gateway-goal-continuation.js";
+import { stripGoalCompleteMarker } from "./goal-continuation-coordinator.js";
 export interface GatewayOptions {
   cwd: string;
   workspace?: ProjectWorkspaceRoot | undefined;
@@ -2275,9 +2276,15 @@ export class GatewayService {
       }).catch(() => undefined);
       this.#cancelVisibleActivityFallback(active);
       this.#setConversationActivity(message.identity.conversationId, "idle");
+      const consumeGoalMarker = await this.#goalFacade
+        ?.shouldConsumeCompletionMarker(resolved.conversationId, result.finalText)
+        .catch(() => false) ?? false;
+      const visibleFinalText = consumeGoalMarker
+        ? stripGoalCompleteMarker(result.finalText) || "Goal 已完成。"
+        : result.finalText;
       const replyDelivered = await this.#deliverWithAudit(
         message.identity.conversationId,
-        result.finalText,
+        visibleFinalText,
         resolved,
         "agent_reply",
         `agent-reply:${message.identity.transport}:${message.id}`,

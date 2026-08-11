@@ -65,15 +65,8 @@ the Agent start working after the cooldown.
 - Goal dynamic tools now use a turn-local projection. Mutations requested by
   the Agent are acknowledged as `commit=pending-after-turn` and FLORAL applies
   the native `thread/goal/*` RPC only after `turn/completed`, avoiding
-  re-entrant app-server Goal RPC deadlocks. Completion uses that same single
-  chain: the Agent calls `floral_goal/update(status=complete)`, the projection
-  is committed after the turn, the coordinator sees `complete` and stops.
-  There is no `[GOAL_COMPLETE]`-style second signal.
-- `goal absent` is not a terminal state: a briefly invisible native Goal (for
-  example right after `/goal set`) keeps continuation enabled and waits for the
-  next reconciliation instead of disabling the loop.
-- The first continuation starts ~1s after authorization (immediate); the 30s
-  cooldown applies only between subsequent rounds.
+  re-entrant app-server Goal RPC deadlocks. Auto-continuation still uses the
+  standalone `[GOAL_COMPLETE]` final marker as a simple completion signal.
 - Individual Codex RPC calls are bounded by `codex.request_timeout_ms`
   (default 300s). The turn-completion wait is a separate
   `codex.turn_timeout_ms` / `CODEX_TURN_TIMEOUT_MS` setting, default **2h**.
@@ -104,11 +97,8 @@ once**, token usage, and the last tool activity. `/goal set` replies with a
 short confirmation instead of repeating the objective; `/goal status` remains
 the full on-demand view.
 It carries 暂停/停止 buttons (owner-only, routed through the existing
-card-action channel), plus 继续 on paused/stopped cards and 重新运行 on
-completed cards. 继续 resumes with progress preserved; 重新运行 resets the
-round counter and restarts the Goal. Updates are throttled to
-`feishu.status_card.update_interval_ms` (default 5s); failures are audited as
-`feishu.status_card_failed` and swallowed.
+card-action channel). Updates are throttled to `feishu.status_card.update_interval_ms`
+(default 5s); failures are audited as `feishu.status_card_failed` and swallowed.
 Final answers remain normal messages.
 
 ## Configuration

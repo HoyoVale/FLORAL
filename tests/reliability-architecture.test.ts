@@ -12,17 +12,12 @@ describe("Phase 8G reliability architecture", () => {
       // gateway-goal-continuation facade (separate frozen budget below).
       "src/service/gateway.ts": 2_950,
       "src/service/gateway-goal-continuation.ts": 430,
-      // The coordinator absorbed absent-goal reconciliation, first-run
-      // immediate scheduling, retry handling and the async timer fix; it was
-      // already 676 lines at 416af31, so the budget is now 700.
-      "src/service/goal-continuation-coordinator.ts": 700,
+      // Retryable-failure handling and the [GOAL_COMPLETE] post-turn marker
+      // raised the coordinator budget from 520 to 580 lines.
+      "src/service/goal-continuation-coordinator.ts": 580,
       "src/service/agent-status-card-controller.ts": 260,
-      // Deferred Goal mutation machinery (turn projection + post-turn commit)
-      // already put codex-app-server at 3350 lines in 416af31; budget is 3400.
-      "src/agent/codex-app-server.ts": 3_400,
-      // Turn-local projection helpers (deferred Goal mutations) put
-      // codex-goals.ts at 254 lines already in 416af31; budget is 280.
-      "src/agent/codex-goals.ts": 280,
+      "src/agent/codex-app-server.ts": 3_250,
+      "src/agent/codex-goals.ts": 220,
       "src/agent/codex-thread-list.ts": 60,
       "src/agent/github-mcp-approval.ts": 50,
       // Phase 10B added the turnTimeoutMs wiring line (1300 -> 1310).
@@ -35,9 +30,7 @@ describe("Phase 8G reliability architecture", () => {
       "src/service/delivery-outbox-coordinator.ts": 260,
       "src/service/durable-run-coordinator.ts": 150,
       "src/service/gateway-chats.ts": 40,
-      // Continuation synchronization wiring put gateway-goals.ts at 135 lines
-      // already in 416af31; budget is 150.
-      "src/service/gateway-goals.ts": 150,
+      "src/service/gateway-goals.ts": 120,
       "src/service/durable-attachment-spool.ts": 80,
       "src/service/startup-recovery-coordinator.ts": 130,
       "src/storage/durable-state.ts": 620,
