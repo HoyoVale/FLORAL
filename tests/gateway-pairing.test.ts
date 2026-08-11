@@ -75,12 +75,8 @@ describe("gateway command parsing and pairing security", () => {
       objective: undefined,
       tokenBudget: undefined,
     });
-    expect(parseGatewayCommand("/goal restart")).toEqual({
-      type: "goal",
-      action: "restart",
-      objective: undefined,
-      tokenBudget: undefined,
-    });
+    expect(parseGatewayCommand("/goal restart")).toBeUndefined();
+    expect(parseGatewayCommand("/goal continue")).toBeUndefined();
     expect(parseGatewayCommand("/status now")).toBeUndefined();
     expect(parseGatewayCommand("/system not a component")).toBeUndefined();
     expect(parseGatewayCommand("/diagnose not a component")).toBeUndefined();

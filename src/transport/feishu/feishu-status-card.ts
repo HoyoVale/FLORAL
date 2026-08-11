@@ -52,9 +52,6 @@ export function buildAgentStatusCard(
   if (snapshot.projectName) {
     lines.push(`项目：\`${escapeInlineCode(snapshot.projectName)}\``);
   }
-  if (snapshot.state === "cooldown" && snapshot.cooldownRemainingMs !== undefined) {
-    lines.push(`下次续跑：${formatSeconds(snapshot.cooldownRemainingMs)} 后`);
-  }
   if (snapshot.goal) {
     lines.push("");
     lines.push(`**Goal 状态**：${goalStatusLabel(snapshot.goal.status)}`);
@@ -216,7 +213,7 @@ function statusControls(snapshot: AgentStatusSnapshot): Array<{
   label: string;
   type: "default" | "danger";
 }> {
-  if (snapshot.state === "running" || snapshot.state === "cooldown") {
+  if (snapshot.state === "running") {
     return [
       { action: "pause", label: "暂停", type: "default" },
       { action: "stop", label: "停止", type: "danger" },
@@ -241,7 +238,6 @@ function statusTitle(snapshot: AgentStatusSnapshot): string {
   if (snapshot.goal?.status === "paused") return "FLORAL Goal 已暂停";
   switch (snapshot.state) {
     case "running": return "FLORAL Agent 运行中";
-    case "cooldown": return "FLORAL Agent 冷却中";
     case "stopped": return "FLORAL Agent 已停止";
     default: return "FLORAL Agent 空闲";
   }
@@ -255,7 +251,6 @@ function statusTemplate(snapshot: AgentStatusSnapshot): string {
     || snapshot.goal?.status === "usageLimited") return "red";
   switch (snapshot.state) {
     case "running": return "blue";
-    case "cooldown": return "orange";
     case "stopped": return "red";
     default: return "green";
   }
@@ -281,10 +276,6 @@ function formatElapsed(ms: number): string {
   if (hours > 0) return `${String(hours)} 小时 ${String(minutes)} 分`;
   if (minutes > 0) return `${String(minutes)} 分 ${String(seconds)} 秒`;
   return `${String(seconds)} 秒`;
-}
-
-function formatSeconds(ms: number): string {
-  return `${String(Math.max(0, Math.ceil(ms / 1_000)))} 秒`;
 }
 
 function boundedText(value: string, maxCharacters: number): string {

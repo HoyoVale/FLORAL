@@ -132,10 +132,6 @@ export const ENVIRONMENT_BINDINGS: readonly EnvironmentBinding[] = [
   binding("FEISHU_STATUS_CARD_ENABLED", "feishu.status_card.enabled"),
   binding("FEISHU_STATUS_CARD_UPDATE_INTERVAL_MS", "feishu.status_card.update_interval_ms"),
   binding("FEISHU_STATUS_CARD_AUTO_PIN", "feishu.status_card.auto_pin"),
-  binding("GOAL_CONTINUATION_ENABLED", "goal.continuation.enabled"),
-  binding("GOAL_CONTINUATION_COOLDOWN_MS", "goal.continuation.cooldown_ms"),
-  binding("GOAL_CONTINUATION_MAX_TURNS", "goal.continuation.max_turns"),
-  binding("GOAL_CONTINUATION_MAX_WALL_TIME_MS", "goal.continuation.max_wall_time_ms"),
   binding("CODEX_COMMAND", "codex.command"),
   {
     key: "CODEX_ARGS",
@@ -294,10 +290,6 @@ export function renderConfigurationAuthority(
     `config.feishu.status_card.enabled=${String(authority.effective.feishu.status_card.enabled)}`,
     `config.feishu.status_card.update_interval_ms=${String(authority.effective.feishu.status_card.update_interval_ms)}`,
     `config.feishu.status_card.auto_pin=${String(authority.effective.feishu.status_card.auto_pin)}`,
-    `config.goal.continuation.enabled=${String(authority.effective.goal.continuation.enabled)}`,
-    `config.goal.continuation.cooldown_ms=${String(authority.effective.goal.continuation.cooldown_ms)}`,
-    `config.goal.continuation.max_turns=${String(authority.effective.goal.continuation.max_turns)}`,
-    `config.goal.continuation.max_wall_time_ms=${String(authority.effective.goal.continuation.max_wall_time_ms)}`,
     `config.macos.mode=${authority.effective.macos.mode}`,
     `config.mcp.search.enabled=${String(authority.effective.mcp.search.enabled)}`,
     `config.mcp.vision.enabled=${String(authority.effective.mcp.vision.enabled)}`,
@@ -478,9 +470,6 @@ function validateCrossFieldRules(
   }
   if (config.feishu.status_card.update_interval_ms > 60_000) {
     throw new Error("feishu.status_card.update_interval_ms must not exceed 60000ms");
-  }
-  if (config.goal.continuation.cooldown_ms > 300_000) {
-    throw new Error("goal.continuation.cooldown_ms must not exceed 300000ms");
   }
   if (config.codex.mode === "real" && !secrets.deepseek_api_key.present) {
     throw new Error("codex.mode=real requires secret DEEPSEEK_API_KEY");

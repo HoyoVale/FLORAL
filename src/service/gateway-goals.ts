@@ -4,7 +4,6 @@ import {
 } from "../core/contracts.js";
 import type { AuditEventInput, GatewayRole } from "../core/types.js";
 import type { GatewayCommand } from "./gateway-commands.js";
-import type { GoalContinuationCoordinator } from "./goal-continuation-coordinator.js";
 import { formatAgentGoal } from "./gateway-presentation.js";
 type GoalCommand = Extract<GatewayCommand, { type: "goal" }>;
 export async function handleGatewayGoalCommand(input: {
@@ -19,10 +18,8 @@ export async function handleGatewayGoalCommand(input: {
   busy: boolean;
   audit: (event: AuditEventInput) => Promise<void>;
   send: (text: string) => Promise<void>;
-  continuation?: GoalContinuationCoordinator | undefined;
 }): Promise<void> {
   const { agent, command } = input;
-  if (command.action === "continue" || command.action === "restart") return;
   if (!supportsAgentGoals(agent)) {
     await input.send("当前 Agent runtime 未开放 Codex thread/goal 接口。");
     return;
@@ -56,7 +53,6 @@ export async function handleGatewayGoalCommand(input: {
   try {
     if (command.action === "clear") {
       const cleared = await agent.clearGoal(input.threadId, { cwd: input.projectCwd });
-      await input.continuation?.delete(input.conversationId);
       await input.audit({
         userId: input.userId,
         conversationId: input.conversationId,
@@ -83,15 +79,6 @@ export async function handleGatewayGoalCommand(input: {
                 status: command.action === "pause" ? "paused" as const : command.action,
               }),
         });
-    await input.continuation?.syncCommand({
-      action: command.action as "set" | "active" | "pause" | "blocked" | "complete",
-      threadId: input.threadId,
-      projectCwd: input.projectCwd,
-      projectName: input.projectName,
-      deliveryConversationId: input.deliveryConversationId,
-      conversationId: input.conversationId,
-      userId: input.userId,
-    });
     await input.audit({
       userId: input.userId,
       conversationId: input.conversationId,
@@ -103,13 +90,10 @@ export async function handleGatewayGoalCommand(input: {
         ...(goal ? { status: goal.status, tokenBudget: goal.tokenBudget } : {}),
       },
     });
-    const continuation = await input.continuation
-      ?.getRecord(input.conversationId)
-      .catch(() => undefined);
     await input.send(command.action === "set"
-      ? "Goal 已设置并授权自动续跑。目标已固定在状态卡上；稍后开始第一轮。"
+      ? "Goal 已设置。目标已固定在状态卡上；发送消息即可推进。"
       : goal
-        ? `${formatAgentGoal(goal)}\n${formatContinuationState(continuation)}`
+        ? formatAgentGoal(goal)
         : "当前会话没有 Goal。");
   } catch (error) {
     const message = error instanceof Error
@@ -123,12 +107,4 @@ export async function handleGatewayGoalCommand(input: {
     }).catch(() => undefined);
     await input.send("Codex Goal 操作失败。会话可能已归档、目标格式无效，或当前 app-server 版本不支持该接口。");
   }
-}
-
-function formatContinuationState(record: Awaited<ReturnType<GoalContinuationCoordinator["getRecord"]>>): string {
-  if (!record?.authorized) return "自动续跑：未授权";
-  if (!record.enabled) return `自动续跑：已停用（已完成 ${String(record.turnCount)} 轮）`;
-  return record.pending
-    ? `自动续跑：已启用，下一轮已排队（已完成 ${String(record.turnCount)} 轮）`
-    : `自动续跑：已启用（已完成 ${String(record.turnCount)} 轮）`;
 }

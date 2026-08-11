@@ -1,5 +1,13 @@
 # Phase 10B — Goal auto-continuation and Feishu live status card
 
+> **Phase 0（2026-08-11）方案 B 更新**：Goal 自动续跑调度器已移除（
+> `goal-continuation-coordinator` / `goal-continuation-support` /
+> `goal_continuation` 表 / `goal.continuation` 配置 / `/goal continue|restart`
+> 命令全部删除）。Goal 由 Codex app-server 原生管理，FLORAL 只保留 owner
+> 命令、飞书 PATCH 状态卡与卡片控制（暂停/停止/继续/重新开始）的桥接。
+> 最小续跑驱动（方案 A）将在后续独立阶段按幂等 + watchdog 要求重新设计。
+> 行数预算测试用例已删除（owner 决定），保留恢复矩阵与发布边界断言。
+
 ## Summary
 
 Phase 10 finished native Codex thread Goal read/write (`thread/goal/*`). It did

@@ -1,5 +1,9 @@
 # Phase 10D — Goal state authority and restart controls
 
+> **Phase 0（2026-08-11）方案 B 更新**：自动续跑已移除；状态控制直接桥接
+> 原生 Goal（continue/restart → `setGoal(status=active)`，pause →
+> `setGoal(status=paused)` + 中断当前回合），不再经过续跑协调器。
+
 ## Why this fix exists
 
 The first Goal reliability pass removed re-entrant `thread/goal/*` RPCs by

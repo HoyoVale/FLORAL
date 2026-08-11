@@ -90,7 +90,7 @@ import {
 import { handleGatewayGoalCommand } from "./gateway-goals.js";
 import { listGatewayChats } from "./gateway-chats.js";
 import {
-  GoalContinuationFacade,
+  GoalStatusFacade,
   parseStatusControlAction,
 } from "./gateway-goal-continuation.js";
 export interface GatewayOptions {
@@ -123,12 +123,6 @@ export interface GatewayOptions {
   deliveryOutbox?: DeliveryOutboxCoordinator | undefined;
   durableRuns?: DurableRunCoordinator | undefined;
   startupRecovery?: StartupRecoveryCoordinator | undefined;
-  goalContinuation?: {
-    enabled: boolean;
-    cooldownMs: number;
-    maxTurns: number;
-    maxWallTimeMs: number;
-  } | undefined;
   statusCard?: {
     enabled: boolean;
     updateIntervalMs: number;
@@ -183,7 +177,7 @@ export class GatewayService {
   readonly #inflightMessageHandlers = new Set<Promise<void>>();
   readonly #pairingLimiter = new PairingAttemptLimiter();
   readonly #approvalBroker: QqApprovalBroker | undefined;
-  readonly #goalFacade: GoalContinuationFacade | undefined = undefined;
+  readonly #goalFacade: GoalStatusFacade | undefined = undefined;
   #started = false;
   #stopped = false;
 
@@ -240,16 +234,13 @@ export class GatewayService {
         })
       : undefined;
 
-    if (options.goalContinuation?.enabled) {
-      this.#goalFacade = new GoalContinuationFacade({
+    if (options.statusCard?.enabled) {
+      this.#goalFacade = new GoalStatusFacade({
         agent: this.agent,
-        store: this.store,
         transport: this.transport,
         audit: (event) => this.store.appendAudit(event),
         send: (conversationId, text) => this.#send(conversationId, text),
         isConversationBusy: (conversationId) => this.#conversationBusy(conversationId),
-        runContinuation: (input) =>
-          this.#runAgent(input.message, input.resolved),
         resolveProjectContext: (_delivery, conversationId) =>
           this.#resolveSelectedProjectContext(conversationId).then((context) =>
             context?.threadId
@@ -261,12 +252,6 @@ export class GatewayService {
               : undefined,
           ),
         stopConversation: (conversationId) => this.#stopConversationRuns(conversationId),
-        goalContinuation: {
-          enabled: true,
-          cooldownMs: options.goalContinuation.cooldownMs,
-          maxTurns: options.goalContinuation.maxTurns,
-          maxWallTimeMs: options.goalContinuation.maxWallTimeMs,
-        },
         statusCard: {
           enabled: options.statusCard?.enabled ?? false,
           updateIntervalMs: options.statusCard?.updateIntervalMs ?? 5_000,
@@ -421,10 +406,6 @@ export class GatewayService {
       return;
     }
 
-    await this.#goalFacade?.onUserMessage(
-      resolved.conversationId,
-      message.identity.conversationId,
-    );
     await this.#runAgent(message, resolved);
   }
 
@@ -1487,14 +1468,6 @@ export class GatewayService {
         return;
       }
       case "goal": {
-        if (command.action === "continue" || command.action === "restart") {
-          if (command.action === "continue") {
-            await this.#goalFacade?.handleContinue(resolved, message.identity.conversationId);
-          } else {
-            await this.#goalFacade?.handleRestart(resolved, message.identity.conversationId);
-          }
-          return;
-        }
         const projectContext = await this.#requireProjectContext(
           message.identity.conversationId, resolved.conversationId,
         );
@@ -1514,7 +1487,6 @@ export class GatewayService {
           busy: this.#conversationBusy(resolved.conversationId),
           audit: async (event) => this.store.appendAudit(event),
           send: async (text) => this.#send(message.identity.conversationId, text),
-          continuation: this.#goalFacade?.coordinator,
         });
         return;
       }
@@ -1852,10 +1824,6 @@ export class GatewayService {
 
       case "stop": {
         const outcome = await this.#stopConversationRuns(resolved.conversationId);
-        const continuationStopped = await this.#goalFacade?.stopContinuation(
-          resolved.conversationId,
-          "stop-command",
-        ) ?? false;
         await this.#goalFacade?.onStopped(
           resolved.conversationId,
           message.identity.conversationId,
@@ -1868,14 +1836,12 @@ export class GatewayService {
             interruptDispatched: outcome.interruptSent,
             preflightCancelled: outcome.starting,
             queuedCancelled: outcome.queuedCount,
-            continuationStopped,
           },
         });
         if (
           !outcome.active
           && !outcome.starting
           && outcome.queuedCount === 0
-          && !continuationStopped
         ) {
           await this.#send(
             message.identity.conversationId,
@@ -1894,7 +1860,6 @@ export class GatewayService {
             ...(outcome.queuedCount > 0
               ? [`已同时取消 ${String(outcome.queuedCount)} 条排队消息。`]
               : []),
-            ...(continuationStopped ? ["已停止 Goal 自动续跑。"] : []),
           ].join("\n"),
         );
         return;
@@ -2328,13 +2293,11 @@ export class GatewayService {
           }
         }
       }
-      await this.#goalFacade?.onRunCompleted({
-        conversationId: resolved.conversationId,
-        deliveryConversationId: message.identity.conversationId,
-        threadId: result.threadId,
-        projectCwd: runCwd,
-        projectName: projectContext?.project.name ?? "",
-      });
+      await this.#goalFacade?.onRunEnded(
+        resolved.conversationId,
+        message.identity.conversationId,
+        projectContext?.project.name,
+      );
     } catch (error) {
       if (active.maintenanceTransactions.length > 0 && this.options.systemMaintenance) {
         for (const transactionId of active.maintenanceTransactions) {
@@ -2363,24 +2326,19 @@ export class GatewayService {
           stopRequested: active.stopRequested,
         },
       }).catch(() => undefined);
-      const goalFailureHandled = active.stopRequested
-        ? false
-        : await this.#goalFacade?.onRunFailed(
-            resolved.conversationId,
-            message.identity.conversationId,
-            error,
-          ) ?? false;
-      if (active.stopRequested || !goalFailureHandled) {
-        await this.#deliverWithAudit(
-          message.identity.conversationId,
-          active.stopRequested
-            ? "当前任务已停止。"
-            : agentFailureUserMessage(error),
-          resolved,
-          "agent_failure",
-          `agent-failure:${message.identity.transport}:${message.id}`,
-        );
-      }
+      await this.#goalFacade?.onRunFailed(
+        resolved.conversationId,
+        message.identity.conversationId,
+      );
+      await this.#deliverWithAudit(
+        message.identity.conversationId,
+        active.stopRequested
+          ? "当前任务已停止。"
+          : agentFailureUserMessage(error),
+        resolved,
+        "agent_failure",
+        `agent-failure:${message.identity.transport}:${message.id}`,
+      );
     } finally {
       this.#cancelVisibleActivityFallback(active);
       this.#approvalBroker?.cancelConversation(resolved.conversationId);

@@ -84,7 +84,7 @@ export function supportsInteractiveApproval(
     .sendInteractiveApprovalPrompt === "function";
 }
 
-export type AgentStatusCardState = "idle" | "running" | "cooldown" | "stopped";
+export type AgentStatusCardState = "idle" | "running" | "stopped";
 
 export const STATUS_CONTROL_MESSAGE_PREFIX = "__floral_status_control__";
 
@@ -94,7 +94,6 @@ export interface AgentStatusSnapshot {
   turnNumber: number;
   elapsedMs: number;
   lastActivity?: string | undefined;
-  cooldownRemainingMs?: number | undefined;
   goal?: {
     status: AgentGoalStatus;
     objective: string;
@@ -359,43 +358,6 @@ export function supportsAgentGoals(
   return typeof candidate.getGoal === "function"
     && typeof candidate.setGoal === "function"
     && typeof candidate.clearGoal === "function";
-}
-
-export interface GoalContinuationRecord {
-  conversationId: string;
-  deliveryConversationId: string;
-  userId: string;
-  role: "owner";
-  threadId: string;
-  projectCwd: string;
-  projectName: string;
-  authorized: boolean;
-  enabled: boolean;
-  pending: boolean;
-  nextRunAt: number | null;
-  turnCount: number;
-  lastRunAt: number | null;
-  createdAt: number;
-  updatedAt: number;
-}
-
-export interface GoalContinuationStore {
-  loadGoalContinuation(
-    conversationId: string,
-  ): Promise<GoalContinuationRecord | undefined>;
-  saveGoalContinuation(record: GoalContinuationRecord): Promise<void>;
-  deleteGoalContinuation(conversationId: string): Promise<void>;
-  listGoalContinuations(): Promise<GoalContinuationRecord[]>;
-}
-
-export function supportsGoalContinuationStore(
-  store: GatewayStore,
-): store is GatewayStore & GoalContinuationStore {
-  const candidate = store as Partial<GoalContinuationStore>;
-  return typeof candidate.loadGoalContinuation === "function"
-    && typeof candidate.saveGoalContinuation === "function"
-    && typeof candidate.deleteGoalContinuation === "function"
-    && typeof candidate.listGoalContinuations === "function";
 }
 
 export function supportsAgentThreadManagement(

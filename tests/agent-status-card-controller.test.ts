@@ -136,21 +136,6 @@ describe("AgentStatusCardController", () => {
       .toBe(true);
   });
 
-  it("can create a card directly in cooldown and ticks the remaining time", async () => {
-    const h = harness();
-    await h.controller.start();
-    await h.controller.onCooldown("chat-1", {
-      state: "cooldown",
-      turnNumber: 1,
-      elapsedMs: 0,
-      cooldownRemainingMs: 30,
-    });
-    expect(h.transport.sent).toHaveLength(1);
-    await h.advance(6);
-    expect(h.transport.updated.at(-1)?.state).toBe("cooldown");
-    expect(h.transport.updated.at(-1)?.cooldownRemainingMs).toBeLessThan(30);
-  });
-
   it("replaces terminal snapshots so stale progress is not retained", async () => {
     const h = harness();
     await h.controller.start();

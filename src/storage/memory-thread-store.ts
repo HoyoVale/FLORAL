@@ -1,7 +1,5 @@
 import { randomUUID } from "node:crypto";
 import type {
-  GoalContinuationRecord,
-  GoalContinuationStore,
   GatewayStore,
   WorkspaceStateStore,
 } from "../core/contracts.js";
@@ -27,7 +25,7 @@ interface StoredConversation {
 }
 
 export class MemoryThreadStore
-  implements GatewayStore, WorkspaceStateStore, GoalContinuationStore
+  implements GatewayStore, WorkspaceStateStore
 {
   readonly #threads = new Map<string, string>();
   readonly #selectedProjects = new Map<string, string>();
@@ -36,7 +34,6 @@ export class MemoryThreadStore
   readonly #conversations = new Map<string, StoredConversation>();
   readonly #messages = new Set<string>();
   readonly #audits: AuditEventInput[] = [];
-  readonly #goalContinuations = new Map<string, GoalContinuationRecord>();
 
   async resolveIdentity(
     identity: ExternalIdentity,
@@ -158,27 +155,6 @@ export class MemoryThreadStore
     this.#audits.push(structuredClone(event));
   }
 
-  async loadGoalContinuation(
-    conversationId: string,
-  ): Promise<GoalContinuationRecord | undefined> {
-    const stored = this.#goalContinuations.get(conversationId);
-    return stored ? structuredClone(stored) : undefined;
-  }
-
-  async saveGoalContinuation(record: GoalContinuationRecord): Promise<void> {
-    this.#goalContinuations.set(conversationId(record), structuredClone(record));
-  }
-
-  async deleteGoalContinuation(conversationId: string): Promise<void> {
-    this.#goalContinuations.delete(conversationId);
-  }
-
-  async listGoalContinuations(): Promise<GoalContinuationRecord[]> {
-    return [...this.#goalContinuations.values()]
-      .map((record) => structuredClone(record))
-      .sort((left, right) => right.updatedAt - left.updatedAt);
-  }
-
   auditEvents(): readonly AuditEventInput[] {
     return this.#audits;
   }
@@ -221,8 +197,4 @@ function conversationKey(identity: ExternalIdentity): string {
 
 function projectThreadKey(conversationId: string, projectName: string): string {
   return `${conversationId}\u0000${projectName}`;
-}
-
-function conversationId(record: GoalContinuationRecord): string {
-  return record.conversationId;
 }

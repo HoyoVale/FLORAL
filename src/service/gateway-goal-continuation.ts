@@ -1,15 +1,11 @@
 import type {
-  AgentGoal,
   AgentGoalRuntime,
   AgentRuntime,
   AgentStatusSnapshot,
   ChatTransport,
-  GatewayStore,
-  GoalContinuationStore,
 } from "../core/contracts.js";
 import {
   supportsAgentGoals,
-  supportsGoalContinuationStore,
   supportsStatusCardTransport,
 } from "../core/contracts.js";
 import type {
@@ -19,23 +15,19 @@ import type {
 } from "../core/types.js";
 import { AgentStatusCardController } from "./agent-status-card-controller.js";
 import {
-  GoalContinuationCoordinator,
-  type GoalContinuationRunInput,
-} from "./goal-continuation-coordinator.js";
-import {
   handleGoalControl,
+  type GoalControlHost,
   type GoalStatusControlAction,
 } from "./gateway-goal-control.js";
+
 export { parseStatusControlAction } from "./gateway-goal-control.js";
 
-export interface GoalContinuationFacadeOptions {
+export interface GoalStatusFacadeOptions {
   agent: AgentRuntime;
-  store: GatewayStore;
   transport: ChatTransport;
   audit: (event: AuditEventInput) => Promise<void>;
   send: (deliveryConversationId: string, text: string) => Promise<void>;
   isConversationBusy: (conversationId: string) => boolean;
-  runContinuation: (input: GoalContinuationRunInput) => Promise<void>;
   resolveProjectContext: (
     deliveryConversationId: string,
     conversationId: string,
@@ -44,18 +36,7 @@ export interface GoalContinuationFacadeOptions {
     projectName: string;
     projectCwd: string;
   } | undefined>;
-  stopConversation: (conversationId: string) => Promise<{
-    active: boolean;
-    starting: boolean;
-    queuedCount: number;
-    interruptSent: boolean;
-  }>;
-  goalContinuation: {
-    enabled: boolean;
-    cooldownMs: number;
-    maxTurns: number;
-    maxWallTimeMs: number;
-  };
+  stopConversation: (conversationId: string) => Promise<unknown>;
   statusCard: {
     enabled: boolean;
     updateIntervalMs: number;
@@ -63,93 +44,35 @@ export interface GoalContinuationFacadeOptions {
   };
 }
 
-export interface GoalContinuationSyncInput {
-  action: "set" | "continue" | "active" | "pause" | "blocked" | "complete" | "clear";
-  threadId: string;
-  projectCwd: string;
-  projectName: string;
-  deliveryConversationId: string;
-  conversationId: string;
-  userId: string;
-  goal?: AgentGoal | undefined;
-}
-
-export class GoalContinuationFacade {
-  readonly coordinator: GoalContinuationCoordinator;
+export class GoalStatusFacade {
   readonly statusCard: AgentStatusCardController | undefined;
   readonly #agent: AgentGoalRuntime;
-  readonly #options: Omit<GoalContinuationFacadeOptions, "goalContinuation" | "statusCard">;
+  readonly #options: Omit<GoalStatusFacadeOptions, "statusCard">;
 
-  constructor(options: GoalContinuationFacadeOptions) {
+  constructor(options: GoalStatusFacadeOptions) {
     if (!supportsAgentGoals(options.agent)) {
-      throw new Error("Goal continuation requires an Agent Goal runtime");
-    }
-    if (!supportsGoalContinuationStore(options.store)) {
-      throw new Error("Goal continuation requires a continuation-capable store");
+      throw new Error("Goal status facade requires an Agent Goal runtime");
     }
     this.#agent = options.agent;
     this.#options = options;
-
-    const continuationInput = {
-      agent: options.agent,
-      store: options.store as GoalContinuationStore,
-      audit: options.audit,
-      send: options.send,
-      cooldownMs: options.goalContinuation.cooldownMs,
-      maxTurns: options.goalContinuation.maxTurns,
-      maxWallTimeMs: options.goalContinuation.maxWallTimeMs,
-      isConversationBusy: options.isConversationBusy,
-      runContinuation: options.runContinuation,
-    };
-
-    if (options.statusCard.enabled && supportsStatusCardTransport(options.transport)) {
-      const statusCard = new AgentStatusCardController({
-        transport: options.transport,
-        audit: options.audit,
-        enabled: options.statusCard.enabled,
-        updateIntervalMs: options.statusCard.updateIntervalMs,
-        autoPin: options.statusCard.autoPin,
-      });
-      this.statusCard = statusCard;
-      this.coordinator = new GoalContinuationCoordinator({
-        ...continuationInput,
-        onCooldown: (snapshot) => {
-          void statusCard.onCooldown(snapshot.conversationId, {
-            state: "cooldown",
-            turnNumber: snapshot.turnNumber,
-            elapsedMs: 0,
-            cooldownRemainingMs: snapshot.cooldownRemainingMs,
-            goal: {
-              status: snapshot.goal.status,
-              objective: snapshot.goal.objective,
-              tokensUsed: snapshot.goal.tokensUsed,
-              tokenBudget: snapshot.goal.tokenBudget,
-              timeUsedSeconds: snapshot.goal.timeUsedSeconds,
-            },
-          });
-        },
-      });
-    } else {
-      this.coordinator = new GoalContinuationCoordinator(continuationInput);
-    }
+    this.statusCard = options.statusCard.enabled
+      && supportsStatusCardTransport(options.transport)
+      ? new AgentStatusCardController({
+          transport: options.transport,
+          audit: options.audit,
+          enabled: true,
+          updateIntervalMs: options.statusCard.updateIntervalMs,
+          autoPin: options.statusCard.autoPin,
+        })
+      : undefined;
   }
 
   async start(): Promise<void> {
     await this.statusCard?.start().catch(() => undefined);
-    await this.coordinator.start();
   }
 
   async stop(): Promise<void> {
-    await this.coordinator.stop().catch(() => undefined);
     await this.statusCard?.stop().catch(() => undefined);
-  }
-
-  async onUserMessage(
-    conversationId: string,
-    deliveryConversationId: string,
-  ): Promise<void> {
-    await this.coordinator.onUserMessage(conversationId).catch(() => undefined);
-    await this.statusCard?.onUserInterrupt(deliveryConversationId).catch(() => undefined);
   }
 
   async onRunStarted(
@@ -157,20 +80,12 @@ export class GoalContinuationFacade {
     deliveryConversationId: string,
     projectName: string | undefined,
   ): Promise<void> {
-    const record = await this.coordinator.getRecord(conversationId)
-      .catch(() => undefined);
     await this.statusCard?.onRunStarted(
       deliveryConversationId,
-      await this.statusSnapshot(
-        conversationId,
-        deliveryConversationId,
-        "running",
-        {
-          ...(projectName ? { projectName } : {}),
-          turnNumber: record?.turnCount ?? 0,
-          lastActivity: "任务开始",
-        },
-      ),
+      await this.statusSnapshot(conversationId, deliveryConversationId, "running", {
+        ...(projectName ? { projectName } : {}),
+        lastActivity: "任务开始",
+      }),
     ).catch(() => undefined);
   }
 
@@ -180,88 +95,36 @@ export class GoalContinuationFacade {
   ): Promise<void> {
     if (event.type !== "tool.started" && event.type !== "tool.completed") return;
     await this.statusCard?.onRunEvent(deliveryConversationId, {
+      state: "running",
+      turnNumber: 0,
+      elapsedMs: 0,
       lastActivity: event.type === "tool.started"
         ? `正在使用工具 ${event.name}`
         : `工具完成 ${event.name}`,
     }).catch(() => undefined);
   }
 
-  async onRunCompleted(input: {
-    conversationId: string;
-    deliveryConversationId: string;
-    threadId: string;
-    projectCwd: string;
-    projectName: string;
-  }): Promise<void> {
-    await this.coordinator.onRunCompleted({
-      conversationId: input.conversationId,
-      deliveryConversationId: input.deliveryConversationId,
-      threadId: input.threadId,
-      projectCwd: input.projectCwd,
-      projectName: input.projectName,
-    }).catch(() => undefined);
-    const record = await this.coordinator.getRecord(input.conversationId).catch(() => undefined);
-    // A scheduled continuation already drove the card into cooldown through
-    // onCooldown. Do not overwrite that state with an idle card.
-    if (record?.pending) return;
+  async onRunEnded(
+    conversationId: string,
+    deliveryConversationId: string,
+    projectName: string | undefined,
+  ): Promise<void> {
     await this.statusCard?.onRunEnded(
-      input.deliveryConversationId,
-      await this.statusSnapshot(
-        input.conversationId,
-        input.deliveryConversationId,
-        "idle",
-        { projectName: input.projectName || undefined },
-      ),
+      deliveryConversationId,
+      await this.statusSnapshot(conversationId, deliveryConversationId, "idle", {
+        ...(projectName ? { projectName } : {}),
+      }),
     ).catch(() => undefined);
   }
 
   async onRunFailed(
     conversationId: string,
     deliveryConversationId: string,
-    error: unknown,
-  ): Promise<boolean> {
-    const outcome = await this.coordinator.onRunFailed(conversationId, error)
-      .catch(() => "ignored" as const);
-    if (outcome === "retry-scheduled") {
-      // onCooldown has already moved the live card into a retry/cooldown state.
-      return true;
-    }
-    if (outcome === "terminal-goal") {
-      await this.statusCard?.onRunEnded(
-        deliveryConversationId,
-        await this.statusSnapshot(
-          conversationId,
-          deliveryConversationId,
-          "idle",
-        ),
-      ).catch(() => undefined);
-      return true;
-    }
-    if (outcome === "stopped") {
-      await this.statusCard?.onStopped(
-        deliveryConversationId,
-        await this.statusSnapshot(
-          conversationId,
-          deliveryConversationId,
-          "stopped",
-        ),
-      ).catch(() => undefined);
-      return true;
-    }
+  ): Promise<void> {
     await this.statusCard?.onStopped(
       deliveryConversationId,
-      await this.statusSnapshot(
-        conversationId,
-        deliveryConversationId,
-        "stopped",
-      ),
+      await this.statusSnapshot(conversationId, deliveryConversationId, "stopped"),
     ).catch(() => undefined);
-    return false;
-  }
-
-  async stopContinuation(conversationId: string, reason: string): Promise<boolean> {
-    return await this.coordinator.stopContinuation(conversationId, reason)
-      .catch(() => false);
   }
 
   async onStopped(
@@ -270,11 +133,7 @@ export class GoalContinuationFacade {
   ): Promise<void> {
     await this.statusCard?.onStopped(
       deliveryConversationId,
-      await this.statusSnapshot(
-        conversationId,
-        deliveryConversationId,
-        "stopped",
-      ),
+      await this.statusSnapshot(conversationId, deliveryConversationId, "stopped"),
     ).catch(() => undefined);
   }
 
@@ -284,7 +143,7 @@ export class GoalContinuationFacade {
     action: GoalStatusControlAction,
   ): Promise<void> {
     const outcome = await handleGoalControl({
-      host: this.#goalControlHost(),
+      host: this.#host(),
       resolved,
       deliveryConversationId,
       action,
@@ -300,7 +159,7 @@ export class GoalContinuationFacade {
     deliveryConversationId: string,
   ): Promise<void> {
     await handleGoalControl({
-      host: this.#goalControlHost(),
+      host: this.#host(),
       resolved,
       deliveryConversationId,
       action: "continue",
@@ -313,56 +172,12 @@ export class GoalContinuationFacade {
     deliveryConversationId: string,
   ): Promise<void> {
     await handleGoalControl({
-      host: this.#goalControlHost(),
+      host: this.#host(),
       resolved,
       deliveryConversationId,
       action: "restart",
       source: "command",
     });
-  }
-
-  #goalControlHost() {
-    return {
-      agent: this.#agent,
-      coordinator: this.coordinator,
-      audit: this.#options.audit,
-      send: this.#options.send,
-      isConversationBusy: this.#options.isConversationBusy,
-      resolveProjectContext: this.#options.resolveProjectContext,
-      stopConversation: this.#options.stopConversation,
-    };
-  }
-
-  async syncGoalChange(input: GoalContinuationSyncInput): Promise<void> {
-    switch (input.action) {
-      case "set":
-      case "continue":
-        await this.coordinator.authorize({
-          conversationId: input.conversationId,
-          deliveryConversationId: input.deliveryConversationId,
-          userId: input.userId,
-          threadId: input.threadId,
-          projectCwd: input.projectCwd,
-          projectName: input.projectName,
-          enable: true,
-          ...(input.action === "set" ? { resetProgress: true } : {}),
-        });
-        return;
-      case "active":
-        await this.coordinator.setEnabled(input.conversationId, true);
-        return;
-      case "pause":
-      case "blocked":
-      case "complete":
-        await this.coordinator.stopContinuation(
-          input.conversationId,
-          `goal-${input.action}`,
-        );
-        return;
-      case "clear":
-        await this.coordinator.delete(input.conversationId);
-        return;
-    }
   }
 
   async statusSnapshot(
@@ -371,7 +186,7 @@ export class GoalContinuationFacade {
     state: AgentStatusSnapshot["state"],
     extra: Partial<Pick<
       AgentStatusSnapshot,
-      "projectName" | "turnNumber" | "lastActivity" | "cooldownRemainingMs" | "goal"
+      "projectName" | "turnNumber" | "lastActivity" | "goal"
     >> = {},
   ): Promise<AgentStatusSnapshot> {
     const context = await this.#options.resolveProjectContext(
@@ -379,20 +194,15 @@ export class GoalContinuationFacade {
       conversationId,
     ).catch(() => undefined);
     const goal = context?.threadId
-      ? await this.#agent.getGoal(context.threadId, {
-          cwd: context.projectCwd,
-        }).catch(() => undefined)
+      ? await this.#agent.getGoal(context.threadId, { cwd: context.projectCwd })
+          .catch(() => undefined)
       : undefined;
-    const record = await this.coordinator.getRecord(conversationId).catch(() => undefined);
     return {
       state,
       projectName: extra.projectName ?? context?.projectName,
-      turnNumber: extra.turnNumber ?? record?.turnCount ?? 0,
+      turnNumber: extra.turnNumber ?? 0,
       elapsedMs: 0,
       ...(extra.lastActivity ? { lastActivity: extra.lastActivity } : {}),
-      ...(extra.cooldownRemainingMs !== undefined
-        ? { cooldownRemainingMs: extra.cooldownRemainingMs }
-        : {}),
       ...(goal ? {
         goal: {
           status: goal.status,
@@ -402,6 +212,17 @@ export class GoalContinuationFacade {
           timeUsedSeconds: goal.timeUsedSeconds,
         },
       } : {}),
+    };
+  }
+
+  #host(): GoalControlHost {
+    return {
+      agent: this.#agent,
+      send: this.#options.send,
+      audit: this.#options.audit,
+      isConversationBusy: this.#options.isConversationBusy,
+      resolveProjectContext: this.#options.resolveProjectContext,
+      stopConversation: this.#options.stopConversation,
     };
   }
 }

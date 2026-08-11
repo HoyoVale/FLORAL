@@ -69,14 +69,6 @@ export const requestedConfigSchema = z.object({
       logger: z.literal("redacted"),
     }).strict(),
   }).strict(),
-  goal: z.object({
-    continuation: z.object({
-      enabled: z.boolean(),
-      cooldown_ms: positiveInteger,
-      max_turns: nonNegativeInteger,
-      max_wall_time_ms: nonNegativeInteger,
-    }).strict(),
-  }).strict(),
   codex: z.object({
     mode: modeSchema,
     command: z.string().trim().min(1),
@@ -323,14 +315,6 @@ export interface RequestedConfig {
       logger: "redacted";
     };
   };
-  goal: {
-    continuation: {
-      enabled: boolean;
-      cooldown_ms: number;
-      max_turns: number;
-      max_wall_time_ms: number;
-    };
-  };
   codex: {
     mode: "mock" | "real";
     command: string;
@@ -568,14 +552,6 @@ export const DEFAULT_REQUESTED_CONFIG: RequestedConfig = {
       expected_version: "1.36.0",
       ingress_isolation: "worker-thread",
       logger: "redacted",
-    },
-  },
-  goal: {
-    continuation: {
-      enabled: true,
-      cooldown_ms: 30_000,
-      max_turns: 0,
-      max_wall_time_ms: 0,
     },
   },
   codex: {
