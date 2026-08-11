@@ -33,7 +33,7 @@ export interface SerializedFeishuStatusControlAction {
   eventId: string;
   externalUserId: string;
   conversationId: string;
-  action: "pause" | "stop";
+  action: "pause" | "stop" | "continue" | "restart";
   receivedAtMs: number;
 }
 

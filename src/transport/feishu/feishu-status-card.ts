@@ -2,7 +2,7 @@ import type { AgentStatusSnapshot } from "../../core/contracts.js";
 
 export { STATUS_CONTROL_MESSAGE_PREFIX } from "../../core/contracts.js";
 
-export type FeishuStatusControlAction = "pause" | "stop";
+export type FeishuStatusControlAction = "pause" | "stop" | "continue" | "restart";
 
 export interface FeishuStatusControlEvent {
   event_id?: string | undefined;
@@ -78,7 +78,8 @@ export function buildAgentStatusCard(
       content: lines.join("\n"),
     },
   ];
-  if (snapshot.state === "running" || snapshot.state === "cooldown") {
+  const controls = statusControls(snapshot);
+  if (controls.length > 0) {
     elements.push({
       tag: "column_set",
       element_id: "status_controls",
@@ -87,22 +88,34 @@ export function buildAgentStatusCard(
       columns: [
         {
           tag: "column",
-          element_id: "pause_column",
+          element_id: "control_left_column",
           width: "weighted",
           weight: 1,
           elements: [
-            statusButton("pause_button", "暂停", "default", "pause"),
+            statusButton(
+              `${controls[0]!.action}_button`,
+              controls[0]!.label,
+              controls[0]!.type,
+              controls[0]!.action,
+            ),
           ],
         },
-        {
-          tag: "column",
-          element_id: "stop_column",
-          width: "weighted",
-          weight: 1,
-          elements: [
-            statusButton("stop_button", "停止", "danger", "stop"),
-          ],
-        },
+        ...(controls[1]
+          ? [{
+              tag: "column",
+              element_id: "control_right_column",
+              width: "weighted",
+              weight: 1,
+              elements: [
+                statusButton(
+                  `${controls[1].action}_button`,
+                  controls[1].label,
+                  controls[1].type,
+                  controls[1].action,
+                ),
+              ],
+            }]
+          : []),
       ],
     });
   }
@@ -204,11 +217,41 @@ function readStatusControlValue(
   }
   const record = value as Record<string, unknown>;
   if (record.floral_action !== "status_control") return undefined;
-  if (record.action !== "pause" && record.action !== "stop") return undefined;
+  if (
+    record.action !== "pause"
+    && record.action !== "stop"
+    && record.action !== "continue"
+    && record.action !== "restart"
+  ) {
+    return undefined;
+  }
   return {
     floral_action: "status_control",
-    action: record.action,
+    action: record.action as FeishuStatusControlAction,
   };
+}
+
+function statusControls(snapshot: AgentStatusSnapshot): Array<{
+  action: FeishuStatusControlAction;
+  label: string;
+  type: "default" | "danger";
+}> {
+  if (snapshot.state === "running" || snapshot.state === "cooldown") {
+    return [
+      { action: "pause", label: "暂停", type: "default" },
+      { action: "stop", label: "停止", type: "danger" },
+    ];
+  }
+  if (snapshot.goal?.status === "complete") {
+    return [{ action: "restart", label: "重新运行", type: "default" }];
+  }
+  if (snapshot.state === "idle" || snapshot.state === "stopped") {
+    return [
+      { action: "continue", label: "继续", type: "default" },
+      { action: "stop", label: "停止", type: "danger" },
+    ];
+  }
+  return [];
 }
 
 function statusTitle(snapshot: AgentStatusSnapshot): string {

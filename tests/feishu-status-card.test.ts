@@ -42,7 +42,7 @@ describe("agent status card", () => {
       .toEqual(["暂停", "停止"]);
   });
 
-  it("removes mutation controls from terminal cards", () => {
+  it("shows a restart control on completed cards", () => {
     const card = buildAgentStatusCard({
       state: "idle",
       turnNumber: 2,
@@ -58,8 +58,34 @@ describe("agent status card", () => {
     const elements = (card.body as Record<string, unknown>).elements as Array<Record<string, unknown>>;
     expect((((card.header as Record<string, unknown>).title as Record<string, unknown>).content))
       .toBe("FLORAL Goal 已完成");
-    expect(elements).toHaveLength(1);
+    expect(elements).toHaveLength(2);
     expect(String(elements[0]?.content)).toContain("已完成");
+    const columns = (elements[1] as Record<string, unknown>).columns as Array<Record<string, unknown>>;
+    const buttons = columns.flatMap((column) =>
+      (column.elements as Array<Record<string, unknown>>));
+    expect(buttons.map((button) => (button.text as Record<string, unknown>).content))
+      .toEqual(["重新运行"]);
+  });
+
+  it("shows continue/stop controls on paused cards", () => {
+    const card = buildAgentStatusCard({
+      state: "stopped",
+      turnNumber: 1,
+      elapsedMs: 5_000,
+      goal: {
+        status: "paused",
+        objective: "paused goal",
+        tokensUsed: 0,
+        tokenBudget: null,
+        timeUsedSeconds: 0,
+      },
+    }) as Record<string, unknown>;
+    const elements = (card.body as Record<string, unknown>).elements as Array<Record<string, unknown>>;
+    const columns = (elements[1] as Record<string, unknown>).columns as Array<Record<string, unknown>>;
+    const buttons = columns.flatMap((column) =>
+      (column.elements as Array<Record<string, unknown>>));
+    expect(buttons.map((button) => (button.text as Record<string, unknown>).content))
+      .toEqual(["继续", "停止"]);
   });
 
   it("normalizes a valid status-control callback and rejects unknown values", () => {
@@ -92,6 +118,8 @@ describe("agent status card", () => {
   it("parses the reserved status-control message text", () => {
     expect(parseStatusControlAction("__floral_status_control__ pause")).toBe("pause");
     expect(parseStatusControlAction("__floral_status_control__ stop")).toBe("stop");
+    expect(parseStatusControlAction("__floral_status_control__ continue")).toBe("continue");
+    expect(parseStatusControlAction("__floral_status_control__ restart")).toBe("restart");
     expect(parseStatusControlAction("__floral_status_control__ unknown")).toBeUndefined();
     expect(parseStatusControlAction("hello")).toBeUndefined();
   });
